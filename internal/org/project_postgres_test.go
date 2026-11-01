@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"math/big"
 	"os"
 	"slices"
@@ -472,8 +473,8 @@ func compactJSON(value []byte) string {
 
 var _ db.Querier = (*countingQuerier)(nil)
 
-func testExecutionLimits() ExecutionLimits {
-	return ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
+func testExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
 }
 
 func TestProjectCreationStartsAdmissionBucketsFull(t *testing.T) {

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"log/slog"
@@ -23,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -47,7 +47,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		Changes:                        dbnotify.New(),
 		DeploymentUploadLimits:         DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
 		Allocator:                      allocator,
-		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20},
+		EnvironmentExecutionLimits:     executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20},
 		ComputerKeys:                   constructionKeys{},
 		Log:                            discardTestLogger(),
 		DB:                             routeWorkerAuthStore{},
@@ -117,7 +117,7 @@ func TestNewServerValidatesWorkerHostCredentialSigningKey(t *testing.T) {
 
 func TestNewServerRequiresEnvironmentExecutionLimits(t *testing.T) {
 	cfg := completeServerConfig(t)
-	cfg.EnvironmentExecutionLimits = org.ExecutionLimits{}
+	cfg.EnvironmentExecutionLimits = executionlimit.Limits{}
 	handler, err := NewServer(cfg)
 	if err == nil || handler != nil || !strings.Contains(err.Error(), "environment execution limits") {
 		t.Fatalf("missing policy: %v %v", handler, err)

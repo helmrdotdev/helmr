@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -11,7 +12,7 @@ import (
 // Creation (with or without input) and later Turn admission share one token
 // bucket; historical receipts consume none. The outstanding-Turn limit counts
 // Turns, which this owner keeps.
-func consumeAdmission(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env uuid.UUID) error {
+func consumeAdmission(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID) error {
 	var outstanding int64
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running')`, env).Scan(&outstanding); err != nil {
 		return err
@@ -22,7 +23,7 @@ func consumeAdmission(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits
 	return consumeAdmissionToken(ctx, tx, limits, env)
 }
 
-func consumeAdmissionToken(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env uuid.UUID) error {
+func consumeAdmissionToken(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID) error {
 	charged, err := org.ChargeAdmission(ctx, tx, limits, env)
 	if err != nil {
 		return err

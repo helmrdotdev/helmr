@@ -5,13 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"sort"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -123,7 +123,7 @@ type poolPlan struct {
 	result   PoolPlan
 }
 
-func Plan(ctx context.Context, store PlanStore, executionLimits org.ExecutionLimits, workerGroupID uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
+func Plan(ctx context.Context, store PlanStore, executionLimits executionlimit.Limits, workerGroupID uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
 	if len(request.Pools) == 0 || len(request.Pools) > maximumPlanningPools {
 		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
@@ -437,7 +437,7 @@ func candidateMatchesBin(candidate item, target bin) bool {
 	return candidate.targetPoolID.Valid && candidate.targetPoolID == target.workerPoolID
 }
 
-func discoverItems(ctx context.Context, store PlanStore, limits org.ExecutionLimits, group db.WorkerGroup) ([]item, map[[16]byte]struct{}, bool, error) {
+func discoverItems(ctx context.Context, store PlanStore, limits executionlimit.Limits, group db.WorkerGroup) ([]item, map[[16]byte]struct{}, bool, error) {
 	rows, err := store.ListAllocationPlanningDemand(ctx, db.ListAllocationPlanningDemandParams{MaxCpuMillis: limits.MaxCPUMillis, MaxMemoryBytes: limits.MaxMemoryBytes, MaxResidentComputers: limits.MaxResidentComputers, RegionID: group.RegionID, WorkerGroupID: group.ID, RowLimit: maximumPlanningCandidates + 1})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("list allocation capacity demand: %w", err)

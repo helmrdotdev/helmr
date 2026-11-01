@@ -8,12 +8,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -26,10 +26,10 @@ type SendReceipt struct {
 }
 
 // RouteSlackInput applies the Slack integration policy under one destination lock.
-func RouteSlackInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
+func RouteSlackInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
 	return admitSessionInput(ctx, auditPolicy, limits, pool, trust, caller, req, "slack_route", uuid.Nil())
 }
-func SendTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
+func SendTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
 	if turn == uuid.Nil() {
 		return SendReceipt{}, ErrInvalidInput
 	}

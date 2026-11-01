@@ -8,13 +8,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,10 +23,10 @@ import (
 type Creator struct {
 	ca          TrustIssuer
 	auditPolicy auditpolicy.Policy
-	limits      org.ExecutionLimits
+	limits      executionlimit.Limits
 }
 
-func NewCreator(ca TrustIssuer, policy auditpolicy.Policy, limits org.ExecutionLimits) Creator {
+func NewCreator(ca TrustIssuer, policy auditpolicy.Policy, limits executionlimit.Limits) Creator {
 	return Creator{ca: ca, auditPolicy: policy, limits: limits}
 }
 

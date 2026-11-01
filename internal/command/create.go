@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"path"
 	"regexp"
 	"strings"
@@ -206,7 +207,7 @@ type createReceipt struct {
 // then locks the Computer's Secrets and the Computer, records the admission,
 // the Command, and completes the receipt. Secret versions are selected only
 // at the first possible delivery to this Command.
-func Create(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
+func Create(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
 	switch request.Creator.Kind {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
@@ -249,7 +250,7 @@ func Create(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.Exec
 	return created, nil
 }
 
-func create(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
+func create(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
 	var scoped bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id

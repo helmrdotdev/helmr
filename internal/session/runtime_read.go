@@ -5,11 +5,11 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/jackc/pgx/v5"
 )
@@ -21,7 +21,7 @@ type RuntimeTurnObservation struct {
 
 // RuntimeObserveTurn reads one attributable outcome under the current caller's
 // execution authority. It does not grant the caller the target's unrelated history.
-func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
+func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
 	var result RuntimeTurnObservation
 	if caller.Kind != "session" || session == uuid.Nil() || turn == uuid.Nil() {
 		return result, ErrDenied
@@ -75,7 +75,7 @@ func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, lim
 // Diagnose only an Environment limit that the caller's own retained allocation
 // already makes impossible for this distinct target. Other workloads ending,
 // another Host arriving or a transient full pool are not assumed to be dependencies.
-func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, e Execution, session, turn uuid.UUID) (bool, error) {
+func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, e Execution, session, turn uuid.UUID) (bool, error) {
 	var targetCPU, targetMemory int64
 	var ownCPU, ownMemory int64
 	err := tx.QueryRow(ctx, `SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes

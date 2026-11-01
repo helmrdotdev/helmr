@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
@@ -83,7 +84,7 @@ func evaluateTrigger(s triggerActivation, now time.Time) (triggerEvaluation, err
 // EvaluateTrigger serializes with Environment promotion. Occurrence identity,
 // admission (or its rejected/missed disposition), and the next cursor commit
 // together. The activation's pinned definition is never replaced by current defaults.
-func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, env, id uuid.UUID) error {
+func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, env, id uuid.UUID) error {
 	if env == uuid.Nil() || id == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -204,7 +205,7 @@ func recordTriggerOccurrence(ctx context.Context, tx pgx.Tx, s triggerActivation
 
 // admitScheduledSession admits a trigger occurrence's Session and, for a
 // Slack destination, its Slack root, in the evaluation transaction.
-func admitScheduledSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time) (session.Admission, error) {
+func admitScheduledSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time) (session.Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return session.Admission{}, slackroute.ErrChannelUnavailable
 	}

@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -25,7 +25,7 @@ func lifecycleAction(action string) bool {
 	return false
 }
 
-func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, id uuid.UUID, p *messageAdmission, action string) error {
+func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, id uuid.UUID, p *messageAdmission, action string) error {
 	// Input controls retain their timestamp ordering and do not enter execution admission.
 	if action == "mute" || action == "unmute" {
 		_, err := applyThreadInput(ctx, tx, id, p, action)
@@ -75,7 +75,7 @@ func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	return err
 }
 
-func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, caller session.Caller, target controlTarget, c controlEnvelope, id uuid.UUID) (json.RawMessage, error) {
+func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, caller session.Caller, target controlTarget, c controlEnvelope, id uuid.UUID) (json.RawMessage, error) {
 	operation := auth.PermissionSessionsRead
 	if c.Action == "mute" || c.Action == "unmute" {
 		operation = auth.PermissionSessionsInterrupt

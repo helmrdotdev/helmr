@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strings"
 	"uuid"
 
@@ -25,7 +26,7 @@ type ProjectDetails struct {
 type ProjectInput struct {
 	ProjectDetails
 	DefaultRegionID string
-	ExecutionLimits ExecutionLimits
+	ExecutionLimits executionlimit.Limits
 }
 
 // EnvironmentDetails are the editable fields of an environment. ColorHex is
@@ -221,7 +222,7 @@ func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, pro
 }
 
 // CreateEnvironment adds an environment to an active project.
-func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
+func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, details EnvironmentDetails, limits executionlimit.Limits) (db.Environment, error) {
 	orgID := m.OrgID
 	slug, name, err := normalizeSlugName(details.Slug, details.Name)
 	if err != nil {

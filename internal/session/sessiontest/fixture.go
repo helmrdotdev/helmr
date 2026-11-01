@@ -6,8 +6,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/mcppolicy"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
 	"testing"
@@ -26,8 +26,8 @@ const ChannelCredential = "test-computer-channel"
 // ExecutionLimits are the fixture Environment's limits: generous enough that
 // tests which do not exercise a limit never reach one. The fixture's admission
 // bucket starts full at this burst.
-func ExecutionLimits() org.ExecutionLimits {
-	return org.ExecutionLimits{MaxResidentComputers: 1024, MaxCPUMillis: 1024000, MaxMemoryBytes: 1 << 40, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 1024, AdmissionRatePerSecond: 1000000, AdmissionBurst: 1000000}
+func ExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 1024, MaxCPUMillis: 1024000, MaxMemoryBytes: 1 << 40, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 1024, AdmissionRatePerSecond: 1000000, AdmissionBurst: 1000000}
 }
 
 type Fixture struct {

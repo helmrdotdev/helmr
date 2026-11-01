@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strings"
 	"time"
 	"uuid"
@@ -13,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -138,7 +138,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 }
 
 // Admission never holds a SQL transaction across channel or root verification.
-func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
+func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
 	var p *messageAdmission
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error { var err error; p, err = readMessageAdmission(ctx, tx, id); return err })
 	if err != nil || p == nil {

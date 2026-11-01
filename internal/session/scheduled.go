@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,7 +25,7 @@ type ScheduledStart struct {
 // AdmitScheduled creates the Session, Computer and first Turn of a trigger
 // occurrence in the caller's transaction. The caller holds the Environment
 // admission lock.
-func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, trust computer.TrustIssuer, start ScheduledStart) (Admission, error) {
+func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, trust computer.TrustIssuer, start ScheduledStart) (Admission, error) {
 	if err := requireAgentAvailable(ctx, tx, start.EnvironmentID, start.AgentID); err != nil {
 		return Admission{}, err
 	}

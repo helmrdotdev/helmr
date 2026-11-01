@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -24,7 +24,7 @@ type TrustIssuer interface {
 // CreateForAdmission creates the Computer of an admitted Session from the
 // Agent's template, copying the definition's Secret bindings. The caller holds
 // the Environment lock (step 4 of the global order).
-func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits org.ExecutionLimits, env, deployment uuid.UUID, key string) (uuid.UUID, error) {
+func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits executionlimit.Limits, env, deployment uuid.UUID, key string) (uuid.UUID, error) {
 	return createComputer(ctx, tx, trust, limits, env, deployment, key, nil)
 }
 
@@ -33,14 +33,14 @@ func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limit
 // instead copy their immutable definition bindings. Both share preparation,
 // trust, resource validation and reservation admission. The caller holds the
 // Environment lock.
-func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits org.ExecutionLimits, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
+func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits executionlimit.Limits, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
 	if bindings == nil {
 		bindings = []secretbinding.Reference{}
 	}
 	return createComputer(ctx, tx, trust, limits, env, deployment, key, &bindings)
 }
 
-func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, configured org.ExecutionLimits, env, deployment uuid.UUID, key string, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
+func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, configured executionlimit.Limits, env, deployment uuid.UUID, key string, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
 	limits := configured.For(env)
 	var spec, template uuid.UUID
 	var cpuMillis, memoryBytes int64

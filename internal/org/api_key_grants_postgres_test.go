@@ -2,6 +2,7 @@ package org_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strconv"
 	"testing"
 	"uuid"
@@ -23,7 +24,7 @@ func newMachineGrantFixture(t *testing.T) machineGrantFixture {
 	t.Helper()
 	f := newMemberFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO regions(id,display_name) VALUES('machines','Machines')`)
-	project, envs, err := org.CreateProject(t.Context(), f.pool, f.owner, org.ProjectInput{Slug: "machines", Name: "Machines", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
+	project, envs, err := org.CreateProject(t.Context(), f.pool, f.owner, org.ProjectInput{Slug: "machines", Name: "Machines", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}

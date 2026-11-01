@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 )
@@ -168,7 +168,7 @@ func scanComputer(row pgx.Row, extra ...any) (ListItem, error) {
 	}
 	return item, err
 }
-func Read(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, scope Scope, id uuid.UUID) (Snapshot, error) {
+func Read(ctx context.Context, database db.DBTX, limits executionlimit.Limits, scope Scope, id uuid.UUID) (Snapshot, error) {
 	item, err := scanComputer(database.QueryRow(ctx, computerProjection+` AND c.id=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, id))
 	if err != nil {
 		return Snapshot{}, err
@@ -202,7 +202,7 @@ func Read(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, sco
 	}
 	return Snapshot{ExecutionControl: item.ExecutionControl, ExecutionWait: item.ExecutionWait, DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
 }
-func FindByKey(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, scope Scope, key string) (ListItem, error) {
+func FindByKey(ctx context.Context, database db.DBTX, limits executionlimit.Limits, scope Scope, key string) (ListItem, error) {
 	item, err := scanComputer(database.QueryRow(ctx, computerProjection+` AND c.key=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, key))
 	if err != nil {
 		return ListItem{}, err
@@ -213,20 +213,20 @@ func FindByKey(ctx context.Context, database db.DBTX, limits org.ExecutionLimits
 	}
 	return items[0], nil
 }
-func List(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, scope Scope, page ListPage) (Listing, error) {
+func List(ctx context.Context, database db.DBTX, limits executionlimit.Limits, scope Scope, page ListPage) (Listing, error) {
 	return list(ctx, database, limits, scope, page, uuid.Nil())
 }
 
 // ListForSession exposes only Computers attached to this workload's own Session,
 // descendants and directly requested roots. The caller authorizes the Session.
-func ListForSession(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
+func ListForSession(ctx context.Context, database db.DBTX, limits executionlimit.Limits, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
 	if session == uuid.Nil() {
 		return Listing{}, ErrDenied
 	}
 	return list(ctx, database, limits, scope, page, session)
 }
 
-func list(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
+func list(ctx context.Context, database db.DBTX, limits executionlimit.Limits, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
 	if page.Limit < 1 || page.Limit > 100 {
 		return Listing{}, invalidInput("Computer page limit must be between 1 and 100")
 	}
@@ -271,7 +271,7 @@ func list(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, sco
 	return result, nil
 }
 
-func projectExecutionWait(ctx context.Context, database db.DBTX, limits org.ExecutionLimits, env uuid.UUID, items []ListItem) error {
+func projectExecutionWait(ctx context.Context, database db.DBTX, limits executionlimit.Limits, env uuid.UUID, items []ListItem) error {
 	var budget *db.ExecutionBudget
 	for i := range items {
 		item := &items[i]

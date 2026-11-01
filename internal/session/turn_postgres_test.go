@@ -7,7 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"sync"
 	"testing"
 	"time"
@@ -32,7 +32,7 @@ type fixture struct {
 	env, session, computer, user, worker, agent, deployment, group uuid.UUID
 	// limits are the Environment's configured execution limits, which every
 	// admission and placement call in a test passes.
-	limits org.ExecutionLimits
+	limits executionlimit.Limits
 }
 
 func newFixture(t *testing.T) fixture {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"testing"
 	"uuid"
 
@@ -695,7 +695,7 @@ func TestAllocationPreparationRemainsInDrainReadinessUntilFenced(t *testing.T) {
 
 // testAllocator builds an allocator with the fixtures' channel key over the
 // given database, execution limits and Secret trust issuer.
-func testAllocator(t *testing.T, database db.TxDB, limits org.ExecutionLimits, trust dispatch.ImageBuildTrustIssuer) *dispatch.Allocator {
+func testAllocator(t *testing.T, database db.TxDB, limits executionlimit.Limits, trust dispatch.ImageBuildTrustIssuer) *dispatch.Allocator {
 	t.Helper()
 	a, err := dispatch.NewAllocator(database, auditpolicy.Policy{
 		RetentionSeconds: 3600,

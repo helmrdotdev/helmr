@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
@@ -73,7 +73,7 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 	})
 }
 
-func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, id uuid.UUID) error {
+func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, id uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation, env, front, thread, source, channel uuid.UUID
 		var status, actor, team string
@@ -182,7 +182,7 @@ func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, limits
 // Slack instruction: this thread's native Stops and the target Session's
 // process failure and recovery holds placed before the mention. Interrupts
 // placed from the CLI, API or Console remain untouched.
-func resumeNativeStops(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, id uuid.UUID, p *messageAdmission) error {
+func resumeNativeStops(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, id uuid.UUID, p *messageAdmission) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('slack-stop:'||$1::uuid::text,0))`, p.thread); err != nil {
 		return err
 	}

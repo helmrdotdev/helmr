@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"time"
 	"uuid"
@@ -11,13 +12,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
 type TriggerPosition struct{ environment, id uuid.UUID }
 
-func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, database db.TxDB, trust computer.TrustIssuer, log *slog.Logger) error {
+func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, database db.TxDB, trust computer.TrustIssuer, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return ErrInvalidInput
 	}
@@ -43,7 +43,7 @@ func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits org
 		}
 	}
 }
-func ReconcileTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, database db.TxDB, trust computer.TrustIssuer, after TriggerPosition) (TriggerPosition, bool, error) {
+func ReconcileTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, database db.TxDB, trust computer.TrustIssuer, after TriggerPosition) (TriggerPosition, bool, error) {
 	scan, stop := context.WithTimeout(ctx, 10*time.Second)
 	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM trigger_activations s JOIN environments e ON e.id=s.environment_id
  WHERE s.next_fire_at<=statement_timestamp() AND (s.active_until IS NULL OR s.next_fire_at<s.active_until)

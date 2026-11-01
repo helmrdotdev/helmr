@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -63,7 +63,7 @@ func LockExecutionSupply(ctx context.Context, tx pgx.Tx, env uuid.UUID) error {
 
 // ObserveCapacityPlan publishes only a provider observation fenced by the exact
 // Product topology it observed. Receipt time cannot refresh old provider data.
-func ObserveCapacityPlan(ctx context.Context, database db.TxBeginner, limits org.ExecutionLimits, group uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
+func ObserveCapacityPlan(ctx context.Context, database db.TxBeginner, limits executionlimit.Limits, group uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
 	var result PlanResponse
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var id uuid.UUID
@@ -145,7 +145,7 @@ type ExecutionPlacement struct {
 // ReadExecutionPlacement runs under the region supply gate. An already blocked
 // claim remains visible, but does not forbid unrelated work that preserves every
 // currently feasible claim.
-func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env uuid.UUID) (ExecutionPlacement, error) {
+func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID) (ExecutionPlacement, error) {
 	var pending bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id WHERE c.execution_deadline_at>clock_timestamp() AND p.default_region_id=(SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1))`, env).Scan(&pending); err != nil {
 		return ExecutionPlacement{}, err
@@ -225,7 +225,7 @@ func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits org.Execution
 // RequireExecutionPlacement compares the same serialized supply before and after
 // mutation. A new candidate must place; already accepted feasible claims may not
 // be displaced. A claim fulfilled by physical allocation may leave pending demand.
-func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env, candidate uuid.UUID, before ExecutionPlacement) error {
+func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env, candidate uuid.UUID, before ExecutionPlacement) error {
 	after, err := ReadExecutionPlacement(ctx, tx, limits, env)
 	if err != nil {
 		return err

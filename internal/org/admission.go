@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/jackc/pgx/v5"
@@ -21,7 +22,7 @@ func LockAdmission(ctx context.Context, tx pgx.Tx, env uuid.UUID) (*uuid.UUID, e
 // reports whether one was available. The caller holds the admission lock and
 // owns rollback; server time never moves the refill point back, and a lowered
 // burst applies on the next charge.
-func ChargeAdmission(ctx context.Context, tx pgx.Tx, limits ExecutionLimits, env uuid.UUID) (bool, error) {
+func ChargeAdmission(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID) (bool, error) {
 	l := limits.For(env)
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `WITH refill AS (

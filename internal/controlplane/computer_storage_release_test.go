@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"sync"
 	"testing"
 	"uuid"
@@ -24,7 +24,7 @@ import (
 
 // computerStorageFixture's Environment has room for exactly the fixture
 // Computer's storage reservation.
-func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope, org.ExecutionLimits) {
+func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope, executionlimit.Limits) {
 	t.Helper()
 	f := sessiontest.New(t)
 	sessiontest.ObserveProvisioning(t, f)

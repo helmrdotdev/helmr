@@ -3,7 +3,7 @@ package workergroup
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"uuid"
@@ -15,7 +15,7 @@ import (
 type executionPlanStore struct {
 	*db.Queries
 	tx     pgx.Tx
-	limits org.ExecutionLimits
+	limits executionlimit.Limits
 	claims []db.PendingExecutionClaim
 }
 

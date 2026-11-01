@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -26,7 +26,7 @@ type controlGesture struct {
 
 // admitControl consumes an already authenticated signed-control gesture. A
 // channel-visible token supplies a target, never the human's current authority.
-func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, id uuid.UUID) error {
+func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, id uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation uuid.UUID
 		var raw []byte

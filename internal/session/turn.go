@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"slices"
 	"strings"
 	"time"
@@ -179,12 +180,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+func Enqueue(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
 	result, err := admitSessionInput(ctx, auditPolicy, limits, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"time"
 	"uuid"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -46,7 +46,7 @@ func claimRequests(ctx context.Context, pool db.TxBeginner, limit int) ([]uuid.U
 
 // ReconcileRequest owns completion of one durable input receipt. Success means
 // the receipt is terminal, not that an admitted Turn has started or completed.
-func ReconcileRequest(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
+func ReconcileRequest(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
 	if !config.valid() {
 		return errGestureInvalid
 	}
@@ -103,7 +103,7 @@ func ReconcileRequest(ctx context.Context, auditPolicy auditpolicy.Policy, limit
 // ReconcileRequests advances a bounded batch. Operational errors leave received
 // rows retryable after the reserved interval; source expiry still prevents late
 // admission. One failed request does not prevent independent receipts progressing.
-func ReconcileRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
+func ReconcileRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
 	ids, err := claimRequests(ctx, pool, limit)
 	if err != nil {
 		return 0, err
@@ -119,7 +119,7 @@ func ReconcileRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limi
 
 // RunRequests consumes only authenticated durable receipts. Slack HTTP handlers
 // acknowledge persistence; this dispatcher loop owns subsequent core admission.
-func RunRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
+func RunRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || client == nil || log == nil || !config.valid() {
 		return errGestureInvalid
 	}

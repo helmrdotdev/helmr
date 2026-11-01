@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -23,7 +22,8 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
 		}
-		if _, err := org.LockAdmission(ctx, tx, env); err != nil {
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
 		}
 		if err := LockImageSpecSecrets(ctx, tx, env, spec); err != nil {

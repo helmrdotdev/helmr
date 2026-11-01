@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -41,7 +42,7 @@ type StartRequest struct {
 // StartPlan is a validated start request and the identity of its receipt.
 type StartPlan struct {
 	AuditPolicy auditpolicy.Policy
-	Limits      org.ExecutionLimits
+	Limits      executionlimit.Limits
 	Caller      Caller
 	Request     StartRequest
 	Method      string
@@ -59,16 +60,16 @@ type StartPin struct {
 	Fresh                 bool
 }
 
-func Start(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Start(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, auditPolicy, limits, pool, trust, caller, req, "create")
 }
-func Spawn(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Spawn(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, auditPolicy, limits, pool, trust, caller, req, "spawn")
 }
 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
-func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
+func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
 	if req.SlackChannelID != nil {
 		return Admission{}, ErrInvalidInput
 	}
@@ -92,7 +93,7 @@ func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits or
 }
 
 // PlanStart validates a start request and computes its idempotency digest.
-func PlanStart(auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, caller Caller, req StartRequest, method string) (StartPlan, error) {
+func PlanStart(auditPolicy auditpolicy.Policy, limits executionlimit.Limits, caller Caller, req StartRequest, method string) (StartPlan, error) {
 	if req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return StartPlan{}, ErrInvalidInput
 	}

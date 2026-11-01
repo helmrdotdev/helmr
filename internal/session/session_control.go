@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"slices"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ type SessionControlReceipt struct {
 
 // ControlSession serializes controls with admission and settlement under the
 // ownership root. Retried acceptance never repeats its lifecycle transition.
-func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
+func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
 	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		caller.ID == uuid.Nil() ||

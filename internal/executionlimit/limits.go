@@ -1,4 +1,6 @@
-package org
+// Package executionlimit holds the operator-configured admission and capacity
+// bounds of an Environment.
+package executionlimit
 
 import (
 	"fmt"
@@ -7,10 +9,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-// ExecutionLimits are the operator-configured admission and capacity bounds of
-// an Environment. There are no implicit production capacity or rate defaults
-// and no Environment without limits.
-type ExecutionLimits struct {
+// Limits are the operator-configured admission and capacity bounds of an
+// Environment. There are no implicit production capacity or rate defaults and
+// no Environment without limits.
+type Limits struct {
 	MaxResidentComputers     int64
 	MaxCPUMillis             int64
 	MaxMemoryBytes           int64
@@ -20,7 +22,7 @@ type ExecutionLimits struct {
 	AdmissionBurst           int64
 }
 
-func (l ExecutionLimits) Validate() error {
+func (l Limits) Validate() error {
 	for _, field := range []struct {
 		name  string
 		value int64
@@ -36,12 +38,12 @@ func (l ExecutionLimits) Validate() error {
 
 // For returns the limits that apply to env. Every Environment currently uses
 // the configured limits.
-func (l ExecutionLimits) For(env uuid.UUID) ExecutionLimits {
+func (l Limits) For(env uuid.UUID) Limits {
 	return l
 }
 
 // ExecutionBudget is the aggregate CPU, memory and resident Computer bound
 // before current usage is subtracted.
-func (l ExecutionLimits) ExecutionBudget() db.ExecutionBudget {
+func (l Limits) ExecutionBudget() db.ExecutionBudget {
 	return db.ExecutionBudget{CPU: l.MaxCPUMillis, Memory: l.MaxMemoryBytes, Residents: l.MaxResidentComputers}
 }

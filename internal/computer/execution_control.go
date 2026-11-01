@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -78,7 +78,7 @@ func settleHibernateCapture(ctx context.Context, auditPolicy auditpolicy.Policy,
 
 // NoteExecutionDemand cancels an uncompleted explicit sleep intent. This joins
 // the admission transaction, so rejected or duplicate input cannot wake a VM.
-func NoteExecutionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, env, id uuid.UUID) error {
+func NoteExecutionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, env, id uuid.UUID) error {
 	if err := RequireExecutionCapacity(ctx, tx, limits, env, id); err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ var ErrExecutionLimit = errors.New("environment execution limit reached; raise t
 // RequireExecutionCapacity checks new execution under the Environment admission
 // lock. An existing allocation already owns its entitlement, so follow-up input
 // does not need room for another VM.
-func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env, id uuid.UUID) error {
+func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env, id uuid.UUID) error {
 	var allocated bool
 	var cpu, memory int64
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready')),

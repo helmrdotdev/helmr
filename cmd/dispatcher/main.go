@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"net/url"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -113,7 +113,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure diagnostic exporter: %w", err)
 	}
 
-	limits := org.ExecutionLimits(cfg.EnvironmentExecutionLimits)
+	limits := executionlimit.Limits(cfg.EnvironmentExecutionLimits)
 	changes := dbnotify.New()
 	runners := []dispatcherRunner{
 		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},

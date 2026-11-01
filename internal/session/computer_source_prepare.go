@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -22,7 +23,7 @@ import (
 // It does not consume the checkpoint or reserve an abort: Validate arbitrates
 // against restoration before any guest mutation. Installed attempts retain their
 // exact request and use ordinary renewal and current-control delivery instead.
-func PrepareComputerSourceAbort(ctx context.Context, limits org.ExecutionLimits, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, epoch int64, credential string, observed *agentv1.ComputerSessionReceipt) (*agentv1.ComputerSessionInstallation, error) {
+func PrepareComputerSourceAbort(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, epoch int64, credential string, observed *agentv1.ComputerSessionReceipt) (*agentv1.ComputerSessionInstallation, error) {
 	if env == uuid.Nil() || checkpoint == uuid.Nil() || epoch <= 0 || len(credential) == 0 || len(credential) > 4096 {
 		return nil, ErrInvalidInput
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,7 +42,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
@@ -233,7 +233,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.AuditPolicy, org.ExecutionLimits(cfg.EnvironmentExecutionLimits), cfg.ComputerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.AuditPolicy, executionlimit.Limits(cfg.EnvironmentExecutionLimits), cfg.ComputerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
@@ -260,7 +260,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		DiagnosticDB:                   diagnosticPool,
 		DiagnosticBounds:               cfg.DiagnosticAdmission.Bounds,
 		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits(cfg.DeploymentUploadLimits),
-		EnvironmentExecutionLimits:     org.ExecutionLimits(cfg.EnvironmentExecutionLimits),
+		EnvironmentExecutionLimits:     executionlimit.Limits(cfg.EnvironmentExecutionLimits),
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DeploymentMode:                 cfg.DeploymentMode,

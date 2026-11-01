@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
@@ -34,13 +35,13 @@ type ImageBuildTrustIssuer interface {
 
 type Allocator struct {
 	auditPolicy auditpolicy.Policy
-	limits      org.ExecutionLimits
+	limits      executionlimit.Limits
 	database    db.TxDB
 	key         [32]byte
 	trust       ImageBuildTrustIssuer
 }
 
-func NewAllocator(database db.TxDB, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
+func NewAllocator(database db.TxDB, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
 	if database == nil || len(channelKey) != 32 {
 		return nil, ErrInvalidInput
 	}
@@ -140,7 +141,7 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 	return shape, err
 }
 
-func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env uuid.UUID, supply allocationSupply, shape computer.AllocationShape, computerID uuid.UUID, imageBuildID uuid.UUID) error {
+func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID, supply allocationSupply, shape computer.AllocationShape, computerID uuid.UUID, imageBuildID uuid.UUID) error {
 	var host allocationCapacity
 	limit := limits.For(env).ExecutionBudget()
 	budget, err := db.ReadExecutionBudgetForComputer(ctx, tx, env, computerID, limit)

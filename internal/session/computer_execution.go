@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -26,7 +27,7 @@ type ComputerExecutionRequest struct {
 
 // ControlComputerExecution owns membership and authorization for the whole VM.
 // A Session hold is neither created nor released by this operation.
-func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, req ComputerExecutionRequest) (computer.ExecutionControl, error) {
+func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, caller Caller, req ComputerExecutionRequest) (computer.ExecutionControl, error) {
 	var result computer.ExecutionControl
 	if req.EnvironmentID == uuid.Nil() || req.ComputerID == uuid.Nil() || caller.ID == uuid.Nil() || (req.Kind != "hibernate" && req.Kind != "wake") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) {
 		return result, ErrInvalidInput

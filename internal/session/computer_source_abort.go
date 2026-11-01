@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"slices"
 	"time"
 	"uuid"
@@ -67,7 +68,7 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 
 // validateSourceAbort runs with supply and captured ownership locks held. No
 // public caller can supply this installation: worker authentication owns it.
-func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
+func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
 	if r.State == "ready" {
 		var runnable bool
 		if err := tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, env, r.Computer).Scan(&runnable); err != nil {
@@ -179,7 +180,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits org.ExecutionLim
 // exact same-machine continuation before any guest mutation. Its version is the successor to the capture version.
 // Disk saves keep their independent reconciliation owner, including missing
 // acknowledgements. No physical thaw or business dispatch is authorized.
-func ValidateComputerSourceAbort(ctx context.Context, limits org.ExecutionLimits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func ValidateComputerSourceAbort(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
 		return err
@@ -252,7 +253,7 @@ func matchSourceAbort(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID,
 
 // CommitComputerSourceAbort consumes checkpoint eligibility before physical
 // activation. Dispatch remains sealed until current controls are reconciled.
-func CommitComputerSourceAbort(ctx context.Context, limits org.ExecutionLimits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CommitComputerSourceAbort(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
@@ -319,7 +320,7 @@ func CommitComputerSourceAbort(ctx context.Context, limits org.ExecutionLimits, 
 // CompleteComputerSourceAbort opens dispatch only after physical activation and
 // reconciliation of every member's current durable control generation. A control
 // changed while the worker was reconciling forces another reconciliation pass.
-func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
 		return err

@@ -2,12 +2,12 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -19,7 +19,7 @@ import (
 // for the already-consumed, installed physical attempt. The host applies this
 // complete set in the guest before activation; it does not rebuild installation
 // from a later snapshot or treat this read as a physical control acknowledgement.
-func ReadComputerContinuationControls(ctx context.Context, limits org.ExecutionLimits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) (*agentv1.ComputerSessionControls, error) {
+func ReadComputerContinuationControls(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) (*agentv1.ComputerSessionControls, error) {
 	identity, err := computerInstallationIdentity(p, p.GetSourceAbort())
 	if err != nil {
 		return nil, err

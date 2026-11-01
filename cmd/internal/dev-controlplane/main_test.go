@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/org"
 )
 
 func TestLoadConfigAcceptsEmptyBootstrap(t *testing.T) {
@@ -100,8 +100,8 @@ func TestMigrationPathsFindsSourceRootWhenCwdDiffers(t *testing.T) {
 	}
 }
 
-func devTestExecutionLimits() org.ExecutionLimits {
-	return org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
+func devTestExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
 }
 
 func TestDevEmailWritesInvitationLinksToTheLog(t *testing.T) {
