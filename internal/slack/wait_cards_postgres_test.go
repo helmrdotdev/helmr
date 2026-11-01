@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
+	"github.com/jackc/pgx/v5"
 )
 
 type recordedCall struct {
@@ -128,7 +129,9 @@ func TestSlackStopWithdrawsAWaitingReplyInItsThread(t *testing.T) {
 	caller := &recordingCaller{}
 	caller.drain(t, f)
 	f.assertAggregate(t, "processing")
-	f.nativeStop(t, "stop")
+	stop := f.nativeStop(t, "stop")
+	// The idle Session has nothing else to stop, so it gets no Stop hold.
+	f.receiptStatus(t, stop, "rejected")
 	var withdrawn bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='stopped_waiting' FROM slack_requests WHERE id=$1`, id).Scan(&withdrawn); err != nil || !withdrawn {
 		t.Fatalf("waiting reply not withdrawn: %v %v", withdrawn, err)
@@ -153,5 +156,48 @@ func TestSlackStopWithdrawsAWaitingReplyInItsThread(t *testing.T) {
 			t.Fatalf("withdrawn feedback: %s %s", feedback.method, feedback.payload)
 		}
 		return
+	}
+}
+
+func TestSlackStopAfterAWaitingReplyIsAdmittedStopsItsExecution(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	f.link(t)
+	id := f.reply(t, "racing-reply", false)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_capacity_exhausted' WHERE id=$1`, id)
+	caller := &recordingCaller{}
+	caller.drain(t, f)
+	// Stop happens while the reply waits, but admission commits first.
+	stopped := slackNow()
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
+		t.Fatal(err)
+	}
+	f.receiptStatus(t, id, "accepted")
+	stop := f.nativeStopAt(t, "late-stop", stopped)
+	var observed bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='received' AND observed_authority_generation IS NOT NULL FROM slack_requests WHERE id=$1`, stop).Scan(&observed); err != nil || !observed {
+		t.Fatalf("Stop treated the admitted reply as newer work: %v %v", observed, err)
+	}
+}
+
+func TestSlackSettlingOneWaitKeepsAnotherWaitWorking(t *testing.T) {
+	f := newStatusFixture(t)
+	first, second := f.newMessage(t, "first", "555.000001"), f.newMessage(t, "second", "555.000001")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_limit',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id IN ($1,$2)`, first, second)
+	caller := &recordingCaller{}
+	caller.drain(t, f)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp() WHERE id=$1`, first)
+	calls := caller.drain(t, f)
+	if len(calls) != 1 || calls[0].method != "chat.update" {
+		t.Fatalf("one settled wait cleared the other's status: %+v", calls)
+	}
+}
+
+func TestSlackWaitCardFollowsCurrentPublication(t *testing.T) {
+	f := newStatusFixture(t)
+	id, _ := f.message(t, "C1")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_limit',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id=$1;
+ UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE slack_installation_id=$2`, pgx.QueryExecModeSimpleProtocol, id, f.installation)
+	if calls := (&recordingCaller{}).drain(t, f); len(calls) != 0 {
+		t.Fatalf("revoked connection published a wait: %+v", calls)
 	}
 }

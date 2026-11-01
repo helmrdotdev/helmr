@@ -85,8 +85,13 @@ func TestSlackPreparationCardFollowsWakeUntilTheTurnStarts(t *testing.T) {
 		t.Fatalf("waiting card: %s %s", title, status)
 	}
 	f.assertAggregate(t, "processing")
-	// The restored Computer is awake again, so the Turn starts at once.
+	// An awake Computer alone does not settle the card; the Turn must start.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='active' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
+	f.drainProjection(t)
+	if title, status := f.preparationCard(t, turn); title != "Waking the Computer" || status != "in_progress" {
+		t.Fatalf("card settled before the Turn started: %s %s", title, status)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='running',process_epoch=1,started_at=clock_timestamp() WHERE id=$1`, turn)
 	f.drainProjection(t)
 	if title, status := f.preparationCard(t, turn); title != "Computer ready" || status != "complete" {
 		t.Fatalf("ready card: %s %s", title, status)
@@ -101,6 +106,9 @@ func TestSlackPreparationCardShowsAStartingComputerAndItsStop(t *testing.T) {
 	if title, status := f.preparationCard(t, turn); title != "Starting the Computer" || status != "in_progress" {
 		t.Fatalf("starting card: %s %s", title, status)
 	}
+	// The Computer comes up but the Turn is cancelled before it starts.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='active' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
+	f.drainProjection(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp() WHERE id=$1`, turn)
 	f.drainProjection(t)
 	if title, status := f.preparationCard(t, turn); title != "Stopped" || status != "error" {
@@ -117,4 +125,28 @@ func TestSlackStoragePressureWaitIsProcessingWithACard(t *testing.T) {
 		t.Fatalf("storage card: %s %s", title, status)
 	}
 	f.assertAggregate(t, "processing")
+}
+
+func TestSlackPreparationCardReportsAComputerThatDidNotStart(t *testing.T) {
+	f := newStatusFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
+	turn := f.queueTurn(t, "failed-start")
+	f.drainProjection(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, turn)
+	f.drainProjection(t)
+	if title, status := f.preparationCard(t, turn); title != "Could not prepare the Computer" || status != "error" {
+		t.Fatalf("failed start card: %s %s", title, status)
+	}
+}
+
+func TestSlackHeldTurnHasNoPreparationCard(t *testing.T) {
+	f := newStatusFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2;
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$3,$4,'process_failed','system')`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, uuid.NewV7(), f.Session)
+	f.queueTurn(t, "held")
+	f.drainProjection(t)
+	var cards int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_posts WHERE thread_id=$1 AND role='preparation'`, f.thread).Scan(&cards); err != nil || cards != 0 {
+		t.Fatalf("held Turn shows preparation: %d %v", cards, err)
+	}
 }

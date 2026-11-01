@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -31,7 +32,9 @@ type waitCardIntent struct {
 	request, installation uuid.UUID
 	revision              int64
 	calls                 []waitCall
-	posting               bool
+	// A new card first verifies the conversation as feedback and status do.
+	posting             bool
+	team, channel, peer string
 }
 
 type waitCall struct {
@@ -50,17 +53,19 @@ func takeWaitCard(ctx context.Context, pool db.TxBeginner) (*waitCardIntent, boo
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var id, installation uuid.UUID
 		var raw []byte
-		var status, code string
+		var status, code, team, actor string
 		var card, channel, root, ts *string
 		var revision int64
-		var active, bound bool
-		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.status,COALESCE(r.error,''),r.wait_card,r.wait_channel,r.wait_thread_ts,r.wait_ts,i.credential_revision,
- i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at,
+		var active, shared bool
+		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.status,COALESCE(r.error,''),r.wait_card,r.wait_channel,r.wait_thread_ts,r.wait_ts,i.credential_revision,i.team_id,r.slack_user_id,
+ i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
+ AND EXISTS(SELECT 1 FROM slack_connections pub WHERE pub.slack_installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at),
  EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE c.installation_id=r.installation_id AND t.slack_channel_id=r.wait_channel AND t.thread_ts=r.wait_thread_ts AND t.deleted_at IS NULL)
+ OR EXISTS(SELECT 1 FROM slack_requests other WHERE other.installation_id=r.installation_id AND other.id<>r.id AND other.status='received' AND other.wait_card IN ('posting','waiting') AND other.wait_channel=r.wait_channel AND other.wait_thread_ts=r.wait_thread_ts)
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
  WHERE (r.status='received' AND r.wait_card IS NULL AND r.error IN ('execution_capacity_exhausted','execution_limit','execution_settling') AND r.payload IS NOT NULL)
  OR (r.status<>'received' AND (r.wait_card='waiting' OR (r.wait_card='posting' AND r.finished_at<clock_timestamp()-interval '1 minute')))
- ORDER BY r.received_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &status, &code, &card, &channel, &root, &ts, &revision, &active, &bound)
+ ORDER BY r.received_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &status, &code, &card, &channel, &root, &ts, &revision, &team, &actor, &active, &shared)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -86,7 +91,11 @@ func takeWaitCard(ctx context.Context, pool db.TxBeginner) (*waitCardIntent, boo
 			}
 			post := waitCard(waitTitle(code), "in_progress")
 			post["channel"], post["thread_ts"] = message.Channel, thread
-			intent = &waitCardIntent{request: id, installation: installation, revision: revision, posting: true, calls: []waitCall{
+			peer := ""
+			if slackroute.IsDirectMessage(message.Channel) {
+				peer = actor
+			}
+			intent = &waitCardIntent{request: id, installation: installation, revision: revision, posting: true, team: team, channel: message.Channel, peer: peer, calls: []waitCall{
 				{"agents.sessions.setStatus", map[string]any{"channel_id": message.Channel, "thread_ts": thread, "status": "processing"}},
 				{"chat.postMessage", post},
 			}}
@@ -112,8 +121,9 @@ func takeWaitCard(ctx context.Context, pool db.TxBeginner) (*waitCardIntent, boo
 			intent.calls = append(intent.calls, waitCall{"chat.update", update})
 		}
 		// An admitted message continues in its Session thread, whose status lane
-		// takes over. A refused one leaves only this Slack session to clear.
-		if status == "rejected" && !bound {
+		// takes over, as it does for a bound thread or another waiting message.
+		// Otherwise a refused one leaves only this Slack session to clear.
+		if status == "rejected" && !shared {
 			intent.calls = append(intent.calls, waitCall{"agents.sessions.setStatus", map[string]any{"channel_id": *channel, "thread_ts": *root, "status": "active"}})
 		}
 		return nil
@@ -135,7 +145,11 @@ func ReconcileWaitCards(ctx context.Context, pool db.TxBeginner, client Caller, 
 			continue
 		}
 		var posted *string
-		for _, call := range intent.calls {
+		calls := intent.calls
+		if intent.posting && client.VerifyConversation(ctx, intent.installation, intent.revision, intent.team, intent.channel, intent.peer) != nil {
+			calls = nil
+		}
+		for _, call := range calls {
 			payload, err := json.Marshal(call.body)
 			if err != nil {
 				return n, err

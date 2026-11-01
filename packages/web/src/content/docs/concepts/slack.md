@@ -105,11 +105,13 @@ While Worker capacity is full, the Environment execution quota is in use or a
 previous execution is still settling, a message waits and Helmr retries it every
 minute. While it waits, a card in its thread names what it is waiting for and
 Slack shows the conversation as working; Slack's Stop control withdraws your
-waiting message without running it. If the hour passes first, the card turns
+waiting message without running it, and also stops the Session's own work if
+it has any. If the hour passes first, the card turns
 to an error and Helmr rejects the message with the reason it was waiting on.
 Feedback about a refused message appears in the thread where you wrote it.
 Refusals caused by the Session, such as capacity that stayed full, are visible
-to everyone in the thread; feedback about your own access stays private. If current Worker capacity
+to everyone in the thread; feedback about your own access stays private. In an
+ended thread, only a message that mentions the Agent gets a visible reply. If current Worker capacity
 cannot be confirmed, Helmr also retries within the window and checks permissions
 again before accepting the request; ask an administrator to check service health
 and Worker pool configuration before repeatedly resending it. An incompatible

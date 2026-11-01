@@ -22,6 +22,12 @@ func TestSlackRejectionFeedbackAnswersWhereTheInputWasMade(t *testing.T) {
 			input: func(f statusFixture, t *testing.T) (uuid.UUID, string) { return f.reply(t, "content", true), "" }},
 		{name: "personal new mention", code: "content_unsupported", method: "chat.postEphemeral", user: "human",
 			input: func(f statusFixture, t *testing.T) (uuid.UUID, string) { return f.message(t, "C1") }},
+		{name: "ended thread mention", code: "session_unavailable", method: "chat.postMessage", thread: "123.456",
+			input: func(f statusFixture, t *testing.T) (uuid.UUID, string) { return f.reply(t, "ended-mention", false), "" }},
+		{name: "ended thread chatter", code: "session_unavailable", method: "chat.postEphemeral", thread: "123.456", user: "human",
+			input: func(f statusFixture, t *testing.T) (uuid.UUID, string) {
+				return f.threadMessage(t, "ended-chatter", "thanks", time.Now()), ""
+			}},
 		{name: "direct message", code: "content_unsupported", method: "chat.postMessage", thread: "message",
 			input: func(f statusFixture, t *testing.T) (uuid.UUID, string) { f.grantDirect(t); return f.message(t, "D1") }},
 	} {

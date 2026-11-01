@@ -25,11 +25,15 @@ type rejectionFeedback struct {
 
 // sessionWideRefusal reports refusals caused by the Session or its execution
 // rather than by the person. They disclose nothing about the person's access,
-// so a channel thread keeps them for everyone who later reads it.
-func sessionWideRefusal(code string) bool {
+// so a channel thread keeps them for everyone who later reads it. An ended or
+// superseded thread refuses every later reply, so only a message addressed to
+// the Agent gets a visible answer there.
+func sessionWideRefusal(code string, mentioned bool) bool {
 	switch code {
-	case "execution_settling", "execution_capacity_incompatible", "execution_capacity_exhausted", "execution_limit", "session_unavailable", "thread_superseded":
+	case "execution_settling", "execution_capacity_incompatible", "execution_capacity_exhausted", "execution_limit":
 		return true
+	case "session_unavailable", "thread_superseded":
+		return mentioned
 	}
 	return false
 }
@@ -255,7 +259,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		body := map[string]any{"channel": channel, "text": text}
 		method := "chat.postEphemeral"
 		thread := payload.Thread
-		if direct || sessionWideRefusal(code) {
+		if direct || sessionWideRefusal(code, payload.Control == nil && stripRoutingMention(payload.Text, bot) != payload.Text) {
 			method = "chat.postMessage"
 			if thread == "" {
 				thread = payload.Message

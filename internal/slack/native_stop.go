@@ -57,13 +57,34 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 		if err != nil {
 			return err
 		}
+		// Withdrawing a message is the whole effect of Stop when the thread's
+		// Session has no work of its own to stop.
+		if withdrawn.RowsAffected() > 0 {
+			var working bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN turns w ON w.environment_id=t.environment_id AND w.session_id=t.front_session_id
+ WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3 AND t.deleted_at IS NULL AND w.status IN ('queued','running'))`, installation, e.Channel, e.Thread).Scan(&working); err != nil {
+				return err
+			}
+			if !working {
+				return rejectMessage(ctx, tx, receipt.ID, "input_ignored")
+			}
+		}
+		// Admission may have accepted such a message after Stop happened but
+		// before this receipt committed. Stop then applies to the execution that
+		// message started instead of treating it as newer work.
+		var raced bool
+		if withdrawn.RowsAffected() == 0 {
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_requests WHERE installation_id=$1 AND status='accepted' AND wait_card IS NOT NULL AND wait_channel=$2 AND wait_thread_ts=$3 AND slack_user_id=$4 AND finished_at>=$5)`, installation, e.Channel, e.Thread, e.User, occurred).Scan(&raced); err != nil {
+				return err
+			}
+		}
 		// Fill the observation once, in the same transaction as the first receipt.
 		// A retry must not acquire a newer front or execution generation.
 		tag, err := tx.Exec(ctx, `UPDATE slack_requests r SET thread_id=t.id,environment_id=s.environment_id,session_id=s.id,thread_source_id=src.id,observed_authority_generation=s.authority_generation,observed_next_turn_seq=s.next_turn_seq
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN slack_thread_sources src ON src.thread_id=t.id AND src.session_id=s.id
  WHERE r.id=$1 AND r.observed_authority_generation IS NULL AND c.installation_id=$2 AND c.slack_channel_id=$3 AND t.thread_ts=$4 AND t.deleted_at IS NULL
  AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))
- AND s.created_at<=$5 AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.created_at>$5) AND NOT EXISTS(SELECT 1 FROM session_controls newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.kind<>'interrupt' AND newer.accepted_at>$5)`, receipt.ID, installation, e.Channel, e.Thread, occurred)
+ AND ($6 OR (s.created_at<=$5 AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.created_at>$5))) AND NOT EXISTS(SELECT 1 FROM session_controls newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.kind<>'interrupt' AND newer.accepted_at>$5)`, receipt.ID, installation, e.Channel, e.Thread, occurred, raced)
 		if err != nil {
 			return err
 		}
@@ -71,9 +92,6 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 			var observed bool
 			if err = tx.QueryRow(ctx, `SELECT observed_authority_generation IS NOT NULL FROM slack_requests WHERE id=$1`, receipt.ID).Scan(&observed); err != nil {
 				return err
-			}
-			if !observed && withdrawn.RowsAffected() > 0 {
-				return rejectMessage(ctx, tx, receipt.ID, "input_ignored")
 			}
 			if !observed {
 				return rejectMessage(ctx, tx, receipt.ID, "stale_gesture")

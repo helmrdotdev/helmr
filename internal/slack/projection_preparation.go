@@ -9,12 +9,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// preparationStateSQL samples why the front Session's oldest unfinished Turn has
-// not started: its Computer is starting, waking or waiting for storage. A Turn
-// that runs, or would run at once on an awake Computer, is ready. Alias s is the
-// front Session.
-const preparationStateSQL = `(SELECT jsonb_build_object('turn',w.id,'phase',CASE
+// preparationStateSQL samples the front Session's oldest unfinished Turn and
+// why it has not started: its Computer is starting, waking or waiting for
+// storage. A Turn that runs, would run at once on an awake Computer, or waits
+// on another hold that Slack status reports as suspended, is ready. The Turn status is part of the sample so a card still pending settles
+// when its Turn starts or ends. Alias s is the front Session.
+const preparationStateSQL = `(SELECT jsonb_build_object('turn',w.id,'status',w.status,'phase',CASE
  WHEN w.status='running' THEN 'ready'
+ WHEN EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id AND h.kind<>'storage_pressure' AND h.released_at IS NULL) THEN 'ready'
  WHEN EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id AND h.kind='storage_pressure' AND h.released_at IS NULL) THEN 'storage'
  WHEN EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.status='active' AND l.fenced_at IS NULL) THEN 'ready'
  WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')) THEN 'waking'
@@ -26,62 +28,68 @@ type preparationState struct {
 	Phase string     `json:"phase"`
 }
 
-func (p preparationState) waiting() bool { return p.Turn != nil && p.Phase != "ready" }
-
 // projectPreparation keeps one preparation card per Turn that had to wait for
-// its Computer. The card appears only when the Turn first waits and settles
-// when the Turn starts or ends; a Turn on an awake Computer gets none.
+// its Computer. The card appears only when the Turn first waits and stays
+// pending until the Turn starts or ends; a Turn on an awake Computer gets none.
 func projectPreparation(ctx context.Context, tx pgx.Tx, o projectionOwner) (bool, error) {
 	if o.session != o.front {
 		return false, nil
 	}
 	var bound, same bool
-	var previousRaw, currentRaw []byte
-	if err := tx.QueryRow(ctx, `SELECT t.thread_ts IS NOT NULL,t.projected_preparation IS NOT DISTINCT FROM `+preparationStateSQL+`,t.projected_preparation,`+preparationStateSQL+`
- FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) WHERE t.id=$1`, o.thread).Scan(&bound, &same, &previousRaw, &currentRaw); err != nil {
+	var currentRaw []byte
+	if err := tx.QueryRow(ctx, `SELECT t.thread_ts IS NOT NULL,t.projected_preparation IS NOT DISTINCT FROM `+preparationStateSQL+`,`+preparationStateSQL+`
+ FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) WHERE t.id=$1`, o.thread).Scan(&bound, &same, &currentRaw); err != nil {
 		return false, err
 	}
 	if !bound || same {
 		return false, nil
 	}
-	var previous, current preparationState
-	if previousRaw != nil {
-		if err := json.Unmarshal(previousRaw, &previous); err != nil {
-			return false, err
-		}
-	}
+	var current preparationState
 	if currentRaw != nil {
 		if err := json.Unmarshal(currentRaw, &current); err != nil {
 			return false, err
 		}
 	}
 	changed := false
-	if previous.waiting() && (!current.waiting() || *current.Turn != *previous.Turn) {
-		var status string
-		if err := tx.QueryRow(ctx, `SELECT status FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, o.environment, o.front, *previous.Turn).Scan(&status); err != nil {
-			return false, err
-		}
-		title, state := "Computer ready", "complete"
-		switch status {
-		case "failed":
-			title, state = "Could not prepare the Computer", "error"
-		case "cancelled", "interrupted":
-			title, state = "Stopped", "error"
-		}
-		posted, err := upsertPreparationCard(ctx, tx, o, *previous.Turn, title, state)
+	if current.Turn != nil && current.Phase != "ready" {
+		posted, err := upsertPreparationCard(ctx, tx, o, *current.Turn, preparationTitle(current.Phase), "in_progress")
 		if err != nil {
 			return false, err
 		}
 		changed = posted
 	}
-	if current.waiting() {
-		posted, err := upsertPreparationCard(ctx, tx, o, *current.Turn, preparationTitle(current.Phase), "in_progress")
+	rows, err := tx.Query(ctx, `SELECT w.id,CASE WHEN w.started_at IS NOT NULL THEN 'started' ELSE w.status END FROM slack_posts p JOIN turns w ON (w.environment_id,w.session_id,w.id)=(p.environment_id,p.session_id,p.turn_id)
+ WHERE p.thread_source_id=$1 AND p.role='preparation' AND p.payload IS NOT NULL AND convert_from(p.payload,'UTF8')::jsonb#>>'{blocks,0,status}'='in_progress' AND w.status<>'queued'`, o.frontSource)
+	if err != nil {
+		return false, err
+	}
+	type settled struct {
+		turn   uuid.UUID
+		status string
+	}
+	turns, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (settled, error) {
+		var s settled
+		err := row.Scan(&s.turn, &s.status)
+		return s, err
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, turn := range turns {
+		title, state := "Computer ready", "complete"
+		switch turn.status {
+		case "failed":
+			title, state = "Could not prepare the Computer", "error"
+		case "cancelled", "interrupted":
+			title, state = "Stopped", "error"
+		}
+		posted, err := upsertPreparationCard(ctx, tx, o, turn.turn, title, state)
 		if err != nil {
 			return false, err
 		}
 		changed = changed || posted
 	}
-	_, err := tx.Exec(ctx, `UPDATE slack_threads SET projected_preparation=$2 WHERE id=$1`, o.thread, currentRaw)
+	_, err = tx.Exec(ctx, `UPDATE slack_threads SET projected_preparation=$2 WHERE id=$1`, o.thread, currentRaw)
 	return changed, err
 }
 

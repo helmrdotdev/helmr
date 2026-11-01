@@ -18,8 +18,13 @@ import (
 
 func (f statusFixture) nativeStop(t *testing.T, key string) uuid.UUID {
 	t.Helper()
+	return f.nativeStopAt(t, key, slackNow())
+}
+
+func (f statusFixture) nativeStopAt(t *testing.T, key, at string) uuid.UUID {
+	t.Helper()
 	handler := EventHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret")}
-	body := eventBody(t, key, map[string]any{"type": "agent_session_stopped", "channel": "C1", "thread_ts": "123.456", "event_ts": slackNow(), "user": "human", "streaming_message_ts": []string{}})
+	body := eventBody(t, key, map[string]any{"type": "agent_session_stopped", "channel": "C1", "thread_ts": "123.456", "event_ts": at, "user": "human", "streaming_message_ts": []string{}})
 	for range 2 {
 		if response := serveSignedEvent(handler, body); response.Code != http.StatusOK {
 			t.Fatalf("Stop receipt: %d %s", response.Code, response.Body.String())
