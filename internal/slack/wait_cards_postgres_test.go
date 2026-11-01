@@ -211,3 +211,21 @@ func TestSlackWaitSettlesOnlyAfterAnOutstandingRefresh(t *testing.T) {
 		t.Fatalf("settlement after refresh: %+v", calls)
 	}
 }
+
+func TestSlackAbandonedWaitRefreshIsClaimedAgain(t *testing.T) {
+	f := newStatusFixture(t)
+	id := f.newMessage(t, "abandoned", "777.000001")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_limit',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, id)
+	caller := &recordingCaller{}
+	caller.drain(t, f)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET wait_status_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, id)
+	// A worker claims the refresh and never returns.
+	if refresh, found, err := takeWaitCard(t.Context(), f.Pool); err != nil || !found || refresh == nil || !refresh.refreshing {
+		t.Fatalf("refresh claim: %+v %v %v", refresh, found, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET wait_status_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, id)
+	calls := caller.drain(t, f)
+	if len(calls) != 1 || calls[0].body["status"] != "processing" {
+		t.Fatalf("abandoned refresh not retried: %+v", calls)
+	}
+}

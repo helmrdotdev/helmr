@@ -65,7 +65,7 @@ func takeWaitCard(ctx context.Context, pool db.TxBeginner) (*waitCardIntent, boo
  EXISTS(SELECT 1 FROM slack_requests other WHERE other.installation_id=r.installation_id AND other.id<>r.id AND other.status='received' AND other.wait_card IN ('posting','waiting') AND other.wait_channel=r.wait_channel AND other.wait_thread_ts=r.wait_thread_ts)
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
  WHERE (r.status='received' AND r.wait_card IS NULL AND r.error IN ('execution_capacity_exhausted','execution_limit','execution_settling') AND r.payload IS NOT NULL)
- OR (r.status='received' AND r.wait_card='waiting' AND r.wait_ts IS NOT NULL AND r.wait_status_at<clock_timestamp()-interval '1 minute')
+ OR (r.status='received' AND r.wait_card IN ('waiting','posting') AND r.wait_ts IS NOT NULL AND r.wait_status_at<clock_timestamp()-interval '1 minute')
  OR (r.status<>'received' AND (r.wait_card='waiting' OR (r.wait_card='posting' AND r.finished_at<clock_timestamp()-interval '1 minute')))
  ORDER BY r.received_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &status, &code, &card, &channel, &root, &ts, &revision, &team, &actor, &active, &bound, &others)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -108,7 +108,8 @@ func takeWaitCard(ctx context.Context, pool db.TxBeginner) (*waitCardIntent, boo
 		// reasserts processing each minute, as the status lane does for a
 		// bound thread.
 		// The card returns to posting while the call is outstanding, so its
-		// settlement cannot be overtaken by a late processing status.
+		// settlement cannot be overtaken by a late processing status. A refresh
+		// abandoned in posting is claimed again after a minute.
 		if status == "received" {
 			if !active || bound {
 				_, err = tx.Exec(ctx, `UPDATE slack_requests SET wait_status_at=clock_timestamp() WHERE id=$1`, id)
