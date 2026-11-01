@@ -117,7 +117,8 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 			checks := append(slices.Clone(e.Authorization.Checks), OperatorCheck{Type: "platform_operator", OperatorID: a.OperatorID, SessionID: e.Authentication.CredentialID, ObservationSource: "transaction", Result: "failed"})
 			return &Refusal{Authorization: Authorization{Decision: "denied", Checks: checks}, Cause: auth.ErrUnauthenticated}
 		}
-		if e.Action != "audit.searched" {
+		// Issuing an enrollment token is the only platform write that needs recent proof.
+		if e.Action == "worker_group.created" || e.Action == "worker_group.token_rotated" {
 			if err := auth.RequireRecentProof(auth.Principal{Kind: auth.PrincipalKindOperator, AuthenticatedAt: current.AuthenticatedAt.Time}); err != nil {
 				return err
 			}

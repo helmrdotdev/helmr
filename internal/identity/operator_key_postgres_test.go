@@ -164,7 +164,7 @@ func TestOperatorAddsKeyThroughItsOwnSession(t *testing.T) {
 	signInOperator(t, f, wa, second, "")
 
 	// Both steps need a recent confirmation.
-	f.exec(t, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, p.SessionID)
+	f.exec(t, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
 	if _, err = BeginOperatorKey(t.Context(), f.pool, wa, p, binding); !errors.Is(err, ErrRecentProofRequired) {
 		t.Fatal("stale session started a key ceremony", err)
 	}
@@ -172,7 +172,7 @@ func TestOperatorAddsKeyThroughItsOwnSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.exec(t, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, other.SessionID)
+	f.exec(t, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, other.SessionID)
 	if err = FinishOperatorKey(t.Context(), f.pool, f.cfg, wa, other, options.ChallengeID, binding, newTestPasskey(t).register(t, options), "Third key"); !errors.Is(err, ErrRecentProofRequired) {
 		t.Fatal("stale session finished a key ceremony", err)
 	}

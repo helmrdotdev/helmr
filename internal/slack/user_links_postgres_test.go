@@ -62,6 +62,31 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 		t.Fatal("disabled member linked", err)
 	}
 }
+
+// Linking issues durable authority and needs recent proof; unlinking only
+// removes it and needs just the live browser.
+func TestSlackUserUnlinkNeedsNoRecentProof(t *testing.T) {
+	f, _, org := credentialFixture(t)
+	p := f.Principal(t)
+	identity := UserIdentity{TeamID: "team", SlackUserID: "stale"}
+	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, f.installation, identity); err != nil {
+		t.Fatal(err)
+	}
+	// A CLI login of the same account is not a browser and cannot unlink.
+	cli := p
+	cli.SessionID, cli.Channel = uuid.NewV7(), "cli"
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO login_sessions(id,user_id,org_id,member_id,channel,identity_id,authenticated_at,token_hash,expires_at) SELECT $1,user_id,org_id,id,'cli',$4,clock_timestamp(),uuid_send($1::uuid),clock_timestamp()+interval '1 hour' FROM org_members WHERE org_id=$2 AND user_id=$3 AND removed_at IS NULL`, cli.SessionID, org, f.User, p.IdentityID)
+	if err := UnlinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(cli), org, f.User, identity.TeamID, identity.SlackUserID); !errors.Is(err, ErrUserLinkDenied) {
+		t.Fatal("CLI login unlinked", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
+	if err := UnlinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, identity.TeamID, identity.SlackUserID); err != nil {
+		t.Fatal("stale browser could not unlink", err)
+	}
+	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, f.installation, identity); !errors.Is(err, ErrUserLinkDenied) {
+		t.Fatal("stale browser linked", err)
+	}
+}
 func TestSlackUserLinksCompetingUsersCannotStealIdentity(t *testing.T) {
 	f, _, org := credentialFixture(t)
 	other := uuid.NewV7()

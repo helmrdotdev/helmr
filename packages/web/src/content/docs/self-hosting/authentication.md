@@ -41,8 +41,9 @@ registration provides no operator authority. Remove the local capability file
 after use. If the new key cannot sign in, issue a new capability with `repair`.
 
 Operator sessions last twelve hours. Confirming your sign-in with an operator key
-keeps the session and gives it twelve hours from that confirmation. Sensitive
-actions require confirmation within the last hour. They do not authorize ordinary organization resources. To create
+keeps the session and gives it twelve hours from that confirmation. Changing
+operator keys and issuing worker-group enrollment tokens require confirmation
+within the last two hours. Operators do not authorize ordinary organization resources. To create
 the first self-hosted organization, sign in separately with the ordinary account
 that will own it, then complete setup with both identities. The deployment supports
 one organization. An existing organization's owner is not promoted to operator.
@@ -97,10 +98,10 @@ inferred from the URL prefix.
 | `GET /me`, `/setup`, `/credentials` | Current operator session. |
 | `POST /auth/options`, `/auth/verify` with an operator session | Confirms the current session with a fresh key assertion and extends it to twelve hours from that confirmation. Old confirmation does not prevent starting it. |
 | `POST /auth/logout` | Retires the presented operator session; does not require a fresh confirmation. |
-| `POST /credentials/options`, `/credentials/complete` | Current operator session confirmed within the last hour at both steps; the registration is bound to that session and browser. |
-| `DELETE /credentials/{id}` | Current operator session confirmed within the last hour, signed in with a key other than the one being removed. |
+| `POST /credentials/options`, `/credentials/complete` | Current operator session confirmed within the last two hours at both steps; the registration is bound to that session and browser. |
+| `DELETE /credentials/{id}` | Current operator session confirmed within the last two hours, signed in with a key other than the one being removed. |
 | `POST /account-repairs/*` | Self-hosted only; current operator session plus the repair capability, browser binding and operation-specific fresh-proof checks. |
-| Existing region, worker-group and pool APIs | Current operator session; mutations additionally require recent operator proof. |
+| Existing region, worker-group and pool APIs | Current operator session. Creating a worker group and rotating its enrollment token also require recent operator proof, because both issue a token. |
 
 All these browser mutations have same-origin protection. Ceremony requests have
 a 128 MiB request limit; infrastructure requests have a 64 KiB limit.
@@ -129,17 +130,17 @@ the account and other organizations, and reinvitation creates a new membership
 lifetime.
 
 Changes that alter access or destroy something require a sign-in confirmed within
-the last hour: Roles and assignments, ownership, Group membership changes for
+the last two hours: Roles and assignments, ownership, Group membership changes for
 Groups that carry assignments, API keys, rotating or revoking Secrets, removing
 members, deleting Groups and connections, deleting or restoring Agents, updating or
 deleting Computers, shortening Session history retention, and adding or removing
 sign-in methods and changing your login email. Other changes, such as creating a
 Secret, setting up a Slack connection, lengthening retention, changing your display
-name or signing out, use your current sign-in. When confirmation is needed, the
+name, unlinking Slack or signing out, use your current sign-in. When confirmation is needed, the
 Console asks you to confirm your sign-in and then retry.
 
 Use `helmr login` to authorize a CLI for the displayed account and organization.
-Approving a CLI login needs a browser that signed in within the last hour; the
+Approving a CLI login needs a browser that signed in within the last two hours; the
 approval page asks you to confirm your sign-in first when it is older. That
 approval is the CLI's proof, so CLI commands never ask for confirmation. A CLI
 token cannot switch to another organization by adding a request header.

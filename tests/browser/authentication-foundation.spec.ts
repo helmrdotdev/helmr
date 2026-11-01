@@ -120,7 +120,7 @@ test("deployment-local operator enrollment installs the registered key", async (
     await expect(page).toHaveURL(/\/setup$/);
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
     await expect(page.getByRole("heading", { name: "Setup is complete" })).toBeVisible();
-    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'"], { stdio: "pipe" });
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours',expires_at=clock_timestamp()+interval '8 hours' WHERE channel='operator'"], { stdio: "pipe" });
     await page.goto("/admin/operator-keys");
     await expect(page.getByRole("row").filter({ hasText: "Operator key" })).toBeVisible();
     await page.getByRole("button", { name: "Open operator menu", exact: true }).click();
@@ -146,7 +146,7 @@ test("deployment-local operator enrollment installs the registered key", async (
     await operatorConfirmation.getByRole("button", { name: "Return to your action", exact: true }).click();
     await removeKey.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.unroute("**/admin/api/v1/credentials/*");
-    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
       env: { ...process.env, PGDATABASE: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` }, stdio: "pipe",
     });
     await page.goto("/admin/operator-keys");

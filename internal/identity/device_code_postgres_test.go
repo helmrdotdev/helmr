@@ -218,7 +218,7 @@ func TestDeviceApprovalNeedsRecentBrowserSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, browser.SessionID)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, browser.SessionID)
 	stale, err := access.SessionPrincipal(ctx, f.pool, browser.SessionID, org)
 	if err != nil {
 		t.Fatal(err)

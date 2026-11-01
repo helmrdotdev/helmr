@@ -197,7 +197,7 @@ func TestRemovingASignInMethodLeavesSessionsSignedIn(t *testing.T) {
 	}
 	// Removing a sign-in method still requires recent proof.
 	f.session(t, user, uuid.Nil())
-	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, p.SessionID)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
 	stale, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestSignOutOtherSessionsKeepsOnlyThisBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Stale proof is enough to sign out other sessions.
-	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, p.SessionID)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
 	if p, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func TestDisplayNameChangeDoesNotNeedRecentProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, p.SessionID)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
 	stale, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
 	if err != nil {
 		t.Fatal(err)

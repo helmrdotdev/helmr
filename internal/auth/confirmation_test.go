@@ -12,8 +12,8 @@ func TestProvedRecentlyBoundaries(t *testing.T) {
 		at   time.Time
 		want bool
 	}{
-		{"exactly one hour old", now.Add(-RecentProofWindow), true},
-		{"just over one hour old", now.Add(-RecentProofWindow - time.Nanosecond), false},
+		{"exactly the window old", now.Add(-RecentProofWindow), true},
+		{"just over the window old", now.Add(-RecentProofWindow - time.Nanosecond), false},
 		{"thirty seconds in the future", now.Add(30 * time.Second), true},
 		{"two minutes in the future", now.Add(2 * time.Minute), false},
 		{"never proved", time.Time{}, false},

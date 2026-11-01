@@ -42,10 +42,10 @@ func TestAdminAuthenticationRouteBoundaries(t *testing.T) {
 			t.Fatalf("authenticated %s: %d %s", path, got.Code, got.Body)
 		}
 	}
-	// Old confirmation must block infrastructure mutation but permit the
+	// Old confirmation still permits ordinary infrastructure writes and the
 	// ceremony that confirms and extends the session.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'`)
-	if got := f.request(t, "POST", "/admin/api/v1/regions", operator, `{"id":"blocked","display_name":"Blocked"}`); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours',expires_at=clock_timestamp()+interval '8 hours' WHERE channel='operator'`)
+	if got := f.request(t, "POST", "/admin/api/v1/regions", operator, `{"id":"stale","display_name":"Stale"}`); got.Code != http.StatusCreated {
 		t.Fatalf("stale mutation: %d %s", got.Code, got.Body)
 	}
 	if got := f.request(t, "POST", "/admin/api/v1/auth/options", operator, "{}"); got.Code != http.StatusOK {

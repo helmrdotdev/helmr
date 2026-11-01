@@ -266,7 +266,7 @@ func TestGroupMembershipNeedsRecentProofOnlyWhenTheGroupCarriesAssignments(t *te
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	stale := f.owner
-	stale.Human.AuthenticatedAt = stale.Human.AuthenticatedAt.Add(-2 * time.Hour)
+	stale.Human.AuthenticatedAt = stale.Human.AuthenticatedAt.Add(-3 * time.Hour)
 	group, err := org.SavePermissionGroup(ctx, f.pool, f.owner, uuid.Nil(), "Unassigned team")
 	if err != nil {
 		t.Fatal(err)

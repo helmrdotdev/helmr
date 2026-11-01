@@ -271,23 +271,32 @@ func TestAdminHTTPWorkerPools(t *testing.T) {
 	}
 }
 
-func TestAdminMutationRequiresRecentOperatorProof(t *testing.T) {
+// Only issuing an enrollment token needs recent operator proof; ordinary
+// platform writes need a live operator session.
+func TestAdminTokenIssueRequiresRecentOperatorProof(t *testing.T) {
 	f := newSupplyHTTPFixture(t)
 	token := f.adminSession(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=statement_timestamp()-interval '2 hours',issued_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE channel='operator'`)
-	if got := f.request(t, http.MethodGet, "/admin/api/v1/regions", token, ""); got.Code != http.StatusOK {
+	decodeAdmin[api.AdminRegion](t, f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"us-east","display_name":"US East"}`), http.StatusCreated)
+	group := decodeAdmin[api.CreateAdminWorkerGroupResponse](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups", token, `{"region_id":"us-east","name":"default"}`), http.StatusCreated).WorkerGroup
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=statement_timestamp()-interval '3 hours',issued_at=statement_timestamp()-interval '3 hours',expires_at=statement_timestamp()+interval '9 hours' WHERE channel='operator'`)
+	if got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"stale-allowed","display_name":"Stale"}`); got.Code != http.StatusCreated {
 		t.Fatal(got.Code, got.Body)
 	}
-	got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"fresh-required","display_name":"Fresh"}`)
-	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
-		t.Fatal(got.Code, got.Body)
+	for _, issue := range []struct{ path, body string }{
+		{"/admin/api/v1/worker-groups", `{"region_id":"us-east","name":"second"}`},
+		{"/admin/api/v1/worker-groups/" + group.ID + "/token/rotate", ""},
+	} {
+		got := f.request(t, http.MethodPost, issue.path, token, issue.body)
+		if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
+			t.Fatal(issue.path, got.Code, got.Body)
+		}
 	}
-	var exists bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM regions WHERE id='fresh-required')`).Scan(&exists); err != nil || exists {
-		t.Fatal(exists, err)
+	var groups int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_groups WHERE name='second'`).Scan(&groups); err != nil || groups != 0 {
+		t.Fatal(groups, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp() WHERE channel='operator'`)
-	if got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"fresh-required","display_name":"Fresh"}`); got.Code != http.StatusCreated {
+	if got := f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+group.ID+"/token/rotate", token, ""); got.Code != http.StatusOK {
 		t.Fatal(got.Code, got.Body)
 	}
 }
@@ -322,12 +331,12 @@ func TestOperatorProofExpiryAtCommitReturnsConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Admission occurred while fresh; the operation reaches commit after expiry.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=statement_timestamp()-interval '2 hours',authenticated_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE id=$1`, p.SessionID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=statement_timestamp()-interval '3 hours',authenticated_at=statement_timestamp()-interval '3 hours',expires_at=statement_timestamp()+interval '9 hours' WHERE id=$1`, p.SessionID)
 	err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(t.Context(), `INSERT INTO regions(id,display_name) VALUES('late-commit','Late')`); err != nil {
 			return err
 		}
-		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: actor, Action: "region.created", TargetKind: "region", Details: audit.RegionDetails{RegionID: "late-commit"}})
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: actor, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 	})
 	if !errors.Is(err, auth.ErrRecentProofRequired) || errors.Is(err, audit.ErrCapture) {
 		t.Fatal("authorization became capture failure", err)

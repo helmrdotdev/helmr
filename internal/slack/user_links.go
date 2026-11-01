@@ -191,7 +191,9 @@ func UnlinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		return ErrUserLinkDenied
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := linkConsentPrincipal(ctx, tx, actor, org, user); err != nil {
+		// Unlinking only removes authority, so it needs the live browser but not
+		// recent proof, like signing out other sessions.
+		if _, err := linkBrowserPrincipal(ctx, tx, actor, org, user); err != nil {
 			return err
 		}
 		tag, err := tx.Exec(ctx, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3 AND org_id=$4 AND revoked_at IS NULL`, team, slackUser, user, org)
@@ -205,6 +207,19 @@ func UnlinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 // Consent is issued from a live browser proof under the same account root lock
 // as source retirement and revoke-all. The resulting link is independent of it.
 func linkConsentPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org, user uuid.UUID) (auth.Principal, error) {
+	p, err := linkBrowserPrincipal(ctx, tx, e, org, user)
+	if err != nil {
+		return p, err
+	}
+	if !auth.ProvedRecently(p.AuthenticatedAt, time.Now()) {
+		return p, ErrUserLinkDenied
+	}
+	return p, nil
+}
+
+// linkBrowserPrincipal loads this account's live browser session under the
+// account root lock.
+func linkBrowserPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org, user uuid.UUID) (auth.Principal, error) {
 	if e.Authentication.CredentialKind != "login_session" || e.Authentication.CredentialID == uuid.Nil() {
 		return auth.Principal{}, ErrUserLinkDenied
 	}
@@ -219,7 +234,7 @@ func linkConsentPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org,
 	if err != nil {
 		return p, err
 	}
-	if p.UserID != user || p.Channel != "browser" || !auth.ProvedRecently(p.AuthenticatedAt, time.Now()) {
+	if p.UserID != user || p.Channel != "browser" {
 		return p, ErrUserLinkDenied
 	}
 	return p, nil
