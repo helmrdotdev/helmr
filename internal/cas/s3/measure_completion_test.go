@@ -2,6 +2,7 @@ package s3
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,7 +28,9 @@ import (
 // HELMR_MEASURE_COMPLETION_URI and fails when completion reaches
 // HELMR_MEASURE_COMPLETION_LIMIT_SECONDS (the load balancer idle timeout,
 // 180 by default). The object is written in the keyspace of the organization
-// HELMR_MEASURE_COMPLETION_ORG, or of a random one, and deleted afterwards.
+// HELMR_MEASURE_COMPLETION_ORG, or of a random one. Every version it leaves
+// under its digest and staging keys is deleted afterwards, since no database
+// lifetime registers it for reclamation.
 func TestMeasureMultipartCompletion(t *testing.T) {
 	uri := os.Getenv("HELMR_MEASURE_COMPLETION_URI")
 	if uri == "" {
@@ -68,7 +73,25 @@ func TestMeasureMultipartCompletion(t *testing.T) {
 		_, _ = hash.Write(bytesAt(offset, min(upload.PartSize, size-offset)))
 	}
 	descriptor := cas.Descriptor{Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)), SizeBytes: size, MediaType: cas.CheckpointMemoryMediaType}
-	upload, err = store.CreateUpload(t.Context(), "measure-"+strconv.FormatUint(seed, 16), descriptor)
+	owner := "measure-" + strconv.FormatUint(seed, 16)
+	key, err := store.objectKey(descriptor.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging, err := store.stagingKey(owner, descriptor.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		for _, key := range []string{key, staging} {
+			if err := deleteAllVersions(ctx, store, key); err != nil {
+				t.Errorf("delete %s: %v", key, err)
+			}
+		}
+	})
+	upload, err = store.CreateUpload(t.Context(), owner, descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +133,6 @@ func TestMeasureMultipartCompletion(t *testing.T) {
 	started = time.Now()
 	object, err := store.CompleteUpload(t.Context(), descriptor, upload, parts)
 	completed := time.Since(started)
-	t.Cleanup(func() { _ = store.Delete(t.Context(), descriptor.Digest) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,4 +151,33 @@ func errorsJoinAbort(t *testing.T, store *Store, upload cas.Upload, descriptor c
 		return fmt.Errorf("%w; abort: %w", err, abortErr)
 	}
 	return err
+}
+
+// deleteAllVersions removes every version and delete marker of exactly key.
+func deleteAllVersions(ctx context.Context, store *Store, key string) error {
+	for {
+		page, err := store.client.ListObjectVersions(ctx, &awss3.ListObjectVersionsInput{Bucket: aws.String(store.bucket), Prefix: aws.String(key)})
+		if err != nil {
+			return err
+		}
+		var versions []*string
+		for _, v := range page.Versions {
+			if aws.ToString(v.Key) == key {
+				versions = append(versions, v.VersionId)
+			}
+		}
+		for _, v := range page.DeleteMarkers {
+			if aws.ToString(v.Key) == key {
+				versions = append(versions, v.VersionId)
+			}
+		}
+		if len(versions) == 0 {
+			return nil
+		}
+		for _, version := range versions {
+			if _, err := store.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String(store.bucket), Key: aws.String(key), VersionId: version}); err != nil {
+				return err
+			}
+		}
+	}
 }

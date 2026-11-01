@@ -114,13 +114,19 @@ type completionClient struct {
 	exists    bool
 	read      bool
 	inPlace   bool
-	// unversioned storage returns no version IDs.
+	// unversioned storage returns no version IDs; suspended returns "null".
 	unversioned bool
+	suspended   bool
+	// existingMedia is the media type of an object already at the digest key.
+	existingMedia string
 }
 
 func (c *completionClient) version(id string) *string {
 	if c.unversioned {
 		return nil
+	}
+	if c.suspended {
+		return aws.String("null")
 	}
 	return aws.String(id)
 }
@@ -184,6 +190,13 @@ func (c *completionClient) CopyObject(_ context.Context, input *awss3.CopyObject
 }
 
 func (c *completionClient) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
+	if !strings.Contains(aws.ToString(input.Key), "/staging/") {
+		media := cas.CheckpointMemoryMediaType
+		if c.existingMedia != "" {
+			media = c.existingMedia
+		}
+		return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(media)}, nil
+	}
 	if aws.ToString(input.VersionId) != "v2" || aws.ToString(input.IfMatch) != `"verified"` {
 		return nil, errors.New("metadata of an unpinned version")
 	}
@@ -246,19 +259,39 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 }
 
 // An entity tag alone does not pin the verified bytes, so completion in
-// storage that returns no version publishes nothing.
+// storage that returns no version, or the replaceable "null" version of a
+// bucket with versioning suspended, publishes nothing.
 func TestCompleteUploadRequiresVersionedStorage(t *testing.T) {
 	staged := bytes.Repeat([]byte{7}, 96)
 	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
 	for _, readBack := range []bool{false, true} {
-		client := &completionClient{staged: staged, unversioned: true}
+		for _, client := range []*completionClient{{staged: staged, unversioned: true}, {staged: staged, suspended: true}} {
+			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+			if readBack {
+				store.copyObjectMaxBytes = 32
+			}
+			if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || client.copied != "" {
+				t.Fatalf("read back %t, suspended %t: completion = %v, copied %q", readBack, client.suspended, err, client.copied)
+			}
+		}
+	}
+}
+
+// Losing a create-only race to an object of the same digest completes the
+// upload only when the stored object carries the descriptor's metadata.
+func TestCompleteUploadRefusesExistingObjectOfOtherMetadata(t *testing.T) {
+	staged := bytes.Repeat([]byte{7}, 96)
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	for _, readBack := range []bool{false, true} {
+		client := &completionClient{staged: staged, exists: true, existingMedia: "application/octet-stream"}
 		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
 		if readBack {
 			store.copyObjectMaxBytes = 32
 		}
-		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || client.copied != "" {
-			t.Fatalf("read back %t: unversioned completion = %v, copied %q", readBack, err, client.copied)
+		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); !errors.Is(err, cas.ErrRemoteIntegrity) {
+			t.Fatalf("read back %t: completion over other metadata = %v", readBack, err)
 		}
 	}
 }

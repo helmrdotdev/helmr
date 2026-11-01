@@ -210,7 +210,8 @@ func partLength(expected cas.Descriptor, upload cas.Upload, part int32) (int64, 
 // from a holder that is not trusted with the digest namespace, so a mismatch,
 // crash or cancellation never leaves unverified bytes under a digest key;
 // staging expires on its own. Every object at a digest key was authenticated
-// when it was written, so finding one already there completes the upload.
+// when it was written, so finding one already there completes the upload when
+// its size and media type match.
 func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upload cas.Upload, parts []cas.CompletedPart) (cas.Object, error) {
 	if _, err := partLength(expected, upload, 1); err != nil {
 		return cas.Object{}, err
@@ -247,14 +248,28 @@ func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upl
 	if err != nil {
 		return cas.Object{}, err
 	}
-	if version == "" {
-		return cas.Object{}, errors.New("storage returned no version for the staged object; the bucket must be versioned")
+	if !immutableVersion(version) {
+		return cas.Object{}, errors.New("storage returned no immutable version for the staged object; the bucket must be versioned")
 	}
-	key, err := c.promoteStaged(ctx, staging, etag, version, expected)
+	if err := c.promoteStaged(ctx, staging, etag, version, expected); err != nil {
+		return cas.Object{}, err
+	}
+	// A create-only conflict leaves an earlier object in place; its bytes were
+	// authenticated when written, but it may carry other metadata.
+	object, err := c.Stat(ctx, expected.Digest)
 	if err != nil {
 		return cas.Object{}, err
 	}
-	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
+	if object.SizeBytes != expected.SizeBytes || object.MediaType != expected.MediaType {
+		return cas.Object{}, fmt.Errorf("%w: object %s metadata differs from its descriptor", cas.ErrRemoteIntegrity, expected.Digest)
+	}
+	return object, nil
+}
+
+// immutableVersion reports whether a version ID names bytes no later write can
+// replace. A bucket with versioning suspended returns "null", which can.
+func immutableVersion(version string) bool {
+	return version != "" && version != "null"
 }
 
 func (c *Store) copyObjectMax() int64 {
@@ -294,8 +309,8 @@ func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas
 		return "", "", fmt.Errorf("%w: staged bytes differ from digest %s", cas.ErrRemoteIntegrity, expected.Digest)
 	}
 	etag, version := aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId)
-	if version == "" {
-		return "", "", errors.New("storage returned no version for the staged copy; the bucket must be versioned")
+	if !immutableVersion(version) {
+		return "", "", errors.New("storage returned no immutable version for the staged copy; the bucket must be versioned")
 	}
 	stat, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{
 		Bucket: aws.String(c.bucket), Key: aws.String(staging), IfMatch: aws.String(etag), VersionId: aws.String(version),
@@ -338,10 +353,10 @@ func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.D
 
 // promoteStaged copies verified staged bytes to the digest key create-only.
 // Objects above one copy request are copied in server-side parts.
-func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string, expected cas.Descriptor) (string, error) {
+func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string, expected cas.Descriptor) error {
 	key, err := c.objectKey(expected.Digest)
 	if err != nil {
-		return "", err
+		return err
 	}
 	source := url.PathEscape(c.bucket+"/"+staging) + "?versionId=" + url.QueryEscape(version)
 	if expected.SizeBytes <= c.copyObjectMax() {
@@ -351,15 +366,15 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 			IfNoneMatch: aws.String("*"), MetadataDirective: types.MetadataDirectiveReplace,
 		})
 		if err != nil && conditionalWriteError(err) != conditionalWriteExists {
-			return "", storageFailure(ctx, err)
+			return storageFailure(ctx, err)
 		}
-		return key, nil
+		return nil
 	}
 	created, err := c.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
 		Bucket: aws.String(c.bucket), Key: aws.String(key), ContentType: aws.String(expected.MediaType),
 	})
 	if err != nil {
-		return "", storageFailure(ctx, err)
+		return storageFailure(ctx, err)
 	}
 	uploadID := aws.ToString(created.UploadId)
 	var parts []types.CompletedPart
@@ -370,7 +385,7 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 			CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag), CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
 		})
 		if err != nil || copied == nil || copied.CopyPartResult == nil {
-			return "", errors.Join(storageFailure(ctx, err), c.abortMultipartUpload(ctx, key, uploadID))
+			return errors.Join(storageFailure(ctx, err), c.abortMultipartUpload(ctx, key, uploadID))
 		}
 		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(number), ETag: copied.CopyPartResult.ETag})
 	}
@@ -379,13 +394,13 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}, IfNoneMatch: aws.String("*"),
 	})
 	if err == nil {
-		return key, nil
+		return nil
 	}
 	abortErr := c.abortMultipartUpload(ctx, key, uploadID)
 	if conditionalWriteError(err) == conditionalWriteExists && abortErr == nil {
-		return key, nil
+		return nil
 	}
-	return "", errors.Join(storageFailure(ctx, err), abortErr)
+	return errors.Join(storageFailure(ctx, err), abortErr)
 }
 
 // AbortUpload releases an unfinished staged multipart publication.
