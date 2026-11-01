@@ -112,10 +112,7 @@ type Worker struct {
 	WorkerResourceID            string
 	WorkerPoolName              string
 	WorkerEnrollmentTokenFile   string
-	CASURI                      string
 	WorkerHostSecretPath        string
-	CheckpointKey               []byte
-	PlatformStoreURI            string
 	WorkDir                     string
 	ImagesDir                   string
 	FirecrackerPath             string

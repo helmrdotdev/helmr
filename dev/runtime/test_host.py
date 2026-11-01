@@ -141,7 +141,9 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn('dev-controlplane', ''.join(files.values()))
         self.assertNotIn('ExecStart=', files['worker-override.conf'])
         self.assertNotIn('Delegate=', files['worker-override.conf'])
-        self.assertEqual(cfg['worker']['CAS_URI'], cfg['control_plane']['CAS_URI'])
+        # Workers hold no storage location or credential; the Control Plane grants each request.
+        for key in ['CAS_URI', 'PLATFORM_STORE_URI', 'CHECKPOINT_ENCRYPTION_KEY']:
+            self.assertNotIn(key, cfg['worker'])
         self.assertEqual(cfg['dispatcher']['COMPUTER_FENCING_KEY'], cfg['control_plane']['COMPUTER_FENCING_KEY'])
         for key in ['ENVIRONMENT_MAX_RESIDENT_COMPUTERS', 'ENVIRONMENT_ADMISSION_BURST']:
             self.assertEqual(cfg['dispatcher'][key], cfg['control_plane'][key])

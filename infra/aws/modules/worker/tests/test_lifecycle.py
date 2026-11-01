@@ -198,22 +198,25 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             script=TEMPLATE.read_text().split("cat >/usr/local/sbin/helmr-worker-enrollment-token <<'EOF'\n",1)[1].split("\nEOF",1)[0]
-            script=script.replace("${aws_region}","us-east-1").replace("${checkpoint_key_secret_arn}","checkpoint").replace("${worker_enrollment_token_secret_arn}","enrollment")
+            script=script.replace("${aws_region}","us-east-1").replace("${worker_enrollment_token_secret_arn}","enrollment")
             script=script.replace("-o root -g root ","").replace("/etc/helmr",str(root / "etc")).replace("/run/helmr",str(root / "run"))
             (root / "etc").mkdir();(root / "run").mkdir()
             (root / "etc/worker-base.env").write_text("WORKER_POOL_NAME=pool\n")
-            (root / "aws").write_text('#!/bin/sh\nif [ -f "$TEST_ROOT/secret-fail" ]; then rm "$TEST_ROOT/secret-fail"; exit 1; fi\ncase "$*" in *checkpoint*) echo "key-$ROTATION";; *) echo "token-$ROTATION";; esac\n')
+            (root / "aws").write_text('#!/bin/sh\nif [ -f "$TEST_ROOT/secret-fail" ]; then rm "$TEST_ROOT/secret-fail"; exit 1; fi\necho "token-$ROTATION"\n')
             (root / "curl").write_text('#!/bin/sh\ncase "$*" in *instance-id*) echo i-current;; *) echo imds-token;; esac\n')
             for name in ("aws","curl"):(root / name).chmod(0o755)
             environment={**os.environ,"PATH":str(root)+os.pathsep+os.environ["PATH"],"TEST_ROOT":str(root)}
             (root / "secret-fail").touch()
             failed=subprocess.run(["sh","-c",script],env={**environment,"ROTATION":"first-attempt"},capture_output=True,text=True)
             self.assertNotEqual(failed.returncode,0)
-            self.assertFalse((root / "etc/worker.env").exists())
+            self.assertFalse((root / "run/worker-enrollment-token").exists())
             for rotation in ("before-stop","after-wake"):
                 result=subprocess.run(["sh","-c",script],env={**environment,"ROTATION":rotation},capture_output=True,text=True)
                 self.assertEqual(result.returncode,0,result.stderr)
-                self.assertIn("CHECKPOINT_ENCRYPTION_KEY=key-"+rotation,(root / "etc/worker.env").read_text())
+                self.assertIn("WORKER_RESOURCE_ID=i-current",(root / "etc/worker.env").read_text())
+                # Workers hold no storage location, storage credential or checkpoint key.
+                for name in ("CHECKPOINT_ENCRYPTION_KEY","CAS_URI","PLATFORM_STORE_URI"):
+                    self.assertNotIn(name,(root / "etc/worker.env").read_text())
                 self.assertEqual((root / "run/worker-enrollment-token").read_text(),"token-"+rotation)
                 self.assertEqual((root / "etc/worker.env").stat().st_mode & 0o777,0o600)
 

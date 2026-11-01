@@ -86,6 +86,26 @@ func (q *Queries) ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCa
 	return items, nil
 }
 
+const deleteEndedStorageWrites = `-- name: DeleteEndedStorageWrites :execrows
+DELETE FROM allocation_storage_writes w
+ WHERE NOT EXISTS (
+    SELECT 1 FROM computer_leases l WHERE l.worker_host_id=w.worker_host_id AND l.worker_epoch=w.worker_epoch AND l.allocation_id=w.allocation_id AND l.fenced_at IS NULL)
+   AND NOT EXISTS (
+    SELECT 1 FROM image_builds b WHERE b.worker_host_id=w.worker_host_id AND b.worker_epoch=w.worker_epoch AND b.allocation_id=w.allocation_id AND b.fenced_at IS NULL)
+   AND NOT EXISTS (
+    SELECT 1 FROM boot_seed_builds b WHERE b.worker_host_id=w.worker_host_id AND b.worker_epoch=w.worker_epoch AND b.allocation_id=w.allocation_id AND b.fenced_at IS NULL)
+`
+
+// Write receipts authorize nothing once their allocation ends. Removing them
+// lets an upload abandoned by that allocation become a retirement candidate.
+func (q *Queries) DeleteEndedStorageWrites(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEndedStorageWrites)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listAbandonedCasBlobs = `-- name: ListAbandonedCasBlobs :many
 SELECT lifetime.digest
   FROM cas_blobs lifetime
@@ -94,6 +114,7 @@ SELECT lifetime.digest
    AND NOT EXISTS (SELECT 1 FROM checkpoint_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM disk_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.digest=lifetime.digest)
  ORDER BY lifetime.digest
  LIMIT $1
 `
@@ -160,6 +181,7 @@ UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.digest=$1
    AND lifetime.retired_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.digest=lifetime.digest)
 `
 
 // Commit before making any remote calls. Never clear retired_at or remove this

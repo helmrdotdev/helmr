@@ -98,18 +98,23 @@ func TestEncryptedSizeMatchesActualFraming(t *testing.T) {
 		if err := cipher.Encrypt(t.Context(), bytes.NewReader(make([]byte, size)), &out, "size-test"); err != nil {
 			t.Fatal(err)
 		}
-		want, err := cipher.EncryptedSize(size)
+		want, err := encryptedCheckpointSize(size)
 		if err != nil || int64(out.Len()) != want {
 			t.Fatalf("plaintext=%d actual=%d calculated=%d error=%v", size, out.Len(), want, err)
 		}
 	}
 	for _, size := range []int64{-1, math.MaxInt64, math.MaxInt64 - 100} {
-		if _, err := cipher.EncryptedSize(size); err == nil {
+		if _, err := encryptedCheckpointSize(size); err == nil {
 			t.Fatalf("accepted %d", size)
 		}
 	}
-	if _, err := (*CheckpointEncryptor)(nil).EncryptedSize(1); err == nil {
-		t.Fatal("missing encryptor accepted")
+}
+
+func TestCheckpointEncryptorRequires256BitKey(t *testing.T) {
+	for _, n := range []int{0, 16, 24, 31, 33} {
+		if _, err := NewCheckpointEncryptor(make([]byte, n)); err == nil {
+			t.Fatalf("accepted %d-byte key", n)
+		}
 	}
 }
 
@@ -187,15 +192,15 @@ func TestCheckpointEncryptorSeparatesAttemptsAndAuthenticatesFraming(t *testing.
 			}
 		})
 	}
-	if _, err := c.EncryptedSize(int64(maxRecords-1) * chunkSize); err != nil {
+	if _, err := encryptedCheckpointSize(int64(maxRecords-1) * chunkSize); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.EncryptedSize(int64(maxRecords-1)*chunkSize + 1); err == nil {
+	if _, err := encryptedCheckpointSize(int64(maxRecords-1)*chunkSize + 1); err == nil {
 		t.Fatal("end record nonce budget not reserved")
 	}
 }
 
-func TestCheckpointKeyMismatchReportsOnlyFingerprints(t *testing.T) {
+func TestCheckpointKeyMismatchIsInvalidWithoutKeyMaterial(t *testing.T) {
 	key := bytes.Repeat([]byte{8}, 32)
 	source, _ := NewCheckpointEncryptor(key)
 	target, _ := NewCheckpointEncryptor(bytes.Repeat([]byte{9}, 32))
@@ -204,7 +209,7 @@ func TestCheckpointKeyMismatchReportsOnlyFingerprints(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := target.Decrypt(t.Context(), &ciphertext, io.Discard, "memory")
-	if !errors.Is(err, ErrCheckpointKeyUnavailable) || !strings.Contains(err.Error(), source.KeyID()) || !strings.Contains(err.Error(), target.KeyID()) || strings.Contains(err.Error(), hex.EncodeToString(key)) {
+	if !errors.Is(err, errInvalidCheckpoint) || strings.Contains(err.Error(), hex.EncodeToString(key)) {
 		t.Fatalf("key mismatch diagnostic: %v", err)
 	}
 }

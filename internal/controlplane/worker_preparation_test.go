@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +195,7 @@ type preparationHTTPPublication struct {
 	client   *workerclient.Client
 	executor workerapi.PreparationExecutor
 	store    testUploadStore
+	pool     *pgxpool.Pool
 }
 
 func (p preparationHTTPPublication) RegisterBatch(ctx context.Context, inspection []blockformat.ObjectInspection) error {
@@ -204,6 +206,9 @@ func (p preparationHTTPPublication) CertifyBatch(ctx context.Context, inspection
 }
 func (p preparationHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {
+		return cas.Object{}, err
+	}
+	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
 		return cas.Object{}, err
 	}
 	return p.store.Put(ctx, d.MediaType, io.NewSectionReader(file, 0, d.SizeBytes))
@@ -249,7 +254,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer candidate.Close()
-	locator, err := candidate.Publish(t.Context(), preparationHTTPPublication{client: client, executor: request, store: store})
+	locator, err := candidate.Publish(t.Context(), preparationHTTPPublication{client: client, executor: request, store: store, pool: f.Pool})
 	if err != nil {
 		t.Fatal(err)
 	}

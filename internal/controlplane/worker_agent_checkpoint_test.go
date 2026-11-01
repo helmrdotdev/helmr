@@ -49,7 +49,7 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	}
 	defer candidate.Close()
 	save := workerapi.AgentSave{EnvironmentID: request.EnvironmentID, SaveID: result.SaveID, LeaseEpoch: 1}
-	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: save, store: store})
+	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: save, store: store, pool: f.Pool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,9 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 		t.Fatal("missing objects made checkpoint ready")
 	}
 	for _, d := range descriptors {
+		if err := sessiontest.RecordUpload(t.Context(), f.Pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := store.Put(t.Context(), d.MediaType, strings.NewReader("opaque runtime object: "+d.MediaType)); err != nil {
 			t.Fatal(err)
 		}

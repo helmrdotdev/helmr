@@ -221,6 +221,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		CAS:                            casStore,
 		BundleAdmission:                bundleAdmission,
 		PlatformStore:                  platformStore,
+		StorageObjects:                 casStore,
+		StoragePlatform:                platformStore,
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,

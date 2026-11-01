@@ -17,7 +17,6 @@ case "$*" in
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",
-      checkpoint_encryption_key:"arn:checkpoint-encryption-key",
       github_oauth_client_secret:"arn:github-oauth-client-secret"
     } + (if $local_key == "1" then {computer_wrapping_key:"arn:computer-wrapping-key"} else {} end) + (if $capacity == "1" then {capacity_token:"arn:capacity-token"} else {} end)'
     ;;
@@ -74,8 +73,8 @@ run_helper present
 
 : >"${tmp}/puts"
 run_helper missing
-[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 7 ] || {
-  printf 'expected all seven missing secret values to be initialized\n' >&2
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 6 ] || {
+  printf 'expected all six missing secret values to be initialized\n' >&2
   exit 1
 }
 

@@ -22,21 +22,25 @@ import (
 	"time"
 	"uuid"
 
-	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/bootseed"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Only this test Worker's existing CAS client uses the proxy. Preparation and
-// qualification finish before the response fault is armed. Small demand ranges
-// stay intact while a larger background range waits for actual Agent.init work.
+// Only this test Worker's storage grants are routed through the proxy: the
+// Control Plane handler's read grants are rewritten to the proxy host, which
+// forwards each signed request unchanged to the signed storage host.
+// Preparation and qualification finish before the response fault is armed.
+// Small demand ranges stay intact while a larger background range waits for
+// actual Agent.init work.
 type nativeSeedFaultProxy struct {
 	mu       sync.Mutex
 	targets  map[string]bool
+	upstream string
+	proxyURL *url.URL
 	held     chan struct{}
 	release  chan struct{}
 	injected chan struct{}
@@ -48,72 +52,76 @@ type nativeSeedRoundTrip func(*http.Request) (*http.Response, error)
 
 func (f nativeSeedRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func newNativeSeedFaultProxy(ctx context.Context, rawURI string) (*nativeSeedFaultProxy, *httptest.Server, string, error) {
-	uri, err := url.Parse(rawURI)
+func newNativeSeedFaultProxy(casURI string) (*nativeSeedFaultProxy, *httptest.Server, error) {
+	uri, err := url.Parse(casURI)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, err
 	}
 	if uri.Scheme != "s3" || uri.Host == "" || !strings.HasPrefix(uri.Path, "/_verification/native-execution/") ||
 		!strings.HasSuffix(uri.Path, "/cas") || uri.RawQuery != "" || uri.Fragment != "" {
-		return nil, nil, "", errors.New("seed fault requires isolated native-execution CAS")
-	}
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, nil, "", err
-	}
-	if cfg.Region != "us-east-1" {
-		return nil, nil, "", errors.New("seed fault fixture requires its qualified region")
+		return nil, nil, errors.New("seed fault requires isolated native-execution CAS")
 	}
 	p := &nativeSeedFaultProxy{targets: make(map[string]bool), held: make(chan struct{}), release: make(chan struct{}), injected: make(chan struct{})}
-	upstream, _ := url.Parse("https://s3.us-east-1.amazonaws.com")
-	proxy := httputil.NewSingleHostReverseProxy(upstream)
-	proxy.Transport = nativeSeedRoundTrip(func(r *http.Request) (*http.Response, error) {
-		// Preserve the SDK's body and checksum framing. Signed streaming chunks
-		// cannot be re-signed as an ordinary request by this fixture.
-		hash := r.Header.Get("X-Amz-Content-Sha256")
-		if hash == "" || strings.HasPrefix(hash, "STREAMING-AWS4-") {
-			return nil, errors.New("unsupported payload signing mode in seed fixture")
-		}
-		credentials, err := cfg.Credentials.Retrieve(r.Context())
-		if err != nil {
-			return nil, err
-		}
-		r.Host = upstream.Host
-		// The reverse proxy adds this header, but S3 rewrites it. Signing it
-		// makes otherwise unchanged requests fail authentication upstream.
-		r.Header.Del("X-Forwarded-For")
-		r.Header.Del("Authorization")
-		r.Header.Del("X-Amz-Security-Token")
-		err = awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true }).
-			SignHTTP(r.Context(), credentials, r, hash, "s3", cfg.Region, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		return http.DefaultTransport.RoundTrip(r)
-	})
-	proxy.ModifyResponse = p.modify
-	bucketPath := "/" + uri.Host
-	objectPrefix := bucketPath + uri.Path + "/"
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
+		p.mu.Lock()
+		upstream := p.upstream
+		p.mu.Unlock()
+		// Signed requests bind the storage host; forward them unchanged.
+		r.Out.URL.Scheme, r.Out.URL.Host, r.Out.Host = "https", upstream, upstream
+	}, ModifyResponse: p.modify}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		inScope := strings.HasPrefix(r.URL.Path, objectPrefix)
-		if r.URL.Path == bucketPath || r.URL.Path == bucketPath+"/" {
-			inScope = strings.HasPrefix(r.URL.Query().Get("prefix"), strings.TrimPrefix(uri.Path, "/")+"/")
-		}
-		if !inScope {
+		if !strings.Contains(r.URL.Path, strings.TrimPrefix(uri.Path, "/")+"/") {
 			http.Error(w, "outside fixture CAS", http.StatusForbidden)
 			return
 		}
 		proxy.ServeHTTP(w, r)
 	}))
-	query := uri.Query()
-	query.Set("endpoint", server.URL)
-	uri.RawQuery = query.Encode()
-	return p, server, uri.String(), nil
+	p.proxyURL, _ = url.Parse(server.URL)
+	return p, server, nil
+}
+
+// rewriteGrants routes the Worker's CAS read grants through the proxy.
+func (p *nativeSeedFaultProxy) rewriteGrants(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/worker/v1/storage/reads" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		recorder := httptest.NewRecorder()
+		next.ServeHTTP(recorder, r)
+		body := recorder.Body.Bytes()
+		var grants workerapi.StorageReadResponse
+		if recorder.Code == http.StatusOK && json.Unmarshal(body, &grants) == nil {
+			for i := range grants.Grants {
+				for _, signed := range []*cas.SignedRequest{&grants.Grants[i].Get, &grants.Grants[i].Head} {
+					target, err := url.Parse(signed.URL)
+					if err != nil {
+						continue
+					}
+					p.mu.Lock()
+					p.upstream = target.Host
+					p.mu.Unlock()
+					target.Scheme, target.Host = p.proxyURL.Scheme, p.proxyURL.Host
+					signed.URL = target.String()
+				}
+			}
+			body, _ = json.Marshal(grants)
+		}
+		for name, values := range recorder.Header() {
+			w.Header()[name] = values
+		}
+		w.Header().Del("Content-Length")
+		w.WriteHeader(recorder.Code)
+		_, _ = w.Write(body)
+	})
 }
 
 func (p *nativeSeedFaultProxy) modify(response *http.Response) error {
 	p.mu.Lock()
-	selected := p.targets[response.Request.URL.Path]
+	selected := false
+	for key := range p.targets {
+		selected = selected || strings.HasSuffix(response.Request.URL.Path, "/"+key)
+	}
 	p.mu.Unlock()
 	// A demand request covers at most four 256-KiB chunks plus four tags.
 	// Header/index requests are smaller too. Do not stall those reads.
@@ -151,7 +159,7 @@ func (p *nativeSeedFaultProxy) modify(response *http.Response) error {
 }
 
 func TestNativeSeedFaultWaitsForInitAndPreservesDemand(t *testing.T) {
-	p := &nativeSeedFaultProxy{targets: map[string]bool{"/seed": true}, held: make(chan struct{}), release: make(chan struct{}), injected: make(chan struct{})}
+	p := &nativeSeedFaultProxy{targets: map[string]bool{"seed": true}, held: make(chan struct{}), release: make(chan struct{}), injected: make(chan struct{})}
 	response := func(size int) *http.Response {
 		r := httptest.NewRequest(http.MethodGet, "http://fixture/seed", nil)
 		r.Header.Set("Range", fmt.Sprintf("bytes=100-%d", 99+size))
@@ -244,7 +252,7 @@ func verifyNativeLateSeedFault(t *testing.T, parent context.Context, pool *pgxpo
 			t.Fatal(err)
 		}
 		proxy.mu.Lock()
-		proxy.targets["/"+uri.Host+"/"+key] = true
+		proxy.targets[key] = true
 		proxy.mu.Unlock()
 	}
 	err = rows.Err()

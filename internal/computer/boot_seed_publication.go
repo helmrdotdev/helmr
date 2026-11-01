@@ -139,6 +139,9 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 			return err
 		}
 		for _, object := range m.Objects() {
+			if err := requireOrganizationUpload(ctx, tx, org, object.Digest); err != nil {
+				return err
+			}
 			if _, err := db.New(tx).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}); err != nil {
 				return err
 			}

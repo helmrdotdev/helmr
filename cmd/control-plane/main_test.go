@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -58,6 +59,14 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	signer, err := cass3.New(t.Context(), "s3://unused-cas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformSigner, err := cass3.NewImmutable(t.Context(), "s3://unused-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
 		Changes:                        dbnotify.New(),
 		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
@@ -73,6 +82,8 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 		CAS:                            unusedUploadStore{},
 		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:                  unusedUploadStore{},
+		StorageObjects:                 signer,
+		StoragePlatform:                platformSigner,
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
 		AuthKey:                        make([]byte, auth.RootKeySize),
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),

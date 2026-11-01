@@ -8,12 +8,8 @@ import (
 )
 
 func TestHostDiskRejectsInvalidShapes(t *testing.T) {
-	cipher, err := NewCheckpointEncryptor(make([]byte, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, shape := range [][3]int64{{0, 1, 1}, {1, 0, 1}, {1, 1, 0}, {math.MaxInt64, 1, 1}, {1, 1, math.MaxInt64}} {
-		if _, err := HostDiskPerSlot(shape[0], shape[1], shape[2], cipher); err == nil {
+		if _, err := HostDiskPerSlot(shape[0], shape[1], shape[2]); err == nil {
 			t.Fatalf("invalid shape accepted: %v", shape)
 		}
 	}
@@ -35,9 +31,8 @@ func TestHostDiskFormatBounds(t *testing.T) {
 	if err := json.Unmarshal(raw, &fixtures); err != nil {
 		t.Fatal(err)
 	}
-	cipher, _ := NewCheckpointEncryptor(make([]byte, 32))
 	for i, fixture := range fixtures {
-		actual, err := HostDiskPerSlot(fixture.MemoryMiB, fixture.ScratchMiB, fixture.StagingMiB<<20, cipher)
+		actual, err := HostDiskPerSlot(fixture.MemoryMiB, fixture.ScratchMiB, fixture.StagingMiB<<20)
 		if err != nil {
 			t.Fatal(err)
 		}

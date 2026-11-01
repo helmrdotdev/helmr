@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"os"
 	"strings"
@@ -36,6 +37,9 @@ func (p *preparationPublicationTest) CertifyBatch(ctx context.Context, e []block
 }
 func (p *preparationPublicationTest) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, f); err != nil {
+		return cas.Object{}, err
+	}
+	if err := sessiontest.RecordUpload(ctx, p.f.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
 		return cas.Object{}, err
 	}
 	return p.remote.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))

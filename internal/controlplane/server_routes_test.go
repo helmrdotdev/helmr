@@ -323,6 +323,7 @@ POST /worker/v1/agent-computers/capture/cancel
 POST /worker/v1/agent-computers/capture/save-absence
 POST /worker/v1/agent-computers/capture/seal
 POST /worker/v1/agent-computers/checkpoint/complete
+POST /worker/v1/agent-computers/checkpoint/key
 POST /worker/v1/agent-computers/checkpoint/read
 POST /worker/v1/agent-computers/checkpoint/register
 POST /worker/v1/agent-computers/controls
@@ -361,6 +362,7 @@ POST /worker/v1/allocations/image-build/secrets
 POST /worker/v1/allocations/image-build/start
 POST /worker/v1/allocations/image-build/stopped
 POST /worker/v1/allocations/list
+POST /worker/v1/boot-seeds/key
 POST /worker/v1/computer-commands/claim
 POST /worker/v1/computer-commands/complete
 POST /worker/v1/computer-commands/logs/append
@@ -397,6 +399,11 @@ POST /worker/v1/sessions/start/release
 POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
+POST /worker/v1/storage/reads
+POST /worker/v1/storage/writes
+POST /worker/v1/storage/writes/abort
+POST /worker/v1/storage/writes/complete
+POST /worker/v1/storage/writes/parts
 PUT /api/groups/{id}/members/{memberID}
 PUT /api/members/{memberID}/ownership
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials

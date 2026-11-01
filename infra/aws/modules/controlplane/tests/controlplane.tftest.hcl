@@ -738,12 +738,12 @@ run "live_dispatcher_diagnostic_limits_require_positive_integers" {
 run "quarantine_retention_is_always_bounded" {
   command = apply
   assert {
-    condition     = length(aws_s3_bucket_lifecycle_configuration.cas) == 1 && length(aws_s3_bucket_lifecycle_configuration.cas[0].rule) == 2
+    condition     = length(aws_s3_bucket_lifecycle_configuration.cas) == 1 && length(aws_s3_bucket_lifecycle_configuration.cas[0].rule) == 5
     error_message = "Quarantine retention must be present without enabling expiration of published CAS objects."
   }
   assert {
-    condition     = alltrue([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule.filter[0].prefix == "quarantine/" && rule.status == "Enabled"])
-    error_message = "Mandatory retention must cover only the canonical quarantine prefix."
+    condition     = alltrue([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule.status == "Enabled" && (rule.id == "abort-abandoned-multipart-uploads" ? length(rule.expiration) == 0 && length(rule.noncurrent_version_expiration) == 0 && rule.abort_incomplete_multipart_upload[0].days_after_initiation == 1 : contains(["quarantine/", "staging/"], rule.filter[0].prefix))])
+    error_message = "Mandatory retention must expire only the canonical quarantine and staging prefixes; abandoned multipart uploads are aborted without expiring objects."
   }
   assert {
     condition     = one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "expire-quarantine"]).expiration[0].days == 1 && one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "expire-quarantine"]).noncurrent_version_expiration[0].noncurrent_days == 1 && one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "remove-quarantine-delete-markers"]).expiration[0].expired_object_delete_marker

@@ -145,7 +145,9 @@ Workers send their worker API version in the JSON `api_version` field when enrol
 Ordinary worker API calls do not require a version header. Compatible releases keep the same API version. Connection checks do not guarantee compatibility after a Control Plane replacement: drain workers before deploying an incompatible release, as described in [Upgrades](/docs/self-hosting/upgrades#worker-api-version-changes).
 
 Workers need outbound access to the Control Plane, S3, AWS APIs, and the
-destinations your agents call. They do not install dependencies or build Deployment artifacts.
+destinations your agents call. Workers hold no S3 credentials: the Control Plane
+issues short-lived signed requests for the objects of each live allocation, so the
+Worker role grants only lifecycle actions and the enrollment token secret. They do not install dependencies or build Deployment artifacts.
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 

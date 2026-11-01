@@ -215,6 +215,9 @@ func (s saveObjectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspectio
 		return err
 	}
 	if !row.Certified.Bool {
+		if err = requireOrganizationUpload(ctx, tx, pgvalue.MustUUIDValue(s.orgID), uploaded.Digest); err != nil {
+			return err
+		}
 		q := db.New(tx)
 		if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: s.orgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
 			return err

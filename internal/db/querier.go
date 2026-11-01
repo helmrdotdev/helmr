@@ -53,6 +53,9 @@ type Querier interface {
 	CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error)
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error)
+	// Write receipts authorize nothing once their allocation ends. Removing them
+	// lets an upload abandoned by that allocation become a retirement candidate.
+	DeleteEndedStorageWrites(ctx context.Context) (int64, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
 	// EnrollHost owns the deciding authority locks and physical-custody exclusion.

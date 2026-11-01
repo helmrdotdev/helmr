@@ -139,6 +139,9 @@ func (s *saveStorageFixture) uploadObject(t *testing.T, object storedObject) {
 	if err = cas.VerifyDescriptorFile(t.Context(), d, file); err != nil {
 		t.Fatal(err)
 	}
+	if err = sessiontest.RecordUpload(t.Context(), s.f.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = s.remote.Put(t.Context(), d.MediaType, io.NewSectionReader(file, 0, d.SizeBytes)); err != nil {
 		t.Fatal(err)
 	}

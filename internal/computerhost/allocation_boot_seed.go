@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math"
 	"os"
@@ -55,7 +56,7 @@ type BootSeedAllocationOwner struct {
 }
 
 func NewBootSeedAllocationOwner(machines *PreparedMachines, client AllocatedBootSeedClient, identity workerapi.AllocationIdentity, hostEpoch int64, admitStart func(context.Context) error) (*BootSeedAllocationOwner, error) {
-	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.ComputerRanges == nil || machines.OptionalProgramStore == nil || machines.OptionalPlatformStore == nil || machines.OptionalComputerObjects == nil || machines.OptionalComputerRanges == nil || machines.CheckpointCipher == nil || machines.Reservations == nil || !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "seed" || identity.Epoch <= 0 || hostEpoch <= 0 {
+	if machines == nil || machines.Backend == nil || machines.CAS == nil || machines.PlatformStore == nil || machines.ComputerObjects == nil || machines.ComputerRanges == nil || machines.OptionalProgramStore == nil || machines.OptionalPlatformStore == nil || machines.OptionalComputerObjects == nil || machines.OptionalComputerRanges == nil || machines.ObjectKeys == nil || machines.Reservations == nil || !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || !filepath.IsAbs(machines.TempDir) || machines.RuntimeArchitecture != definition.ArchitectureX8664 || machines.ComputerStagingBytes <= 0 || client == nil || admitStart == nil || identity.Kind != "seed" || identity.Epoch <= 0 || hostEpoch <= 0 {
 		return nil, errors.New("boot seed requires physical backend, encrypted stores and capacity")
 	}
 	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID} {
@@ -95,6 +96,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	}
 	o.executor = workerapi.BootSeedExecutor{Identity: o.identity, ChannelCredential: delivery.ChannelCredential}
 	defer func() { clear(o.executor.ChannelCredential); o.executor.ChannelCredential = nil }()
+	ctx = brokeredstore.WithScope(ctx, workerapi.StorageScope{BootSeed: &o.executor})
 	ctx, cancel := context.WithCancelCause(ctx)
 	var jobs sync.WaitGroup
 	defer func() {
@@ -133,7 +135,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: shape.MemoryBytes, ScratchBytes: shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, o.machines.CheckpointCipher)
+	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: shape.MemoryBytes, ScratchBytes: shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit})
 	if err != nil {
 		return err
 	}
@@ -200,7 +202,12 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	}
 	env, _ := uuid.Parse(o.identity.EnvironmentID)
 	build, _ := uuid.Parse(o.identity.OwnerID)
-	manifest, err := o.machines.publishBootSeed(ctx, retained, env, build, artifact, shape.ScratchBytes, o.machines.OptionalComputerObjects)
+	cipher, err := o.machines.bootSeedCipher(ctx, build)
+	if err != nil {
+		return err
+	}
+	defer cipher.Close()
+	manifest, err := o.machines.publishBootSeed(ctx, cipher, retained, env, build, artifact, shape.ScratchBytes, o.machines.OptionalComputerObjects)
 	if err != nil {
 		return err
 	}
@@ -223,7 +230,7 @@ func (o *BootSeedAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		if err := os.Mkdir(stage, 0700); err != nil {
 			return err
 		}
-		request.BootSeed, err = o.machines.openBootSeedFrom(ctx, stage, manifest, shape.MemoryBytes, shape.ScratchBytes, o.machines.OptionalComputerObjects, o.machines.OptionalComputerRanges)
+		request.BootSeed, err = o.machines.openBootSeedFrom(ctx, cipher, stage, manifest, shape.MemoryBytes, shape.ScratchBytes, o.machines.OptionalComputerObjects, o.machines.OptionalComputerRanges)
 		if err != nil {
 			return err
 		}

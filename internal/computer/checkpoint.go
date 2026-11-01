@@ -54,6 +54,9 @@ func PublishCheckpointObjects(ctx context.Context, tx pgx.Tx, env uuid.UUID, man
 		if !pinned {
 			return ErrConflict
 		}
+		if err := requireOrganizationUpload(ctx, tx, org, o.Digest); err != nil {
+			return err
+		}
 		if _, err := db.New(tx).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: o.Digest, SizeBytes: o.SizeBytes, MediaType: o.MediaType}); err != nil {
 			return err
 		}

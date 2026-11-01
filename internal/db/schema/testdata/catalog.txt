@@ -39,6 +39,15 @@ column agents.environment_id uuid not null
 column agents.id uuid not null
 column agents.key text not null
 column agents.revision bigint not null default 1
+column allocation_storage_writes.allocation_id uuid not null
+column allocation_storage_writes.availability_required boolean generated stored true
+column allocation_storage_writes.digest text not null
+column allocation_storage_writes.media_type text not null
+column allocation_storage_writes.org_id uuid not null
+column allocation_storage_writes.size_bytes bigint not null
+column allocation_storage_writes.upload_id text
+column allocation_storage_writes.worker_epoch bigint not null
+column allocation_storage_writes.worker_host_id uuid not null
 column api_keys.created_at timestamp with time zone not null default now()
 column api_keys.created_by_member_id uuid
 column api_keys.credential_version bigint not null default 1
@@ -108,6 +117,8 @@ column boot_seed_builds.channel_credential_digest bytea
 column boot_seed_builds.cpu_config_digest text
 column boot_seed_builds.cpu_millis bigint not null
 column boot_seed_builds.created_at timestamp with time zone not null default clock_timestamp()
+column boot_seed_builds.data_key_wrapped bytea
+column boot_seed_builds.data_key_wrapping_key_id text
 column boot_seed_builds.deadline_at timestamp with time zone
 column boot_seed_builds.delivered_at timestamp with time zone
 column boot_seed_builds.deployment_id uuid not null
@@ -177,6 +188,8 @@ column checkpoints.computer_id uuid not null
 column checkpoints.control_version bigint not null
 column checkpoints.controls_reconciled_at timestamp with time zone
 column checkpoints.created_at timestamp with time zone not null default clock_timestamp()
+column checkpoints.data_key_wrapped bytea
+column checkpoints.data_key_wrapping_key_id text
 column checkpoints.disk_save_id uuid not null
 column checkpoints.environment_id uuid not null
 column checkpoints.id uuid not null
@@ -1316,6 +1329,15 @@ constraint agents c CHECK (revision > 0)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
+constraint allocation_storage_writes c CHECK (btrim(media_type) <> ''::text)
+constraint allocation_storage_writes c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint allocation_storage_writes c CHECK (octet_length(upload_id) >= 1 AND octet_length(upload_id) <= 1024)
+constraint allocation_storage_writes c CHECK (size_bytes > 0)
+constraint allocation_storage_writes c CHECK (worker_epoch > 0)
+constraint allocation_storage_writes f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
+constraint allocation_storage_writes f FOREIGN KEY (org_id) REFERENCES organizations(id)
+constraint allocation_storage_writes f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id) ON DELETE CASCADE
+constraint allocation_storage_writes p PRIMARY KEY (worker_host_id, allocation_id, digest)
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
 constraint api_keys c CHECK (credential_version > 0)
@@ -1378,6 +1400,7 @@ constraint auth_identities c CHECK (btrim(subject) <> ''::text)
 constraint auth_identities f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 constraint auth_identities p PRIMARY KEY (id)
 constraint auth_identities u UNIQUE (id, user_id)
+constraint boot_seed_builds c CHECK ((data_key_wrapping_key_id IS NULL) = (data_key_wrapped IS NULL))
 constraint boot_seed_builds c CHECK ((delivered_at IS NULL) = (executor_expires_at IS NULL))
 constraint boot_seed_builds c CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL))
 constraint boot_seed_builds c CHECK ((status <> ALL (ARRAY['queued'::text, 'running'::text, 'succeeded'::text])) OR image_id IS NOT NULL)
@@ -1391,6 +1414,8 @@ constraint boot_seed_builds c CHECK (fenced_at IS NULL OR (status = ANY (ARRAY['
 constraint boot_seed_builds c CHECK (manifest IS NULL OR octet_length(manifest) <= 1048576)
 constraint boot_seed_builds c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
 constraint boot_seed_builds c CHECK (octet_length(channel_credential_digest) = 32)
+constraint boot_seed_builds c CHECK (octet_length(data_key_wrapped) >= 1 AND octet_length(data_key_wrapped) <= 6144)
+constraint boot_seed_builds c CHECK (octet_length(data_key_wrapping_key_id) >= 1 AND octet_length(data_key_wrapping_key_id) <= 2048)
 constraint boot_seed_builds c CHECK (octet_length(qualification_evidence) >= 1 AND octet_length(qualification_evidence) <= 4096)
 constraint boot_seed_builds c CHECK (reserved_memory_bytes > 0)
 constraint boot_seed_builds c CHECK (reserved_scratch_bytes > 0)
@@ -1439,6 +1464,7 @@ constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, chec
 constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, session_id, process_epoch) REFERENCES session_processes(environment_id, computer_id, session_id, epoch)
 constraint checkpoint_processes p PRIMARY KEY (environment_id, checkpoint_id, session_id)
 constraint checkpoints c CHECK (((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) OR controls_reconciled_at IS NOT NULL) = (capture_request IS NULL))
+constraint checkpoints c CHECK ((data_key_wrapping_key_id IS NULL) = (data_key_wrapped IS NULL))
 constraint checkpoints c CHECK ((manifest IS NULL) = (vm_platform_id IS NULL))
 constraint checkpoints c CHECK ((status <> ALL (ARRAY['ready'::text, 'restoring'::text])) OR ready_at IS NOT NULL)
 constraint checkpoints c CHECK ((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) = (terminal_evidence IS NOT NULL))
@@ -1448,6 +1474,8 @@ constraint checkpoints c CHECK (controls_reconciled_at IS NULL OR (status = ANY 
 constraint checkpoints c CHECK (octet_length(abort_identity) = 32)
 constraint checkpoints c CHECK (octet_length(capture_digest) = 32)
 constraint checkpoints c CHECK (octet_length(capture_request) >= 1 AND octet_length(capture_request) <= 16777216)
+constraint checkpoints c CHECK (octet_length(data_key_wrapped) >= 1 AND octet_length(data_key_wrapped) <= 6144)
+constraint checkpoints c CHECK (octet_length(data_key_wrapping_key_id) >= 1 AND octet_length(data_key_wrapping_key_id) <= 2048)
 constraint checkpoints c CHECK (octet_length(manifest) >= 1 AND octet_length(manifest) <= 1048576)
 constraint checkpoints c CHECK (octet_length(restore_identity) = 32)
 constraint checkpoints c CHECK (ready_at IS NULL OR manifest IS NOT NULL)
@@ -2400,6 +2428,7 @@ constraint worker_scale_in_operations f FOREIGN KEY (worker_host_id, worker_grou
 constraint worker_scale_in_operations p PRIMARY KEY (worker_group_id, operation_key)
 index CREATE INDEX account_security_notifications_pending ON public.account_security_notifications USING btree (next_attempt_at)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
+index CREATE INDEX allocation_storage_writes_digest ON public.allocation_storage_writes USING btree (digest)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
 index CREATE INDEX audit_events_actor ON public.audit_events USING btree (org_id, COALESCE(actor_operator_id, actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id), recorded_at DESC, id DESC)
@@ -2409,6 +2438,7 @@ index CREATE INDEX audit_events_target ON public.audit_events USING btree (org_i
 index CREATE INDEX audit_events_time ON public.audit_events USING btree (org_id, recorded_at DESC, id DESC)
 index CREATE INDEX boot_seed_builds_host ON public.boot_seed_builds USING btree (worker_host_id, worker_epoch) WHERE ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL))
 index CREATE INDEX boot_seed_builds_image ON public.boot_seed_builds USING btree (environment_id, image_id)
+index CREATE INDEX cas_objects_digest ON public.cas_objects USING btree (digest)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)
 index CREATE INDEX commands_related_user ON public.commands USING btree (environment_id, caller_id, id) WHERE ((caller_kind = 'user'::text) AND ((terminal_at IS NULL) OR ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))))
 index CREATE INDEX commands_settled ON public.commands USING btree (environment_id, computer_id, terminal_at) WHERE (terminal_at IS NOT NULL)

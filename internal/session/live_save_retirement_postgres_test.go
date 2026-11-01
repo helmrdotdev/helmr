@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -41,6 +42,9 @@ func (p *liveSavePublication) Reuse(ctx context.Context, i blockformat.ObjectIns
 }
 func (p *liveSavePublication) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	p.uploads.Add(1)
+	if err := sessiontest.RecordUpload(ctx, p.storage.f.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
+		return cas.Object{}, err
+	}
 	return p.storage.remote.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }
 

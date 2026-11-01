@@ -57,6 +57,8 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		CAS:                            store,
 		BundleAdmission:                bundle.Admission{Runtime: testRuntimeDescriptor()},
 		PlatformStore:                  store,
+		StorageObjects:                 testStorageSigner{store},
+		StoragePlatform:                testStorageSigner{store},
 		SecretDelivery:                 emptyTestSecretDelivery{},
 		TelemetryReader:                constructionTelemetry{},
 		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},

@@ -53,10 +53,17 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: delivery.Shape.MemoryBytes, ScratchBytes: delivery.Shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, o.machines.CheckpointCipher)
+	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: delivery.Shape.MemoryBytes, ScratchBytes: delivery.Shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit})
 	if err != nil {
 		return err
 	}
+	cipher, err := o.machines.checkpointCipher(ctx, o.identity, m.CheckpointID.String())
+	if err != nil {
+		return err
+	}
+	// Staging derives every object cipher and the memory pager's own AEAD; the
+	// data key is not retained past it.
+	defer cipher.Close()
 	objects := m.Objects()
 	stagedPaths := make([]string, len(objects))
 	stageErrors := make([]error, len(objects))
@@ -95,14 +102,14 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 					err = invalidCheckpoint(mismatch)
 				}
 				if err == nil {
-					memory, err = openCheckpointMemory(stageCtx, o.machines.ComputerRanges, o.machines.CheckpointCipher, descriptor, m.MemoryHeaderDigest, o.identity.EnvironmentID+"/"+o.identity.OwnerID+"/"+m.CheckpointID.String()+"/memory", delivery.Shape.MemoryBytes)
+					memory, err = openCheckpointMemory(stageCtx, o.machines.ComputerRanges, cipher, descriptor, m.MemoryHeaderDigest, o.identity.EnvironmentID+"/"+o.identity.OwnerID+"/"+m.CheckpointID.String()+"/memory", delivery.Shape.MemoryBytes)
 				}
 				stageErrors[i] = err
 				return err
 			}
 			limit := map[string]int64{"vm_config": limits.config, "vm_state": limits.state, "memory": limits.memory, "scratch_disk": limits.scratch}[object.Role]
 			started := time.Now()
-			path, err := downloadCheckpointObject(stageCtx, o.machines.ComputerObjects, o.machines.CheckpointCipher, directory, m.CheckpointID.String(), object, limit)
+			path, err := downloadCheckpointObject(stageCtx, o.machines.ComputerObjects, cipher, directory, m.CheckpointID.String(), object, limit)
 			slog.Info("Computer checkpoint object staged", "started_at", started.UTC().Format(time.RFC3339Nano), "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "lease_epoch", o.identity.Epoch, "role", object.Role, "duration_ms", time.Since(started).Milliseconds(), "error_class", vm.RuntimeErrorClass(err))
 			stagedPaths[i], stageErrors[i] = path, err
 			return err
@@ -111,13 +118,7 @@ func (o *ComputerAllocationOwner) restore(ctx context.Context, delivery workerap
 	if stageErr := group.Wait(); stageErr != nil {
 		// Preserve every observed failure identity, even if another transfer's
 		// cancellation wins the group's first-error race.
-		err := errors.Join(stageErr, errors.Join(stageErrors...))
-		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			// Pause before cleanup can release this allocation for redispatch.
-			o.checkpointKeyUnavailable()
-			slog.Error("Worker checkpoint key differs from retained Computer", "checkpoint_id", m.CheckpointID, "computer_id", o.identity.OwnerID, "error", err)
-		}
-		return err
+		return errors.Join(stageErr, errors.Join(stageErrors...))
 	}
 	paths := make(map[string]string, len(objects))
 	for i, object := range objects {

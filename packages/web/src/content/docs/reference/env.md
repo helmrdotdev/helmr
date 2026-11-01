@@ -273,16 +273,19 @@ byte limit must be at least one chunk. Record count must fit a positive int32.
 These are per-producer memory limits, not durable queue reservations.
 
 
-Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
-`PLATFORM_STORE_URI`, `WORKER_RESOURCE_ID`,
-`WORKER_POOL_NAME`, `WORKER_ENROLLMENT_TOKEN_FILE`,
-`CHECKPOINT_ENCRYPTION_KEY`, `JAILER_UID`, `JAILER_GID`,
+Required for every Worker: `CONTROL_PLANE_URL`, `WORKER_RESOURCE_ID`,
+`WORKER_POOL_NAME`, `WORKER_ENROLLMENT_TOKEN_FILE`, `JAILER_UID`, `JAILER_GID`,
 `WORKER_NETWORK_LINK_POOL`, `WORKER_NETWORK_TRANSLATION_POOL`,
 `WORKER_NETWORK_RESOLVER_IPV4`, and
 `WORKER_NETWORK_BLOCKED_IPV4_CIDRS`. The blocked-prefix value is a canonical,
 ordered JSON array; use `[]` only when the deployment intentionally supplies no
 additional blocked destinations. Built-in reserved-address, metadata, host and
 peer restrictions still apply.
+
+Workers take no storage location, storage credential or checkpoint key. The
+Control Plane signs each object read and write for one live allocation, with a
+lifetime of at most five minutes, and delivers each checkpoint's and boot seed's
+own data key only to the allocation that captures or restores it.
 
 Network installation settings are shared between the Control Plane and Workers:
 

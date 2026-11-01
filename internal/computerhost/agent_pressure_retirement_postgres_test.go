@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -72,6 +74,19 @@ func (c *pressureRetirementClient) PublishAgentSave(ctx context.Context, r worke
 }
 
 type pressureRetirementReclaimer struct{ *cas.File }
+
+// receiptedSavePublisher records the write receipt a storage grant issues.
+type receiptedSavePublisher struct {
+	saveStoragePublisher
+	pool *pgxpool.Pool
+}
+
+func (p receiptedSavePublisher) Publish(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
+	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
+		return cas.Object{}, err
+	}
+	return p.saveStoragePublisher.Publish(ctx, d, f)
+}
 
 func (pressureRetirementReclaimer) RetiredUploads(context.Context, string) ([]string, error) {
 	return nil, nil
@@ -202,7 +217,7 @@ func TestPressureLifetimeSerializesPublicationWhileRetirementSweeps(t *testing.T
 		if err = client.CaptureAgentSave(t.Context(), receipt); err != nil {
 			t.Fatal(err)
 		}
-		if err = capture.Publish(t.Context(), agentSavePublisher{client: client, objects: saveStoragePublisher{remote}, save: *next.Save}); err != nil {
+		if err = capture.Publish(t.Context(), agentSavePublisher{client: client, objects: receiptedSavePublisher{saveStoragePublisher{remote}, f.Pool}, save: *next.Save}); err != nil {
 			t.Fatal(err)
 		}
 		if err = client.PublishAgentSave(t.Context(), receipt); err != nil {
@@ -255,7 +270,7 @@ func TestPressureLifetimeSerializesPublicationWhileRetirementSweeps(t *testing.T
 	}
 	phases, proceed := make(chan string), make(chan struct{})
 	machineCaptured := make(chan struct{})
-	s := &agentComputerSaves{client: client, objects: saveStoragePublisher{remote}, identity: allocation, machine: pressureRetirementMachine{localAgentSaveMachine: localAgentSaveMachine{local: local, computer: allocation.OwnerID}, captured: machineCaptured}, changes: func() disk.VersionChanges {
+	s := &agentComputerSaves{client: client, objects: receiptedSavePublisher{saveStoragePublisher{remote}, f.Pool}, identity: allocation, machine: pressureRetirementMachine{localAgentSaveMachine: localAgentSaveMachine{local: local, computer: allocation.OwnerID}, captured: machineCaptured}, changes: func() disk.VersionChanges {
 		state := local.Changes()
 		state.PressureSince = time.Unix(1, 0)
 		return state

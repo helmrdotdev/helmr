@@ -10,8 +10,10 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/bootseed"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
@@ -19,11 +21,12 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := NewCheckpointEncryptor(bytes.Repeat([]byte{19}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := &PreparedMachines{ComputerObjects: preparationOwnerStore{store}, CheckpointCipher: cipher}
+	keys := newTestObjectKeys()
+	build := uuid.NewV7()
+	cipher := keys.bootSeedEncryptor(t, build)
+	p := &PreparedMachines{ComputerObjects: preparationOwnerStore{store}, ObjectKeys: keys}
+	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}
+	ctx := brokeredstore.WithScope(t.Context(), workerapi.StorageScope{Computer: &identity})
 	builder, staging := t.TempDir(), t.TempDir()
 	raw := bytes.Repeat([]byte("independent guest memory\n"), 200000)
 	// The memory format requires pages; keep more than one authenticated chunk.
@@ -39,7 +42,7 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 		VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("frozen device state")),
 		ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("packed private scratch")),
 		Memory:      file("memory", cas.BootSeedMemoryMediaType, raw)}
-	m, err := p.publishBootSeed(t.Context(), staging, uuid.NewV7(), uuid.NewV7(), artifact, 1<<20, p.ComputerObjects)
+	m, err := p.publishBootSeed(t.Context(), cipher, staging, uuid.NewV7(), build, artifact, 1<<20, p.ComputerObjects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +65,7 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 	}
 	ranges := &memoryRanges{data: sealed}
 	p.ComputerRanges = ranges
-	restored, err := p.openBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
+	restored, err := p.openBootSeed(ctx, t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,27 +91,23 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := m
 			test.edit(&changed)
-			if _, err := p.openBootSeed(t.Context(), t.TempDir(), changed, m.MemoryBytes, m.ScratchBytes); err == nil {
+			if _, err := p.openBootSeed(ctx, t.TempDir(), changed, m.MemoryBytes, m.ScratchBytes); err == nil {
 				t.Fatal("rebound seed authenticated")
 			}
 		})
 	}
-	if _, err := p.openBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes+4096, m.ScratchBytes); err == nil {
+	if _, err := p.openBootSeed(ctx, t.TempDir(), m, m.MemoryBytes+4096, m.ScratchBytes); err == nil {
 		t.Fatal("seed accepted a different memory shape")
 	}
-	rotated, err := NewCheckpointEncryptor(bytes.Repeat([]byte{20}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := &PreparedMachines{ComputerObjects: p.ComputerObjects, ComputerRanges: p.ComputerRanges, CheckpointCipher: rotated}
-	if _, err := other.openBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes); !errors.Is(err, ErrCheckpointKeyUnavailable) {
+	other := &PreparedMachines{ComputerObjects: p.ComputerObjects, ComputerRanges: p.ComputerRanges, ObjectKeys: newTestObjectKeys()}
+	if _, err := other.openBootSeed(ctx, t.TempDir(), m, m.MemoryBytes, m.ScratchBytes); !errors.Is(err, errInvalidCheckpoint) {
 		t.Fatalf("parallel seed staging lost key mismatch: %v", err)
 	}
 	if _, err := openCheckpointMemory(t.Context(), ranges, cipher, m.Memory, m.MemoryHeaderDigest, m.BuildID.String()+"/memory", m.MemoryBytes); err == nil {
 		t.Fatal("seed authenticated as a customer continuation")
 	}
 	p.OptionalComputerObjects = p.ComputerObjects
-	prepared, err := p.openPreparedBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
+	prepared, err := p.openPreparedBootSeed(ctx, t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

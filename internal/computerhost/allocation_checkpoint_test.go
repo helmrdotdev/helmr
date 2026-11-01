@@ -170,10 +170,6 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := NewCheckpointEncryptor(bytes.Repeat([]byte{9}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
 	c := &checkpointPipelineClient{t: t, identity: identity, save: uuid.NewV7().String(), failure: failure, store: store}
 	cut := &saveHostFixture{computer: identity.OwnerID, root: testVersionRoot(4096)}
 	m := &checkpointPipelineMachine{mode: mode, artifact: vm.SnapshotArtifact{Computer: &vm.ComputerSnapshot{ComputerID: identity.OwnerID, Capture: saveHostCapture{cut}}, Manifest: []byte(`{"runtime":"test"}`), RuntimeID: "test", VMVCPUCount: 1}}
@@ -217,7 +213,7 @@ func checkpointPipelineFixture(t *testing.T, mode, failure string) (*ComputerAll
 		}
 		_ = frameio.WriteProtoFrame(stream, receipt)
 	}}
-	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: saveStoragePublisher{store}, ComputerRanges: store, TempDir: t.TempDir()}}
+	o := &ComputerAllocationOwner{identity: identity, client: c, machine: m, machines: &PreparedMachines{ObjectKeys: newTestObjectKeys(), ComputerObjects: saveStoragePublisher{store}, ComputerRanges: store, TempDir: t.TempDir()}}
 	return o, c, m, cut
 }
 
@@ -269,7 +265,12 @@ func TestComputerCheckpointPipelineRetainsOneCutThroughPublicationUncertainty(t 
 				}
 			}
 			manifest := c.manifests[0]
-			source, err := openCheckpointMemory(t.Context(), o.machines.ComputerRanges, o.machines.CheckpointCipher, cas.Descriptor(manifest.Memory), manifest.MemoryHeaderDigest, o.identity.EnvironmentID+"/"+o.identity.OwnerID+"/"+manifest.CheckpointID.String()+"/memory", 4096)
+			cipher, err := o.machines.checkpointCipher(t.Context(), o.identity, manifest.CheckpointID.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cipher.Close()
+			source, err := openCheckpointMemory(t.Context(), o.machines.ComputerRanges, cipher, cas.Descriptor(manifest.Memory), manifest.MemoryHeaderDigest, o.identity.EnvironmentID+"/"+o.identity.OwnerID+"/"+manifest.CheckpointID.String()+"/memory", 4096)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +358,7 @@ func (c *checkpointPipelineClient) ReadAgentCheckpoint(context.Context, workerap
 }
 
 func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing.T) {
-	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-memory-descriptor", "wrong-key", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
+	for _, fault := range []string{"none", "wrong-computer", "wrong-disk", "wrong-runtime", "wrong-vcpu", "corrupt-memory", "wrong-memory-descriptor", "wrong-key", "key-refused", "invalid-filepack", "invalid-runtime-content", "backend-io"} {
 		t.Run(fault, func(t *testing.T) {
 			source, c, _, _ := checkpointPipelineFixture(t, "", "")
 			if err := source.captureIdle(t.Context(), workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} }); !errors.Is(err, errComputerHibernated) {
@@ -369,8 +370,8 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 			id.Epoch++
 			m := c.manifests[0]
 			b := &checkpointRestoreBackend{t: t, identity: id, machine: &checkpointPipelineMachine{}}
-			paused := false
-			target := &ComputerAllocationOwner{identity: id, client: c, checkpointKeyUnavailable: func() { paused = true }, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
+			targetKeys := source.machines.ObjectKeys.(*testObjectKeys)
+			target := &ComputerAllocationOwner{identity: id, client: c, machines: &PreparedMachines{Backend: b, ObjectKeys: targetKeys, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
 			delivery := workerapi.ComputerAllocationDelivery{Identity: id, BaseVersion: c.save, RestoredFrom: c.save, Shape: workerapi.AllocationShape{VMPlatformID: m.Runtime.RuntimeID, VCPUCount: 1, MemoryBytes: 4096, ScratchBytes: 4096}}
 			material := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{Root: m.Disk}}
 			switch fault {
@@ -393,23 +394,23 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 			case "backend-io":
 				b.restoreErr = syscall.EIO
 			case "wrong-key":
-				target.machines.CheckpointCipher, _ = NewCheckpointEncryptor(bytes.Repeat([]byte{4}, 32))
+				target.machines.ObjectKeys = newTestObjectKeys()
+			case "key-refused":
+				targetKeys.fail(errors.New("checkpoint key refused"))
 			}
 			err := target.restore(t.Context(), delivery, material, nil)
-			if paused != (fault == "wrong-key") || errors.Is(err, ErrCheckpointKeyUnavailable) != (fault == "wrong-key") {
-				t.Fatalf("incorrect key fault classification: paused=%v error=%v", paused, err)
+			targetKeys.fail(nil)
+			if fault == "key-refused" && (err == nil || errors.Is(err, errInvalidCheckpoint)) {
+				t.Fatalf("refused key delivery classified as checkpoint content: %v", err)
 			}
 
-			if (target.invalidCheckpointID != "") != ((fault == "corrupt-memory" || fault == "wrong-memory-descriptor") || (fault == "invalid-filepack" || fault == "invalid-runtime-content")) {
+			if (target.invalidCheckpointID != "") != ((fault == "wrong-key" || fault == "corrupt-memory" || fault == "wrong-memory-descriptor") || (fault == "invalid-filepack" || fault == "invalid-runtime-content")) {
 				t.Fatalf("incorrect invalid checkpoint report: %q", target.invalidCheckpointID)
 			}
 			if fault == "wrong-key" || (fault == "corrupt-memory" || fault == "wrong-memory-descriptor") || (fault == "invalid-filepack" || fault == "invalid-runtime-content") {
 				stopped := false
 				c.stopped = func(request workerapi.AgentComputerStoppedRequest) {
 					stopped = true
-					if fault == "wrong-key" && !paused {
-						t.Fatal("stop report preceded admission pause")
-					}
 					if request.InvalidCheckpointID != target.invalidCheckpointID {
 						t.Fatal("physical stop lost exact failure classification")
 					}
@@ -418,7 +419,7 @@ func TestComputerCheckpointRestoreAuthenticatesBeforePhysicalCreation(t *testing
 					t.Fatalf("failed target did not finish cleanup: %v", err)
 				}
 				if fault == "wrong-key" {
-					replacement := &ComputerAllocationOwner{identity: id, client: c, machines: &PreparedMachines{Backend: b, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
+					replacement := &ComputerAllocationOwner{identity: id, client: c, machines: &PreparedMachines{Backend: b, ObjectKeys: source.machines.ObjectKeys, ComputerObjects: source.machines.ComputerObjects, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()}}
 					if err := replacement.restore(t.Context(), delivery, material, nil); err != nil || replacement.checkpoint == nil || b.calls != 1 {
 						t.Fatalf("correct key failed ordinary retained restore: %v", err)
 					}
@@ -486,19 +487,18 @@ func TestComputerCheckpointUnsuccessfulQualificationBacksOff(t *testing.T) {
 	}
 }
 
-type checkpointFaultReader struct {
-	source    io.Reader
+// checkpointKeyFaults fails the first deliveries transiently.
+type checkpointKeyFaults struct {
+	*testObjectKeys
 	remaining int
-	failed    bool
 }
 
-func (r *checkpointFaultReader) Read(p []byte) (int, error) {
-	if !r.failed && r.remaining == 0 {
-		r.failed = true
-		return 0, syscall.ENOSPC
+func (k *checkpointKeyFaults) CheckpointKey(ctx context.Context, r workerapi.CheckpointKeyRequest) ([]byte, error) {
+	if k.remaining > 0 {
+		k.remaining--
+		return nil, syscall.EIO
 	}
-	r.remaining--
-	return r.source.Read(p)
+	return k.testObjectKeys.CheckpointKey(ctx, r)
 }
 
 type checkpointFaultPublisher struct {
@@ -522,15 +522,15 @@ func (p *checkpointFaultPublisher) Publish(ctx context.Context, d cas.Descriptor
 	return p.ImmutableStore.Publish(ctx, d, f)
 }
 func TestComputerCheckpointPreservesSourceThroughDurabilityFailures(t *testing.T) {
-	for _, kind := range []string{"disk-conflict", "encryption-space", "object-io"} {
+	for _, kind := range []string{"disk-conflict", "key-delivery", "object-io"} {
 		t.Run(kind, func(t *testing.T) {
 			o, c, m, cut := checkpointPipelineFixture(t, "", "")
 			switch kind {
 			case "disk-conflict":
 				c.failure = "disk-publish"
 				c.stepErr = &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerNotReady}
-			case "encryption-space":
-				o.machines.CheckpointCipher.rand = &checkpointFaultReader{source: o.machines.CheckpointCipher.rand, remaining: 2}
+			case "key-delivery":
+				o.machines.ObjectKeys = &checkpointKeyFaults{testObjectKeys: newTestObjectKeys(), remaining: 1}
 			case "object-io":
 				o.machines.ComputerObjects = &checkpointFaultPublisher{ImmutableStore: o.machines.ComputerObjects}
 			}

@@ -48,12 +48,14 @@ type s3Client interface {
 	CopyObject(context.Context, *awss3.CopyObjectInput, ...func(*awss3.Options)) (*awss3.CopyObjectOutput, error)
 	CreateMultipartUpload(context.Context, *awss3.CreateMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error)
 	UploadPart(context.Context, *awss3.UploadPartInput, ...func(*awss3.Options)) (*awss3.UploadPartOutput, error)
+	UploadPartCopy(context.Context, *awss3.UploadPartCopyInput, ...func(*awss3.Options)) (*awss3.UploadPartCopyOutput, error)
 	CompleteMultipartUpload(context.Context, *awss3.CompleteMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error)
 	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
 type Store struct {
 	client     s3Client
+	presign    presigner
 	bucket     string
 	prefix     string
 	tempDir    string
@@ -115,6 +117,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		}
 	})
 	store.client = client
+	store.presign = awss3.NewPresignClient(client)
 	return store, nil
 }
 

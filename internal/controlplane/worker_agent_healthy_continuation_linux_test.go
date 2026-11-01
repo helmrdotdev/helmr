@@ -55,16 +55,15 @@ func writeNativeCheckpointObservations(ctx context.Context, pool *pgxpool.Pool, 
 	}
 }
 
-func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, result []byte, evidence string, longIdle, keyMismatch bool) error {
+func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, result []byte, evidence string, longIdle bool) error {
 	var receipt struct {
 		ComputerID    string `json:"computerId"`
 		Continuations []struct {
-			KeyFault        *nativeCheckpointKeyFault `json:"keyFault"`
-			RequestedIdleMS int64                     `json:"requestedIdleMs"`
-			IdleMS          float64                   `json:"idleMs"`
-			IdleSamples     int                       `json:"idleSamples"`
-			IdleStartedAt   time.Time                 `json:"idleStartedAt"`
-			IdleFinishedAt  time.Time                 `json:"idleFinishedAt"`
+			RequestedIdleMS int64     `json:"requestedIdleMs"`
+			IdleMS          float64   `json:"idleMs"`
+			IdleSamples     int       `json:"idleSamples"`
+			IdleStartedAt   time.Time `json:"idleStartedAt"`
+			IdleFinishedAt  time.Time `json:"idleFinishedAt"`
 			Checkpoint      struct {
 				CheckpointID   string                   `json:"checkpointId"`
 				SourceEpoch    int64                    `json:"sourceEpoch"`
@@ -83,11 +82,6 @@ func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, en
 	for index, cycle := range receipt.Continuations {
 		if longIdle && index == 0 && (cycle.RequestedIdleMS != 7200000 || cycle.IdleMS < 7200000 || cycle.IdleSamples < 2 || cycle.IdleStartedAt.IsZero() || cycle.IdleFinishedAt.Sub(cycle.IdleStartedAt) < 2*time.Hour) {
 			return errors.New("long-idle continuation did not observe two hours of released compute")
-		}
-		if keyMismatch && index == 0 {
-			if err := verifyNativeCheckpointKeyRecovery(ctx, pool, env, receipt.ComputerID, cycle.Checkpoint.CheckpointID, cycle.Checkpoint.SourceEpoch, cycle.KeyFault); err != nil {
-				return err
-			}
 		}
 		id := cycle.Checkpoint.CheckpointID
 		if seen[id] {

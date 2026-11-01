@@ -504,17 +504,6 @@ func TestPreparationAllocationHealthWaitRenewsSameGrant(t *testing.T) {
 	})
 }
 
-func TestPreparationAllocationKeyFaultReleasesUnstartedOwner(t *testing.T) {
-	o, _, backend := preparationOwnerFixture(t)
-	o.admitStart = func(context.Context) error { return ErrCheckpointKeyUnavailable }
-	if err := o.Run(t.Context()); !errors.Is(err, ErrCheckpointKeyUnavailable) {
-		t.Fatalf("fault: %v", err)
-	}
-	if !o.Finished() || backend.starts.Load() != 0 || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
-		t.Fatal("unstarted preparation remained held or started")
-	}
-}
-
 func TestPreparationQualificationFailureNeverPublishes(t *testing.T) {
 	owner, client, backend := preparationOwnerFixture(t)
 	backend.qualificationFailed.Store(true)

@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"io"
 	"math"
 	"net"
@@ -184,6 +185,8 @@ func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c
 	if ranges == nil || c == nil {
 		return nil, errors.New("memory restore source is required")
 	}
+	// The pager demand-reads after this call returns.
+	ranges = brokeredstore.BindRanges(ctx, ranges)
 	if err = cas.ValidateDescriptor(descriptor); err != nil {
 		return nil, invalidMemory(err)
 	}
@@ -200,7 +203,7 @@ func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c
 		return nil, invalidMemory(errors.New("memory header does not match its registered pin"))
 	}
 	if !bytes.Equal(header[len(memoryMagic):len(memoryMagic)+keyIDSize], c.keyID[:]) {
-		return nil, ErrCheckpointKeyUnavailable
+		return nil, invalidMemory(errors.New("memory was encrypted with a different data key"))
 	}
 	saltEnd := len(memoryMagic) + keyIDSize + saltSize
 	if binary.BigEndian.Uint64(header[saltEnd:]) != uint64(size) || binary.BigEndian.Uint64(header[saltEnd+8:]) != uint64(indexSize) {

@@ -98,6 +98,9 @@ func (f checkpointStorageFixture) upload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := sessiontest.RecordUpload(t.Context(), f.f.pool, o.Digest, o.SizeBytes, o.MediaType); err != nil {
+			t.Fatal(err)
+		}
 		_, err = f.remote.Put(t.Context(), o.MediaType, file)
 		file.Close()
 		if err != nil {

@@ -27,9 +27,6 @@ type nativeCrossHostBootstrap struct {
 	TargetHostID    string    `json:"targetHostId"`
 	ControlPlaneURL string    `json:"controlPlaneUrl"`
 	EnrollmentToken string    `json:"enrollmentToken"`
-	CheckpointKey   string    `json:"checkpointKey"`
-	CASURI          string    `json:"casUri"`
-	PlatformURI     string    `json:"platformUri"`
 }
 
 func writeNativeHandoffFile(path string, value any) error {

@@ -55,6 +55,9 @@ const eligiblePreparationSourceSQL = `b.status='succeeded' AND b.payload_retired
  AND t.image_spec_id=b.image_spec_id AND t.cpu_millis=b.cpu_millis AND t.memory_bytes=b.memory_bytes
  AND t.refresh_every_ms IS NOT NULL AND extract(epoch FROM statement_timestamp()-image.published_at)*1000>3*t.refresh_every_ms))`
 
+// preparationSourceLifetimeSQL bounds a preparation source and its grants.
+const preparationSourceLifetimeSQL = `interval '120 seconds'`
+
 const preparationSourceJoinsSQL = ` FROM boot_seed_builds b
  JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id
  JOIN worker_hosts h ON h.id=$1 JOIN worker_groups g ON g.id=h.worker_group_id
@@ -152,7 +155,7 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 		s.Key = key
 		s.HostID = host.HostID
 		s.HostEpoch = host.Epoch
-		err := tx.QueryRow(ctx, `SELECT p.resource_policy_revision,clock_timestamp()+interval '120 seconds',b.manifest,
+		err := tx.QueryRow(ctx, `SELECT p.resource_policy_revision,clock_timestamp()+`+preparationSourceLifetimeSQL+`,b.manifest,
  b.reserved_cpu_millis,b.reserved_memory_bytes,b.reserved_scratch_bytes,b.vm_platform_id,b.vm_vcpu_count,b.cpu_config_digest,
  b.deployment_id,d.bundle_digest,platform.rootfs_digest,spec.seed,e.org_id,r.id,`+DiskRootColumns+preparationSourceJoinsSQL+`
  JOIN deployments d ON (d.environment_id,d.id)=(b.environment_id,b.deployment_id)

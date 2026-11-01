@@ -128,6 +128,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	cfg.Auth, cfg.Allocator, cfg.Log = identity.NewAPIKeyAuthenticator(pool), allocator, log
 	cfg.ComputerKeys = keys
 	cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission = nativeFaultStore{store}, platform, bundle.Admission{Runtime: runtime}
+	cfg.StorageObjects, cfg.StoragePlatform = store, platform
 	cfg.Secrets, cfg.SecretDelivery, cfg.SecretProxy = secrets, secrets, secrets
 	if os.Getenv("HELMR_NATIVE_SDK_PROOF") == "1" || (os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1") {
 		cfg.TelemetryReader = nativeSDKCommandLogReader{pool: pool}

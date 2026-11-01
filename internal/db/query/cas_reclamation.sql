@@ -9,6 +9,7 @@ SELECT lifetime.digest
    AND NOT EXISTS (SELECT 1 FROM checkpoint_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM disk_objects c WHERE c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.digest=lifetime.digest)
  ORDER BY lifetime.digest
  LIMIT sqlc.arg(row_limit);
 
@@ -19,7 +20,19 @@ UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.digest=sqlc.arg(digest)
    AND lifetime.retired_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.digest=lifetime.digest)
 ;
+
+-- Write receipts authorize nothing once their allocation ends. Removing them
+-- lets an upload abandoned by that allocation become a retirement candidate.
+-- name: DeleteEndedStorageWrites :execrows
+DELETE FROM allocation_storage_writes w
+ WHERE NOT EXISTS (
+    SELECT 1 FROM computer_leases l WHERE l.worker_host_id=w.worker_host_id AND l.worker_epoch=w.worker_epoch AND l.allocation_id=w.allocation_id AND l.fenced_at IS NULL)
+   AND NOT EXISTS (
+    SELECT 1 FROM image_builds b WHERE b.worker_host_id=w.worker_host_id AND b.worker_epoch=w.worker_epoch AND b.allocation_id=w.allocation_id AND b.fenced_at IS NULL)
+   AND NOT EXISTS (
+    SELECT 1 FROM boot_seed_builds b WHERE b.worker_host_id=w.worker_host_id AND b.worker_epoch=w.worker_epoch AND b.allocation_id=w.allocation_id AND b.fenced_at IS NULL);
 
 -- Claim only scheduling responsibility, not permission to adopt the digest.
 -- A crashed sweeper becomes eligible again; repeated deletion is idempotent.

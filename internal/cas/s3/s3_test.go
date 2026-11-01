@@ -902,6 +902,10 @@ func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *awss3.Cre
 	return &awss3.CreateMultipartUploadOutput{UploadId: aws.String(uploadID)}, nil
 }
 
+func (f *fakeS3Client) UploadPartCopy(context.Context, *awss3.UploadPartCopyInput, ...func(*awss3.Options)) (*awss3.UploadPartCopyOutput, error) {
+	return nil, errors.New("unexpected part copy")
+}
+
 func (f *fakeS3Client) UploadPart(_ context.Context, input *awss3.UploadPartInput, _ ...func(*awss3.Options)) (*awss3.UploadPartOutput, error) {
 	if f.uploadPartErr != nil {
 		return nil, f.uploadPartErr

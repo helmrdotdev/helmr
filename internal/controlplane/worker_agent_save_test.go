@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,7 @@ type saveHTTPPublication struct {
 	client *workerclient.Client
 	save   workerapi.AgentSave
 	store  testUploadStore
+	pool   *pgxpool.Pool
 }
 
 func (p saveHTTPPublication) RegisterBatch(ctx context.Context, i []blockformat.ObjectInspection) error {
@@ -41,6 +43,9 @@ func (p saveHTTPPublication) CertifyBatch(ctx context.Context, i []blockformat.O
 }
 func (p saveHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {
+		return cas.Object{}, err
+	}
+	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
 		return cas.Object{}, err
 	}
 	return p.store.Put(ctx, d.MediaType, io.NewSectionReader(file, 0, d.SizeBytes))
@@ -103,7 +108,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer candidate.Close()
-	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: *next.Save, store: store})
+	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: *next.Save, store: store, pool: f.Pool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +135,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err != nil || background.Save == nil || background.Save.SaveID == next.Save.SaveID || background.Sequence != next.Sequence+1 {
 		t.Fatalf("background HTTP admission: %+v %v", background, err)
 	}
-	if _, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: *background.Save, store: store}); err != nil {
+	if _, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: *background.Save, store: store, pool: f.Pool}); err != nil {
 		t.Fatal(err)
 	}
 	backgroundRequest := workerapi.AgentSavePublication{Save: *background.Save, Root: root, Evidence: "optional operation-bound cut"}
