@@ -209,7 +209,8 @@ func partLength(expected cas.Descriptor, upload cas.Upload, part int32) (int64, 
 // object, and only then copies it create-only to the digest key. Parts come
 // from a holder that is not trusted with the digest namespace, so a mismatch,
 // crash or cancellation never leaves unverified bytes under a digest key;
-// staging expires on its own.
+// staging expires on its own. Every object at a digest key was authenticated
+// when it was written, so finding one already there completes the upload.
 func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upload cas.Upload, parts []cas.CompletedPart) (cas.Object, error) {
 	if _, err := partLength(expected, upload, 1); err != nil {
 		return cas.Object{}, err
@@ -237,14 +238,26 @@ func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upl
 	defer c.removeStaged(ctx, staging)
 	// Promotion copies only the exact staged version that was verified, even if
 	// another completion of the same owner replaces the staging key meanwhile.
-	etag, version, err := c.verifyStaged(ctx, staging, expected)
+	verify := c.verifyStaged
+	if expected.SizeBytes <= c.copyObjectMax() {
+		verify = c.checksumStaged
+	}
+	etag, version, err := verify(ctx, staging, expected)
 	if err != nil {
 		return cas.Object{}, err
 	}
-	if err := c.promoteStaged(ctx, staging, etag, version, expected); err != nil {
+	key, err := c.promoteStaged(ctx, staging, etag, version, expected)
+	if err != nil {
 		return cas.Object{}, err
 	}
-	return c.VerifyDescriptor(ctx, expected)
+	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
+}
+
+func (c *Store) copyObjectMax() int64 {
+	if c.copyObjectMaxBytes > 0 {
+		return c.copyObjectMaxBytes
+	}
+	return s3CopyObjectMaxBytes
 }
 
 func (c *Store) removeStaged(ctx context.Context, staging string) {
@@ -254,9 +267,46 @@ func (c *Store) removeStaged(ctx context.Context, staging string) {
 	_, _ = c.client.DeleteObject(removeCtx, &awss3.DeleteObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging)})
 }
 
-// verifyStaged reads the staged object back, requires the descriptor's exact
-// bytes, size and media type, and returns the entity tag and, in a versioned
-// bucket, the version of what it read.
+// checksumStaged has storage compute the staged object's full SHA-256 by
+// copying it in place, so its bytes never pass through the Control Plane. It
+// requires the descriptor's digest, size and media type and returns the entity
+// tag and, in a versioned bucket, the version of the copy it authenticated.
+func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return "", "", err
+	}
+	copied, err := c.client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket: aws.String(c.bucket), Key: aws.String(staging), CopySource: aws.String(url.PathEscape(c.bucket + "/" + staging)),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ContentType: aws.String(expected.MediaType), MetadataDirective: types.MetadataDirectiveReplace,
+	})
+	if err != nil {
+		return "", "", storageFailure(ctx, err)
+	}
+	if copied == nil || copied.CopyObjectResult == nil || aws.ToString(copied.CopyObjectResult.ETag) == "" {
+		return "", "", errors.New("storage returned no staged copy")
+	}
+	if aws.ToString(copied.CopyObjectResult.ChecksumSHA256) != checksum {
+		return "", "", fmt.Errorf("%w: staged bytes differ from digest %s", cas.ErrRemoteIntegrity, expected.Digest)
+	}
+	etag, version := aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId)
+	head := &awss3.HeadObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging), IfMatch: aws.String(etag)}
+	if version != "" {
+		head.VersionId = aws.String(version)
+	}
+	stat, err := c.client.HeadObject(ctx, head)
+	if err != nil {
+		return "", "", storageFailure(ctx, err)
+	}
+	if aws.ToInt64(stat.ContentLength) != expected.SizeBytes || aws.ToString(stat.ContentType) != expected.MediaType {
+		return "", "", fmt.Errorf("%w: staged object metadata differs from its descriptor", cas.ErrRemoteIntegrity)
+	}
+	return etag, version, nil
+}
+
+// verifyStaged reads an object too large for one server-side copy back,
+// requires the descriptor's exact bytes, size and media type, and returns the
+// entity tag and, in a versioned bucket, the version of what it read.
 func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
 	output, err := c.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging)})
 	if err != nil {
@@ -283,31 +333,31 @@ func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.D
 
 // promoteStaged copies verified staged bytes to the digest key create-only.
 // Objects above one copy request are copied in server-side parts.
-func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string, expected cas.Descriptor) error {
+func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string, expected cas.Descriptor) (string, error) {
 	key, err := c.objectKey(expected.Digest)
 	if err != nil {
-		return err
+		return "", err
 	}
 	source := url.PathEscape(c.bucket + "/" + staging)
 	if version != "" {
 		source += "?versionId=" + url.QueryEscape(version)
 	}
-	if expected.SizeBytes <= s3CopyObjectMaxBytes {
+	if expected.SizeBytes <= c.copyObjectMax() {
 		_, err = c.client.CopyObject(ctx, &awss3.CopyObjectInput{
 			Bucket: aws.String(c.bucket), Key: aws.String(key), CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag),
 			ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ContentType: aws.String(expected.MediaType),
 			IfNoneMatch: aws.String("*"), MetadataDirective: types.MetadataDirectiveReplace,
 		})
-		if conditionalWriteError(err) == conditionalWriteExists {
-			return nil
+		if err != nil && conditionalWriteError(err) != conditionalWriteExists {
+			return "", storageFailure(ctx, err)
 		}
-		return storageFailure(ctx, err)
+		return key, nil
 	}
 	created, err := c.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
 		Bucket: aws.String(c.bucket), Key: aws.String(key), ContentType: aws.String(expected.MediaType),
 	})
 	if err != nil {
-		return storageFailure(ctx, err)
+		return "", storageFailure(ctx, err)
 	}
 	uploadID := aws.ToString(created.UploadId)
 	var parts []types.CompletedPart
@@ -318,7 +368,7 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 			CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag), CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
 		})
 		if err != nil || copied == nil || copied.CopyPartResult == nil {
-			return errors.Join(storageFailure(ctx, err), c.abortMultipartUpload(ctx, key, uploadID))
+			return "", errors.Join(storageFailure(ctx, err), c.abortMultipartUpload(ctx, key, uploadID))
 		}
 		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(number), ETag: copied.CopyPartResult.ETag})
 	}
@@ -327,13 +377,13 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}, IfNoneMatch: aws.String("*"),
 	})
 	if err == nil {
-		return nil
+		return key, nil
 	}
 	abortErr := c.abortMultipartUpload(ctx, key, uploadID)
-	if conditionalWriteError(err) == conditionalWriteExists {
-		return abortErr
+	if conditionalWriteError(err) == conditionalWriteExists && abortErr == nil {
+		return key, nil
 	}
-	return errors.Join(storageFailure(ctx, err), abortErr)
+	return "", errors.Join(storageFailure(ctx, err), abortErr)
 }
 
 // AbortUpload releases an unfinished staged multipart publication.

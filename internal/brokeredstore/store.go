@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"sync"
@@ -69,6 +70,12 @@ const renewBefore = 30 * time.Second
 const (
 	publishAttempts = 3
 	partConcurrency = 4
+	// partAttempts, partRetryBase and partRetryMax give each part the budget of
+	// the storage SDK's standard retryer: network failures, server errors,
+	// throttling and refused grants are retried with backoff.
+	partAttempts  = 3
+	partRetryBase = time.Second
+	partRetryMax  = 20 * time.Second
 )
 
 type readKey struct{ scope, digest string }
@@ -362,7 +369,15 @@ func (s *Store) multipart(ctx context.Context, scope workerapi.StorageScope, obj
 			group.Go(func() error {
 				offset := int64(number-1) * upload.PartSize
 				length := min(upload.PartSize, object.SizeBytes-offset)
-				for attempt := range 2 {
+				var err error
+				for attempt := range partAttempts {
+					if attempt > 0 {
+						if err := partBackoff(groupCtx, attempt); err != nil {
+							return err
+						}
+					}
+					// Every retry renews the grant: a refused or failed request
+					// may have outlived the one it used.
 					if attempt > 0 || !time.Now().Add(renewBefore).Before(grant.ExpiresAt) {
 						renewed, err := request(groupCtx, []int32{number})
 						if err != nil {
@@ -370,26 +385,16 @@ func (s *Store) multipart(ctx context.Context, scope workerapi.StorageScope, obj
 						}
 						grant = renewed[0]
 					}
-					response, err := s.send(groupCtx, grant, nil, io.NewSectionReader(file, offset, length), length)
-					if err != nil {
+					var etag string
+					if etag, err = s.part(groupCtx, grant, file, offset, length); err == nil {
+						parts[number-1] = cas.CompletedPart{Number: number, ETag: etag}
+						return nil
+					}
+					if !errors.Is(err, errPartRefused) && !errors.Is(err, cas.ErrUnavailable) {
 						return err
 					}
-					if response.StatusCode == http.StatusForbidden && attempt == 0 {
-						drain(response)
-						continue
-					}
-					if response.StatusCode != http.StatusOK {
-						return statusError(response)
-					}
-					etag := response.Header.Get("ETag")
-					drain(response)
-					if etag == "" {
-						return errors.New("storage part response has no entity tag")
-					}
-					parts[number-1] = cas.CompletedPart{Number: number, ETag: etag}
-					return nil
 				}
-				return errors.New("storage part retry exhausted")
+				return fmt.Errorf("storage part %d retry exhausted: %w", number, err)
 			})
 		}
 	}
@@ -397,6 +402,47 @@ func (s *Store) multipart(ctx context.Context, scope workerapi.StorageScope, obj
 		return err
 	}
 	return s.client.StorageComplete(ctx, workerapi.StorageCompleteRequest{Scope: scope, Object: object, UploadID: upload.ID, Parts: parts})
+}
+
+// errPartRefused marks a part storage refused as unauthorized, typically
+// because its grant expired while the part waited or uploaded.
+var errPartRefused = errors.New("storage refused the part grant")
+
+// part uploads one part and returns its entity tag. Network failures and
+// server errors are cas.ErrUnavailable.
+func (s *Store) part(ctx context.Context, grant cas.SignedRequest, file *os.File, offset, length int64) (string, error) {
+	response, err := s.send(ctx, grant, nil, io.NewSectionReader(file, offset, length), length)
+	if err != nil {
+		return "", err
+	}
+	if response.StatusCode == http.StatusForbidden {
+		drain(response)
+		return "", errPartRefused
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", statusError(response)
+	}
+	etag := response.Header.Get("ETag")
+	drain(response)
+	if etag == "" {
+		return "", errors.New("storage part response has no entity tag")
+	}
+	return etag, nil
+}
+
+// partBackoff waits before retry attempt n (n >= 1) with full jitter, doubling
+// from partRetryBase up to partRetryMax as the storage SDK's standard retryer
+// does.
+var partBackoff = func(ctx context.Context, n int) error {
+	delay := time.Duration(rand.Int64N(int64(min(partRetryMax, partRetryBase<<(n-1)))))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 var _ cas.ImmutableStore = (*Store)(nil)

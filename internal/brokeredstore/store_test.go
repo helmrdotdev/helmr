@@ -29,7 +29,9 @@ type grantServer struct {
 	completed []cas.CompletedPart
 	aborted   bool
 	expired   bool // the next storage request is refused as an expired grant
-	failPart  bool
+	failParts int  // part uploads to refuse with a server error before accepting one
+	dropParts int  // part uploads to fail at the connection before accepting one
+	partGrant int  // part grants issued
 	partSize  int64
 }
 
@@ -73,7 +75,14 @@ func (g *grantServer) serve(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		body, _ := io.ReadAll(r.Body)
 		if part := r.URL.Query().Get("part"); part != "" {
-			if g.failPart {
+			if g.dropParts > 0 {
+				g.dropParts--
+				conn, _, _ := w.(http.Hijacker).Hijack()
+				_ = conn.Close()
+				return
+			}
+			if g.failParts > 0 {
+				g.failParts--
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -121,6 +130,9 @@ func (g *grantServer) StorageWrite(_ context.Context, r workerapi.StorageWriteRe
 }
 
 func (g *grantServer) StorageParts(_ context.Context, r workerapi.StoragePartsRequest) (workerapi.StoragePartsResponse, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.partGrant += len(r.Parts)
 	var out workerapi.StoragePartsResponse
 	for _, n := range r.Parts {
 		out.Parts = append(out.Parts, g.signed(http.MethodPut, r.Object.Digest, fmt.Sprintf("?part=%d", n)))

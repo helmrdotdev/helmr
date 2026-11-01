@@ -64,6 +64,7 @@ type Store struct {
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
+	copyObjectMaxBytes      int64
 }
 
 type ImmutableStore struct {

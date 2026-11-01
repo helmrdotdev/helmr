@@ -2,6 +2,7 @@ package brokeredstore
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -39,8 +40,28 @@ func TestPublishMultipartCompletesOrAborts(t *testing.T) {
 		t.Fatalf("completed %+v, aborted %v", g.completed, g.aborted)
 	}
 	failed, other := publishedFile(t, []byte("abcdefghij"))
-	g.failPart = true
+	defer func(original func(context.Context, int) error) { partBackoff = original }(partBackoff)
+	partBackoff = func(context.Context, int) error { return nil }
+	g.failParts = 1 << 20
 	if _, err := store.Publish(scoped(t), other, failed); err == nil || !g.aborted {
 		t.Fatalf("failed part = %v, aborted %v", err, g.aborted)
+	}
+}
+
+// A part that meets a dropped connection or a server error is retried with
+// backoff under a renewed grant, as the storage SDK retried it before.
+func TestPublishMultipartRetriesTransientPartFailures(t *testing.T) {
+	waits := 0
+	defer func(original func(context.Context, int) error) { partBackoff = original }(partBackoff)
+	partBackoff = func(context.Context, int) error { waits++; return nil }
+	g := newGrantServer(t)
+	store, _ := New(g, workerapi.StorageCAS, g.storage.Client())
+	file, descriptor := publishedFile(t, []byte("0123456789"))
+	g.dropParts, g.failParts = 1, 1
+	if _, err := store.Publish(scoped(t), descriptor, file); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(g.objects[descriptor.Digest], []byte("0123456789")) || g.aborted || waits != 2 || g.partGrant != 3+2 {
+		t.Fatalf("object %q, aborted %v, waits %d, part grants %d", g.objects[descriptor.Digest], g.aborted, waits, g.partGrant)
 	}
 }
