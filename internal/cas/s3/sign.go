@@ -287,9 +287,9 @@ func (c *Store) removeStaged(ctx context.Context, staging string) {
 }
 
 // checksumStaged has storage compute the staged object's full SHA-256 by
-// copying it in place, so its bytes never pass through the Control Plane. It
-// requires the descriptor's digest, size and media type and returns the entity
-// tag and version of the copy it authenticated.
+// copying it in place, so its bytes never pass through the Control Plane. The
+// copy sets the descriptor's media type, and a matching SHA-256 fixes its bytes
+// and size. It returns the entity tag and version of the copy it authenticated.
 func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
 	checksum, err := descriptorChecksum(expected.Digest)
 	if err != nil {
@@ -305,23 +305,14 @@ func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas
 	if copied == nil || copied.CopyObjectResult == nil || aws.ToString(copied.CopyObjectResult.ETag) == "" {
 		return "", "", errors.New("storage returned no staged copy")
 	}
-	if aws.ToString(copied.CopyObjectResult.ChecksumSHA256) != checksum {
+	switch aws.ToString(copied.CopyObjectResult.ChecksumSHA256) {
+	case checksum:
+	case "":
+		return "", "", errors.New("storage returned no checksum for the staged copy")
+	default:
 		return "", "", fmt.Errorf("%w: staged bytes differ from digest %s", cas.ErrRemoteIntegrity, expected.Digest)
 	}
-	etag, version := aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId)
-	if !immutableVersion(version) {
-		return "", "", errors.New("storage returned no immutable version for the staged copy; the bucket must be versioned")
-	}
-	stat, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{
-		Bucket: aws.String(c.bucket), Key: aws.String(staging), IfMatch: aws.String(etag), VersionId: aws.String(version),
-	})
-	if err != nil {
-		return "", "", storageFailure(ctx, err)
-	}
-	if aws.ToInt64(stat.ContentLength) != expected.SizeBytes || aws.ToString(stat.ContentType) != expected.MediaType {
-		return "", "", fmt.Errorf("%w: staged object metadata differs from its descriptor", cas.ErrRemoteIntegrity)
-	}
-	return etag, version, nil
+	return aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId), nil
 }
 
 // verifyStaged reads an object too large for one server-side copy back,

@@ -119,6 +119,8 @@ type completionClient struct {
 	suspended   bool
 	// existingMedia is the media type of an object already at the digest key.
 	existingMedia string
+	// noChecksum storage ignores the requested checksum of a copy.
+	noChecksum bool
 }
 
 func (c *completionClient) version(id string) *string {
@@ -177,6 +179,9 @@ func (c *completionClient) CopyObject(_ context.Context, input *awss3.CopyObject
 		}
 		c.inPlace = true
 		checksum, _ := descriptorChecksum(sha256sum.DigestBytes(c.staged))
+		if c.noChecksum {
+			checksum = ""
+		}
 		return &awss3.CopyObjectOutput{VersionId: c.version("v2"), CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"verified"`), ChecksumSHA256: aws.String(checksum)}}, nil
 	}
 	if !c.pinned(aws.ToString(input.CopySourceIfMatch), aws.ToString(input.CopySource)) {
@@ -190,17 +195,14 @@ func (c *completionClient) CopyObject(_ context.Context, input *awss3.CopyObject
 }
 
 func (c *completionClient) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
-	if !strings.Contains(aws.ToString(input.Key), "/staging/") {
-		media := cas.CheckpointMemoryMediaType
-		if c.existingMedia != "" {
-			media = c.existingMedia
-		}
-		return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(media)}, nil
+	if strings.Contains(aws.ToString(input.Key), "/staging/") {
+		return nil, errors.New("metadata read of the unpinned staging key")
 	}
-	if aws.ToString(input.VersionId) != "v2" || aws.ToString(input.IfMatch) != `"verified"` {
-		return nil, errors.New("metadata of an unpinned version")
+	media := cas.CheckpointMemoryMediaType
+	if c.existingMedia != "" {
+		media = c.existingMedia
 	}
-	return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(cas.CheckpointMemoryMediaType)}, nil
+	return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(media)}, nil
 }
 
 func (c *completionClient) DeleteObject(_ context.Context, input *awss3.DeleteObjectInput, _ ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
@@ -293,5 +295,18 @@ func TestCompleteUploadRefusesExistingObjectOfOtherMetadata(t *testing.T) {
 		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); !errors.Is(err, cas.ErrRemoteIntegrity) {
 			t.Fatalf("read back %t: completion over other metadata = %v", readBack, err)
 		}
+	}
+}
+
+// Storage that computes no checksum for the in-place copy fails the completion
+// without reporting the uploaded bytes as corrupt.
+func TestCompleteUploadWithoutStorageChecksumIsNotAnIntegrityFailure(t *testing.T) {
+	staged := bytes.Repeat([]byte{7}, 96)
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	client := &completionClient{staged: staged, noChecksum: true}
+	store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || errors.Is(err, cas.ErrRemoteIntegrity) || client.copied != "" {
+		t.Fatalf("completion without a storage checksum = %v, copied %q", err, client.copied)
 	}
 }

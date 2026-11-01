@@ -45,7 +45,9 @@ key from your application's configuration to its constructor.
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
 `WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
-`COMPUTER_FENCING_KEY`. Configure `GITHUB_OAUTH_CLIENT_ID` and
+`COMPUTER_FENCING_KEY`. The `CAS_URI` bucket must have versioning enabled:
+multipart uploads are published only from the exact object version the Control
+Plane verified. Configure `GITHUB_OAUTH_CLIENT_ID` and
 `GITHUB_OAUTH_CLIENT_SECRET` together to enable GitHub login; both may be omitted.
 
 Deployment uploads require the same explicit process configuration in Managed

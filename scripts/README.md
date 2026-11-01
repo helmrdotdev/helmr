@@ -35,7 +35,7 @@ managed Postgres, ClickHouse, and synthetic runtime descriptor when
 external URLs are not set. Object storage is S3, as in production: set
 `CAS_URI` and `PLATFORM_STORE_URI` to distinct `s3://bucket[/prefix]` stores
 reachable with your native AWS configuration (append `?endpoint=URL` for an
-S3-compatible service). State lives under `$ROOT/.helmr-dev` (override
+S3-compatible service). The `CAS_URI` bucket must have versioning enabled. State lives under `$ROOT/.helmr-dev` (override
 `HELMR_DEV_DIR`) with short-path Unix sockets in `$TMPDIR/helmr-<state-hash>`.
 Owned data persists by default; `make dev-reset` clears owned Postgres and
 ClickHouse only when the stack is stopped and no owned services are still running.

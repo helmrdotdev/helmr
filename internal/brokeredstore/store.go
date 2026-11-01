@@ -70,12 +70,11 @@ const renewBefore = 30 * time.Second
 const (
 	publishAttempts = 3
 	partConcurrency = 4
-	// partAttempts, partRetryBase and partRetryMax give each part the budget of
-	// the storage SDK's standard retryer: network failures, server errors,
-	// throttling and refused grants are retried with backoff.
+	// partAttempts and partRetryBase give each part the budget of the storage
+	// SDK's standard retryer: network failures, server errors, throttling and
+	// refused grants are retried with backoff.
 	partAttempts  = 3
 	partRetryBase = time.Second
-	partRetryMax  = 20 * time.Second
 )
 
 type readKey struct{ scope, digest string }
@@ -431,10 +430,9 @@ func (s *Store) part(ctx context.Context, grant cas.SignedRequest, file *os.File
 }
 
 // partBackoff waits before retry attempt n (n >= 1) with full jitter, doubling
-// from partRetryBase up to partRetryMax as the storage SDK's standard retryer
-// does.
+// from partRetryBase as the storage SDK's standard retryer does.
 var partBackoff = func(ctx context.Context, n int) error {
-	delay := time.Duration(rand.Int64N(int64(min(partRetryMax, partRetryBase<<(n-1)))))
+	delay := time.Duration(rand.Int64N(int64(partRetryBase << (n - 1))))
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
