@@ -373,9 +373,9 @@ func releaseFinishedUploads(ctx context.Context, tx pgx.Tx, org uuid.UUID, diges
 // Write grants one create-only publication of exactly the descriptor's bytes
 // into the organization's keyspace. An object already stored is verified rather
 // than replaced. Finding it records no receipt, so it grants no read: a later
-// read still requires the object to be in the authority's graph. Publishers
-// register an object's membership before uploading it, which keeps its
-// lifetime available through certification. A request that fails or only
+// read still requires the object to be in the authority's graph. Save and
+// checkpoint publishers register membership before uploading, which keeps the
+// object's lifetime available through certification. A request that fails or only
 // finds a stored object widens no access.
 func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor) (StorageWrite, error) {
 	a, err := b.writeAuthority(ctx, host, scope, object, func(pgx.Tx, storageAuthority) error { return nil })
