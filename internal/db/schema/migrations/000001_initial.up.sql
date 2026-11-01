@@ -2151,6 +2151,7 @@ CREATE TABLE slack_requests (
     wait_channel text CHECK (wait_channel<>''),
     wait_thread_ts text CHECK (wait_thread_ts<>''),
     wait_ts text CHECK (wait_ts<>''),
+    wait_status_at timestamptz,
     CHECK ((wait_channel IS NULL)=(wait_thread_ts IS NULL)),
     CHECK ((observed_authority_generation IS NULL)=(observed_next_turn_seq IS NULL)),
     CHECK (observed_authority_generation IS NULL OR (environment_id IS NOT NULL AND observed_authority_generation>0 AND observed_next_turn_seq>0)),

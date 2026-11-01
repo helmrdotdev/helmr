@@ -981,6 +981,7 @@ column slack_requests.turn_id uuid
 column slack_requests.user_id uuid
 column slack_requests.wait_card text
 column slack_requests.wait_channel text
+column slack_requests.wait_status_at timestamp with time zone
 column slack_requests.wait_thread_ts text
 column slack_requests.wait_ts text
 column slack_socket_connections.app_registration_id uuid not null

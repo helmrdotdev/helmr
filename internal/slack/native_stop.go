@@ -51,31 +51,25 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 			return err
 		}
 		// Stop withdraws the person's own messages still waiting in this thread
-		// for execution; a withdrawn message never runs.
+		// for execution; a withdrawn message never runs. A message admitted just
+		// before this receipt commits is already work and is not withdrawn; its
+		// thread keeps showing processing, so a later Stop can stop it.
 		withdrawn, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error='stopped_waiting'
  WHERE installation_id=$1 AND status='received' AND wait_card IN ('posting','waiting') AND wait_channel=$2 AND wait_thread_ts=$3 AND slack_user_id=$4 AND source_occurred_at<=$5`, installation, e.Channel, e.Thread, e.User, occurred)
 		if err != nil {
 			return err
 		}
 		// Withdrawing a message is the whole effect of Stop when the thread's
-		// Session has no work of its own to stop.
+		// Session and the Sessions it owns have no work of their own to stop.
 		if withdrawn.RowsAffected() > 0 {
 			var working bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN turns w ON w.environment_id=t.environment_id AND w.session_id=t.front_session_id
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN sessions owned ON owned.environment_id=t.environment_id AND owned.root_session_id=t.front_session_id
+ JOIN turns w ON w.environment_id=owned.environment_id AND w.session_id=owned.id
  WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3 AND t.deleted_at IS NULL AND w.status IN ('queued','running'))`, installation, e.Channel, e.Thread).Scan(&working); err != nil {
 				return err
 			}
 			if !working {
 				return rejectMessage(ctx, tx, receipt.ID, "input_ignored")
-			}
-		}
-		// Admission may have accepted such a message after Stop happened but
-		// before this receipt committed. Stop then applies to the execution that
-		// message started instead of treating it as newer work.
-		var raced bool
-		if withdrawn.RowsAffected() == 0 {
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_requests WHERE installation_id=$1 AND status='accepted' AND wait_card IS NOT NULL AND wait_channel=$2 AND wait_thread_ts=$3 AND slack_user_id=$4 AND finished_at>=$5)`, installation, e.Channel, e.Thread, e.User, occurred).Scan(&raced); err != nil {
-				return err
 			}
 		}
 		// Fill the observation once, in the same transaction as the first receipt.
@@ -84,7 +78,7 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN slack_thread_sources src ON src.thread_id=t.id AND src.session_id=s.id
  WHERE r.id=$1 AND r.observed_authority_generation IS NULL AND c.installation_id=$2 AND c.slack_channel_id=$3 AND t.thread_ts=$4 AND t.deleted_at IS NULL
  AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))
- AND ($6 OR (s.created_at<=$5 AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.created_at>$5))) AND NOT EXISTS(SELECT 1 FROM session_controls newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.kind<>'interrupt' AND newer.accepted_at>$5)`, receipt.ID, installation, e.Channel, e.Thread, occurred, raced)
+ AND s.created_at<=$5 AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.created_at>$5) AND NOT EXISTS(SELECT 1 FROM session_controls newer WHERE newer.environment_id=s.environment_id AND newer.session_id=s.id AND newer.kind<>'interrupt' AND newer.accepted_at>$5)`, receipt.ID, installation, e.Channel, e.Thread, occurred)
 		if err != nil {
 			return err
 		}

@@ -159,26 +159,6 @@ func TestSlackStopWithdrawsAWaitingReplyInItsThread(t *testing.T) {
 	}
 }
 
-func TestSlackStopAfterAWaitingReplyIsAdmittedStopsItsExecution(t *testing.T) {
-	f := newSlackAdmissionFixture(t)
-	f.link(t)
-	id := f.reply(t, "racing-reply", false)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_capacity_exhausted' WHERE id=$1`, id)
-	caller := &recordingCaller{}
-	caller.drain(t, f)
-	// Stop happens while the reply waits, but admission commits first.
-	stopped := slackNow()
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
-		t.Fatal(err)
-	}
-	f.receiptStatus(t, id, "accepted")
-	stop := f.nativeStopAt(t, "late-stop", stopped)
-	var observed bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='received' AND observed_authority_generation IS NOT NULL FROM slack_requests WHERE id=$1`, stop).Scan(&observed); err != nil || !observed {
-		t.Fatalf("Stop treated the admitted reply as newer work: %v %v", observed, err)
-	}
-}
-
 func TestSlackSettlingOneWaitKeepsAnotherWaitWorking(t *testing.T) {
 	f := newStatusFixture(t)
 	first, second := f.newMessage(t, "first", "555.000001"), f.newMessage(t, "second", "555.000001")
@@ -189,6 +169,13 @@ func TestSlackSettlingOneWaitKeepsAnotherWaitWorking(t *testing.T) {
 	calls := caller.drain(t, f)
 	if len(calls) != 1 || calls[0].method != "chat.update" {
 		t.Fatalf("one settled wait cleared the other's status: %+v", calls)
+	}
+	// A wait settled concurrently may still clear the shared status; the
+	// remaining wait reasserts it within a minute.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET wait_status_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, second)
+	calls = caller.drain(t, f)
+	if len(calls) != 1 || calls[0].method != "agents.sessions.setStatus" || calls[0].body["status"] != "processing" || calls[0].body["thread_ts"] != "555.000001" {
+		t.Fatalf("waiting status not reasserted: %+v", calls)
 	}
 }
 
