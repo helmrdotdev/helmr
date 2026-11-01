@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type connectionFixture struct {
@@ -125,13 +126,22 @@ func TestConnectionShapeConstraints(t *testing.T) {
 		"http issuer":                 `INSERT INTO org_sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id) VALUES($1,$2,'oidc','candidate','http://i','c',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),$3)`,
 		"saml without certificates":   `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{}',$3)`,
 		"active without activated_at": `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','active','e','https://s','{x}',$3)`,
-		"member of another org":       `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{x}',gen_random_uuid())`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := f.db.Pool.Exec(t.Context(), stmt, uuid.NewV7(), f.org, f.member); err == nil {
 				t.Fatal("malformed connection accepted")
 			}
 		})
+	}
+	// The creator must be a member of the same organization.
+	otherOrg, otherMember, otherUser := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Other')`, otherUser)
+	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, otherOrg)
+	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, otherMember, otherOrg, otherUser)
+	_, err := f.db.Pool.Exec(t.Context(), `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{x}',$3)`, uuid.NewV7(), f.org, otherMember)
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) || pg.Code != "23503" {
+		t.Fatalf("cross-organization creator err = %v", err)
 	}
 }
 
@@ -154,5 +164,18 @@ func TestConsumeAssertionRefusesReplay(t *testing.T) {
 	}
 	if n, err := purgeConsumedAssertions(t.Context(), f.db.Pool); err != nil || n != 1 {
 		t.Fatalf("purged %d err %v", n, err)
+	}
+	// A candidate tested moments ago can still be discarded and replaced.
+	if err := ConsumeAssertion(t.Context(), f.db.Pool, connection, SAMLAssertion{ID: "_test-sign-in", NotOnOrAfter: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tx(t, func(tx pgx.Tx) error {
+		if err := f.store.DiscardCandidate(t.Context(), tx, f.org, connection); err != nil {
+			return err
+		}
+		_, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, newTestIdP(t).samlIdP())
+		return err
+	}); err != nil {
+		t.Fatalf("discard after test sign-in: %v", err)
 	}
 }

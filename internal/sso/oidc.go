@@ -2,11 +2,11 @@ package sso
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,10 +26,10 @@ var ErrOIDCToken = errors.New("the identity provider token is not valid")
 
 // OIDC is Helmr's relying party for one connection.
 type OIDC struct {
+	issuer   string
 	config   oauth2.Config
 	verifier *oidc.IDTokenVerifier
 	client   *http.Client
-	now      func() time.Time
 }
 
 // NewOIDC discovers the issuer through client. The issuer in the discovery
@@ -47,11 +47,11 @@ func NewOIDC(ctx context.Context, client *http.Client, issuer, clientID, clientS
 		return nil, fmt.Errorf("OIDC discovery failed: %w", err)
 	}
 	return &OIDC{
+		issuer: issuer,
 		config: oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, Endpoint: provider.Endpoint(),
 			RedirectURL: redirectURL, Scopes: []string{oidc.ScopeOpenID, "email", "profile"}},
 		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
 		client:   client,
-		now:      time.Now,
 	}, nil
 }
 
@@ -68,9 +68,10 @@ func (o *OIDC) AuthURL(state, nonce, pkceVerifier string, reauthenticate bool) s
 }
 
 // Exchange redeems a callback code and validates its ID token. go-oidc checks
-// the signature, issuer, audience and expiry; Helmr checks the nonce and the
-// authorized party. The proof time is auth_time when present, otherwise the
-// token's iat (Entra omits auth_time unless configured).
+// the signature, audience and expiry; Helmr checks the exact issuer (go-oidc
+// also accepts Google's scheme-less issuer), the nonce and the authorized
+// party. The proof time is auth_time when present, otherwise the token's iat
+// (Entra omits auth_time unless configured).
 func (o *OIDC) Exchange(ctx context.Context, code, pkceVerifier, nonce string) (Identity, error) {
 	ctx = oidc.ClientContext(ctx, o.client)
 	token, err := o.config.Exchange(ctx, code, oauth2.VerifierOption(pkceVerifier))
@@ -92,10 +93,13 @@ func (o *OIDC) verify(ctx context.Context, raw, nonce string) (Identity, error) 
 	if nonce == "" || id.Nonce != nonce {
 		return Identity{}, fmt.Errorf("%w: nonce mismatch", ErrOIDCToken)
 	}
+	if id.Issuer != o.issuer {
+		return Identity{}, fmt.Errorf("%w: issuer mismatch", ErrOIDCToken)
+	}
 	var claims struct {
-		AZP      string `json:"azp"`
-		AuthTime int64  `json:"auth_time"`
-		Email    string `json:"email"`
+		AZP      string          `json:"azp"`
+		AuthTime json.RawMessage `json:"auth_time"`
+		Email    string          `json:"email"`
 	}
 	if err := id.Claims(&claims); err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrOIDCToken, err)
@@ -106,14 +110,18 @@ func (o *OIDC) verify(ctx context.Context, raw, nonce string) (Identity, error) 
 	if claims.AZP == "" && len(id.Audience) > 1 {
 		return Identity{}, fmt.Errorf("%w: multiple audiences without authorized party", ErrOIDCToken)
 	}
-	if !slices.Contains(id.Audience, o.config.ClientID) || strings.TrimSpace(id.Subject) == "" {
-		return Identity{}, fmt.Errorf("%w: missing subject or audience", ErrOIDCToken)
+	if strings.TrimSpace(id.Subject) == "" {
+		return Identity{}, fmt.Errorf("%w: missing subject", ErrOIDCToken)
 	}
 	at := id.IssuedAt
-	if claims.AuthTime > 0 {
-		at = time.Unix(claims.AuthTime, 0)
+	if len(claims.AuthTime) > 0 {
+		var seconds int64
+		if err := json.Unmarshal(claims.AuthTime, &seconds); err != nil || seconds <= 0 {
+			return Identity{}, fmt.Errorf("%w: invalid auth_time", ErrOIDCToken)
+		}
+		at = time.Unix(seconds, 0)
 	}
-	if at.IsZero() || at.After(o.now().Add(clockSkew)) {
+	if at.IsZero() || at.After(time.Now().Add(clockSkew)) {
 		return Identity{}, fmt.Errorf("%w: authentication time is missing or in the future", ErrOIDCToken)
 	}
 	return Identity{Subject: id.Subject, Email: strings.TrimSpace(claims.Email), AuthenticatedAt: at.UTC()}, nil

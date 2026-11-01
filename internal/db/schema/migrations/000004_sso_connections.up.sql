@@ -37,7 +37,7 @@ CREATE UNIQUE INDEX org_sso_connections_active ON org_sso_connections(org_id) WH
 -- A validated SAML assertion ID is consumed once per connection until it can no
 -- longer be valid.
 CREATE TABLE saml_consumed_assertions (
- connection_id uuid NOT NULL REFERENCES org_sso_connections(id),
+ connection_id uuid NOT NULL REFERENCES org_sso_connections(id) ON DELETE CASCADE,
  assertion_id text NOT NULL CHECK (assertion_id<>''),
  expires_at timestamptz NOT NULL,
  PRIMARY KEY (connection_id,assertion_id)

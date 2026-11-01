@@ -75,6 +75,7 @@ func (s *Store) CreateOIDC(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 
 // CreateSAML records a candidate SAML connection.
 func (s *Store) CreateSAML(ctx context.Context, tx pgx.Tx, org, creator uuid.UUID, idp SAMLIdP) (Connection, error) {
+	idp = idp.normalized()
 	if err := idp.Validate(); err != nil {
 		return Connection{}, err
 	}
@@ -90,6 +91,9 @@ func (s *Store) CreateSAML(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 // RotateOIDCSecret replaces the client secret. Any change clears the test
 // result, so a connection must be tested again before activation.
 func (s *Store) RotateOIDCSecret(ctx context.Context, tx pgx.Tx, org, id uuid.UUID, secret string) error {
+	if secret == "" {
+		return errors.New("the OIDC client secret is required")
+	}
 	ciphertext, nonce, err := s.sealer.seal(org, id, secret)
 	if err != nil {
 		return err
@@ -101,6 +105,7 @@ func (s *Store) RotateOIDCSecret(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 // UpdateSAMLMaterial replaces the sign-in URL and signing certificates. The
 // IdP entity ID is the trust identity and cannot change.
 func (s *Store) UpdateSAMLMaterial(ctx context.Context, tx pgx.Tx, org, id uuid.UUID, idp SAMLIdP) error {
+	idp = idp.normalized()
 	current, err := s.Get(ctx, tx, org, id)
 	if err != nil {
 		return err
@@ -129,7 +134,7 @@ func (s *Store) DiscardCandidate(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 }
 
 // Get reads one connection with its client secret, locking it for the caller's
-// transaction.
+// administrative transaction. Sign-in reads must not hold this lock.
 func (s *Store) Get(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (Connection, error) {
 	var c Connection
 	var issuer, clientID, entityID, ssoURL *string

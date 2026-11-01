@@ -93,14 +93,13 @@ var (
 // Validate checks a posted SAMLResponse for the request it must answer.
 // gosaml2 verifies the signature (on the response or the assertion), issuer,
 // status, bearer confirmation, recipient and its expiry, and allows exactly one
-// signed top-level assertion. Helmr adds the request ID, audience and time
-// conditions (which gosaml2 only reports), the NameID format and AuthnInstant.
+// signed top-level assertion. Helmr adds the checks gosaml2 leaves to callers,
+// all on signature-validated assertion content: the request ID, a required
+// audience restriction, the time conditions, the NameID format and a present,
+// non-future AuthnInstant. The signed Recipient, not the Response Destination
+// (unsigned when only the assertion is signed), binds the response to the ACS.
 func (s *SAML) Validate(encoded, requestID string) (SAMLAssertion, error) {
-	resp, err := s.sp.ValidateEncodedResponse(encoded)
-	if err != nil {
-		return SAMLAssertion{}, fmt.Errorf("%w: %v", ErrSAMLResponse, err)
-	}
-	if requestID == "" || resp.InResponseTo != requestID {
+	if requestID == "" {
 		return SAMLAssertion{}, ErrSAMLWrongRequest
 	}
 	info, err := s.sp.RetrieveAssertionInfo(encoded)
@@ -114,11 +113,14 @@ func (s *SAML) Validate(encoded, requestID string) (SAMLAssertion, error) {
 		return SAMLAssertion{}, fmt.Errorf("%w: expected one assertion", ErrSAMLResponse)
 	}
 	a := info.Assertions[0]
+	if a.Conditions == nil || len(a.Conditions.AudienceRestrictions) == 0 {
+		return SAMLAssertion{}, fmt.Errorf("%w: missing audience restriction", ErrSAMLResponse)
+	}
 	if a.Subject == nil || a.Subject.SubjectConfirmation == nil || a.Subject.SubjectConfirmation.SubjectConfirmationData == nil {
 		return SAMLAssertion{}, fmt.Errorf("%w: missing subject confirmation", ErrSAMLResponse)
 	}
 	data := a.Subject.SubjectConfirmation.SubjectConfirmationData
-	if data.InResponseTo != "" && data.InResponseTo != requestID {
+	if data.InResponseTo != requestID {
 		return SAMLAssertion{}, ErrSAMLWrongRequest
 	}
 	if info.NameIDFormat == saml2.NameIdFormatTransient {
@@ -127,8 +129,8 @@ func (s *SAML) Validate(encoded, requestID string) (SAMLAssertion, error) {
 	if strings.TrimSpace(info.NameID) == "" || a.ID == "" {
 		return SAMLAssertion{}, fmt.Errorf("%w: missing NameID or assertion ID", ErrSAMLResponse)
 	}
-	if info.AuthnInstant == nil || info.AuthnInstant.IsZero() {
-		return SAMLAssertion{}, fmt.Errorf("%w: missing AuthnInstant", ErrSAMLResponse)
+	if info.AuthnInstant == nil || info.AuthnInstant.IsZero() || info.AuthnInstant.After(s.sp.Clock.Now().Add(clockSkew)) {
+		return SAMLAssertion{}, fmt.Errorf("%w: AuthnInstant is missing or in the future", ErrSAMLResponse)
 	}
 	notOnOrAfter, err := time.Parse(time.RFC3339, data.NotOnOrAfter)
 	if err != nil {

@@ -80,6 +80,10 @@ func TestSAMLRefusesInvalidResponses(t *testing.T) {
 		{name: "not yet valid", edit: func(o *responseOptions) { o.notBefore = now.Add(time.Hour) }, want: ErrSAMLResponse},
 		{name: "no AuthnInstant", edit: func(o *responseOptions) { o.authnInstant = "" }, want: ErrSAMLResponse},
 		{name: "signed by an unknown key", signer: &other, want: ErrSAMLResponse},
+		{name: "signed assertion answers another request", edit: func(o *responseOptions) { o.scdRequestID = "_other" }, want: ErrSAMLWrongRequest},
+		{name: "signed assertion has no request ID (IdP-initiated)", edit: func(o *responseOptions) { o.scdRequestID = "-" }, want: ErrSAMLWrongRequest},
+		{name: "no audience restriction", edit: func(o *responseOptions) { o.noAudience = true }, want: ErrSAMLResponse},
+		{name: "AuthnInstant in the future", edit: func(o *responseOptions) { o.authnInstant = now.Add(time.Hour).Format(time.RFC3339) }, want: ErrSAMLResponse},
 		{name: "unsigned", edit: func(o *responseOptions) { o.sign = 0 }, want: ErrSAMLResponse},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,6 +108,25 @@ func TestSAMLRefusesInvalidResponses(t *testing.T) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// With only the assertion signed, the Response envelope is attacker-writable,
+// so its InResponseTo must not stand in for the signed one.
+func TestSAMLIgnoresForgedEnvelopeRequestID(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	idp := newTestIdP(t)
+	sp := testSP(t, idp, now)
+	_, requestID, err := sp.AuthnRequest(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := defaultOptions(sp, "_unsolicited", now)
+	o.scdRequestID = "-"
+	doc := idp.response(t, o)
+	doc.Root().CreateAttr("InResponseTo", requestID)
+	if _, err := sp.Validate(encode(t, doc), requestID); !errors.Is(err, ErrSAMLWrongRequest) {
+		t.Fatalf("forged envelope err = %v", err)
 	}
 }
 

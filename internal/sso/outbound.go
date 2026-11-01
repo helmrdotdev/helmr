@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"syscall"
 	"time"
 )
@@ -68,9 +69,35 @@ func newHTTPClient(allowPrivate bool, roots *x509.CertPool) *http.Client {
 	}
 }
 
+// nonPublic are address ranges an IdP on the public internet never uses:
+// private, shared (CGNAT), loopback, link-local, documentation, benchmarking,
+// reserved and IPv6 transition ranges that embed IPv4.
+var nonPublic = func() []netip.Prefix {
+	var ps []netip.Prefix
+	for _, p := range []string{
+		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+		"192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24",
+		"224.0.0.0/4", "240.0.0.0/4",
+		"::/128", "::1/128", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32",
+		"2002::/16", "fc00::/7", "fe80::/10", "ff00::/8",
+	} {
+		ps = append(ps, netip.MustParsePrefix(p))
+	}
+	return ps
+}()
+
 func publicIP(ip net.IP) bool {
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast())
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, p := range nonPublic {
+		if p.Contains(addr) {
+			return false
+		}
+	}
+	return true
 }
 
 type limitedTransport struct{ next http.RoundTripper }

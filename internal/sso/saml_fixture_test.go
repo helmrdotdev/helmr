@@ -56,6 +56,10 @@ type responseOptions struct {
 	assertionID  string
 	sha1         bool
 	attributes   map[string]string
+	// scdRequestID overrides the signed SubjectConfirmationData InResponseTo;
+	// "-" omits it (the IdP-initiated shape).
+	scdRequestID string
+	noAudience   bool
 }
 
 func defaultOptions(sp *SAML, requestID string, now time.Time) responseOptions {
@@ -86,9 +90,21 @@ func (i testIdP) response(t *testing.T, o responseOptions) *etree.Document {
 		attrs = "<saml:AttributeStatement>" + attrs + "</saml:AttributeStatement>"
 	}
 	f := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
-	raw := fmt.Sprintf(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r%s" Version="2.0" IssueInstant="%s" Destination="%s" InResponseTo="%s"><saml:Issuer>%s</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status><saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer><saml:Subject><saml:NameID Format="%s">%s</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData InResponseTo="%s" NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="%s" NotOnOrAfter="%s"><saml:AudienceRestriction><saml:Audience>%s</saml:Audience></saml:AudienceRestriction></saml:Conditions><saml:AuthnStatement%s SessionIndex="_s1"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>%s</saml:Assertion></samlp:Response>`,
+	scd := fmt.Sprintf(` InResponseTo="%s"`, o.requestID)
+	switch o.scdRequestID {
+	case "":
+	case "-":
+		scd = ""
+	default:
+		scd = fmt.Sprintf(` InResponseTo="%s"`, o.scdRequestID)
+	}
+	audience := fmt.Sprintf(`<saml:AudienceRestriction><saml:Audience>%s</saml:Audience></saml:AudienceRestriction>`, o.audience)
+	if o.noAudience {
+		audience = ""
+	}
+	raw := fmt.Sprintf(`<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r%s" Version="2.0" IssueInstant="%s" Destination="%s" InResponseTo="%s"><saml:Issuer>%s</saml:Issuer><samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status><saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="%s" Version="2.0" IssueInstant="%s"><saml:Issuer>%s</saml:Issuer><saml:Subject><saml:NameID Format="%s">%s</saml:NameID><saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData%s NotOnOrAfter="%s" Recipient="%s"/></saml:SubjectConfirmation></saml:Subject><saml:Conditions NotBefore="%s" NotOnOrAfter="%s">%s</saml:Conditions><saml:AuthnStatement%s SessionIndex="_s1"><saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>%s</saml:Assertion></samlp:Response>`,
 		uuid.NewV7(), f(o.notBefore), o.recipient, o.requestID, issuer, o.assertionID, f(o.notBefore), issuer,
-		o.nameIDFormat, o.nameID, o.requestID, f(o.notOnOrAfter), o.recipient, f(o.notBefore), f(o.notOnOrAfter), o.audience, authn, attrs)
+		o.nameIDFormat, o.nameID, scd, f(o.notOnOrAfter), o.recipient, f(o.notBefore), f(o.notOnOrAfter), audience, authn, attrs)
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(raw); err != nil {
 		t.Fatal(err)

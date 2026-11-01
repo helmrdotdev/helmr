@@ -60,6 +60,12 @@ func ParseSAMLMetadata(raw []byte) (SAMLIdP, error) {
 	return idp, idp.Validate()
 }
 
+// normalized trims manually entered values so they compare exactly at sign-in.
+func (idp SAMLIdP) normalized() SAMLIdP {
+	idp.EntityID, idp.SSOURL = strings.TrimSpace(idp.EntityID), strings.TrimSpace(idp.SSOURL)
+	return idp
+}
+
 // Validate checks a manually entered or parsed IdP configuration.
 func (idp SAMLIdP) Validate() error {
 	if idp.EntityID == "" {

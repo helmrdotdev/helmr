@@ -1894,7 +1894,7 @@ constraint roles p PRIMARY KEY (id)
 constraint roles u UNIQUE (org_id, builtin_key)
 constraint roles u UNIQUE (org_id, id)
 constraint saml_consumed_assertions c CHECK (assertion_id <> ''::text)
-constraint saml_consumed_assertions f FOREIGN KEY (connection_id) REFERENCES org_sso_connections(id)
+constraint saml_consumed_assertions f FOREIGN KEY (connection_id) REFERENCES org_sso_connections(id) ON DELETE CASCADE
 constraint saml_consumed_assertions p PRIMARY KEY (connection_id, assertion_id)
 constraint secret_bindings c CHECK ((deployment_id IS NULL) = (template_id IS NULL))
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$'::text OR mode = 'raw'::text AND placeholder IS NULL)

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,6 +23,8 @@ import (
 type testOIDCIdP struct {
 	server *httptest.Server
 	key    *rsa.PrivateKey
+	// signer overrides how the token endpoint signs ID tokens.
+	signer func(t *testing.T, claims map[string]any) string
 	claims func(nonce string) map[string]any
 	nonce  string
 }
@@ -52,7 +55,11 @@ func newTestOIDCIdP(t *testing.T) *testOIDCIdP {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": idp.sign(t, idp.claims(idp.nonce))})
+		sign := idp.sign
+		if idp.signer != nil {
+			sign = idp.signer
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": sign(t, idp.claims(idp.nonce))})
 	})
 	return idp
 }
@@ -106,6 +113,9 @@ func TestOIDCVendorClaimShapes(t *testing.T) {
 		{"expired", func(c map[string]any) { c["exp"] = now.Add(-time.Minute).Unix() }, time.Time{}, true},
 		{"authentication in the future", func(c map[string]any) { c["auth_time"] = now.Add(time.Hour).Unix() }, time.Time{}, true},
 		{"wrong nonce", func(c map[string]any) { c["nonce"] = "other" }, time.Time{}, true},
+		{"zero auth_time is not replaced by iat", func(c map[string]any) { c["auth_time"] = 0 }, time.Time{}, true},
+		{"negative auth_time", func(c map[string]any) { c["auth_time"] = -1 }, time.Time{}, true},
+		{"null auth_time", func(c map[string]any) { c["auth_time"] = nil }, time.Time{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			idp.nonce = "n-" + tc.name
@@ -172,5 +182,69 @@ func TestOutboundClientRefusesPrivateDestinationsOnCloud(t *testing.T) {
 	}
 	if _, err := newHTTPClient(true, pool).Get(strings.Replace(idp.server.URL, "https", "http", 1)); err == nil {
 		t.Fatal("http request allowed")
+	}
+}
+
+func TestOIDCRefusesForeignSignatures(t *testing.T) {
+	idp := newTestOIDCIdP(t)
+	now := time.Now()
+	idp.nonce = "n"
+	idp.claims = func(nonce string) map[string]any {
+		return map[string]any{"iss": idp.server.URL, "aud": "helmr", "sub": "user-1", "nonce": nonce, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
+	}
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, signer := range map[string]func(*testing.T, map[string]any) string{
+		"unknown key with the published key ID": func(t *testing.T, c map[string]any) string {
+			return signWith(t, jose.SigningKey{Algorithm: jose.RS256, Key: other}, c)
+		},
+		"HS256 keyed with the client secret": func(t *testing.T, c map[string]any) string {
+			return signWith(t, jose.SigningKey{Algorithm: jose.HS256, Key: []byte("secret-secret-secret-secret-secret")}, c)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			idp.signer = signer
+			o, err := NewOIDC(context.Background(), idp.client(), idp.server.URL, "helmr", "secret-secret-secret-secret-secret", "https://x/cb")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := o.Exchange(context.Background(), "good-code", "verifier-verifier-verifier-verifier-verifier", "n"); !errors.Is(err, ErrOIDCToken) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func signWith(t *testing.T, key jose.SigningKey, claims map[string]any) string {
+	t.Helper()
+	signer, err := jose.NewSigner(key, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(claims)
+	obj, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := obj.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestPublicIPRefusesNonPublicRanges(t *testing.T) {
+	for _, ip := range []string{"10.1.2.3", "100.64.0.1", "0.1.2.3", "127.0.0.1", "169.254.169.254", "192.0.0.8", "198.18.0.1",
+		"240.0.0.1", "255.255.255.255", "::1", "fd00::1", "fe80::1", "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::1", "2001::1", "::ffff:10.0.0.1"} {
+		if publicIP(net.ParseIP(ip)) {
+			t.Errorf("%s treated as public", ip)
+		}
+	}
+	for _, ip := range []string{"8.8.8.8", "2606:4700:4700::1111"} {
+		if !publicIP(net.ParseIP(ip)) {
+			t.Errorf("%s treated as non-public", ip)
+		}
 	}
 }
