@@ -56,7 +56,7 @@ func RequireRecentFor(p Principal, permission Permission) error {
 		PermissionMembersRemove, PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate, PermissionAPIKeysRevoke,
 		PermissionSecretsRotate, PermissionSecretsRevoke,
 		PermissionAgentConnectionsDelete,
-		PermissionAgentsDelete, PermissionAgentsRestore, PermissionComputersDelete:
+		PermissionAgentsDelete, PermissionComputersDelete:
 		return RequireRecentProof(p)
 	}
 	return nil

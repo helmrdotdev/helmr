@@ -108,7 +108,7 @@ stored Agent targets. Each assignment mutation advances its revision once and
 records an audit event in the same transaction.
 
 [Agent deletion](/docs/reference/api/agents) requires a human session with
-`agents.delete` on the target. Restore requires `agents.restore`. Neither requires
+`agents.delete` on the target. It does not require
 assignment or connection management permissions. Deleting cancels its Sessions
 and the Sessions they started; `agents.delete` is enough. Deletion includes fixed cleanup
 of the Agent's connection and selected access edges. It removes that Agent from selected
@@ -117,8 +117,10 @@ still grant other Agent targets or non-Agent permissions are preserved. An empty
 selected assignment grants no explicit Agent access, while its other resource
 permissions remain effective. Conditional PATCH and assignment removal remain
 available. Deletion advances revisions of preserved affected assignments, so a
-stale edit must refresh before retrying. Restore does not recreate removed
-selections or assignments; broad assignments apply to the restored Agent again.
+stale edit must refresh before retrying. Promoting a Deployment that declares a
+deleted Agent restores it with `deployments.promote` alone. Restoration does not
+recreate removed selections or assignments; broad assignments apply to the
+restored Agent again.
 
 List filters are `member_id`, `group_id`, `api_key_id`, `role_id`, `subject_kind`, `scope_kind`,
 `project`, `environment` and `agent`. Project/Environment filters use slugs; an
@@ -137,7 +139,6 @@ Agents or all current and future Agents in that environment.
 | `agents.read` | Agent | Yes | List/read the authorized Agent's definition and retained status, including deleted status; not other Agents or full deployment catalogs. |
 | `sessions.create` | Agent | Yes | Create a Session with initial input, an optional key and Slack destination. Returns a receipt without granting history or control. |
 | `agents.delete` | Agent | No | Preview and apply Agent deletion. Deleting cancels its Sessions and the Sessions they started, without a separate Session cancel permission. The Agent must be absent from the current deployment. |
-| `agents.restore` | Agent | No | Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent. |
 | `agent_connections.read` | Agent | No | Read the Agent's Slack connection status/setup metadata, without credential values. |
 | `agent_connections.configure` | Agent | No | Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection. |
 | `agent_connections.delete` | Agent | No | Disconnect the Agent's connection and perform its fixed cleanup. |
@@ -150,7 +151,7 @@ Agents or all current and future Agents in that environment.
 | `sessions.close` | Agent | Yes | Preview how many Sessions a close affects and request Session closure. |
 | `deployments.read` | Environment | Yes | Read deployment list, current deployment, record and events; not Session conversations or Computer stdout/stderr. |
 | `deployments.publish` | Environment | Yes | Obtain upload plan, finalize bundle and register immutable deployment definitions/code. Publication/preparation may execute code with configured credentials. |
-| `deployments.promote` | Environment | Yes | Activate or roll back to an existing deployment; changes current definitions and scheduled admission. No upload authority. |
+| `deployments.promote` | Environment | Yes | Activate or roll back to an existing deployment; changes current definitions and scheduled admission, and restores deleted Agents the deployment declares. No upload authority. |
 | `templates.read` | Environment | Yes | Read Template definitions and preparation-build status for permitted deployment selection. No broad Agent/Session authority. |
 | `templates.refresh` | Environment | Yes | Start explicit preparation refresh for a current Template, including configured preparation credential use. |
 | `triggers.read` | Agent | Yes | Read matching trigger definitions, input payloads and occurrence records. This is potentially sensitive input, not a metadata-only feed. Session links still require Session authority to follow. |

@@ -139,12 +139,19 @@ func TestCredentialRefreshLossSuppressesOnlyUnsentAndRejectsLateReplacement(t *t
 
 func (f statusFixture) reauthorize(t *testing.T, store *CredentialStore, org uuid.UUID, grant oauthGrant) (uuid.UUID, error) {
 	t.Helper()
+	return f.reauthorizeBinding(t, store, grant, bindNoTriggers)
+}
+
+func (f statusFixture) reauthorizeBinding(t *testing.T, store *CredentialStore, grant oauthGrant, bind TriggerBinder) (uuid.UUID, error) {
+	t.Helper()
 	observed, err := store.connectionAuthorization(t.Context(), f.Principal(t), f.publication)
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	return store.attachConnectionGrant(t.Context(), f.Principal(t), f.publication, observed, grant)
+	return store.attachConnectionGrant(t.Context(), f.Principal(t), f.publication, observed, grant, bind)
 }
+
+func bindNoTriggers(context.Context, pgx.Tx, uuid.UUID, uuid.UUID) error { return nil }
 
 func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t *testing.T) {
 	f, store, org := credentialFixture(t)
@@ -429,5 +436,50 @@ func TestCredentialRefreshPersistsReplacementAfterCallerCancellation(t *testing.
 	}
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err != nil || token != "new-access" {
 		t.Fatal("replacement was not persisted", err)
+	}
+}
+
+// Authorizing a connection hands the Agent's schedules to the trigger binder
+// inside the authorization transaction, where the authorized connection is
+// already eligible, on both a new connection and a re-authorization.
+func TestConnectionAuthorizationBindsSchedulesInTransaction(t *testing.T) {
+	f, store, _ := credentialFixture(t)
+	if err := store.DisconnectConnection(t.Context(), f.Principal(t), f.Environment, f.publication); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
+	setup, err := BeginConnection(t.Context(), f.Pool, f.Principal(t), f.Environment, f.Agent, TransportHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.StoreAppCredentials(t.Context(), f.Principal(t), setup.RegistrationID, AppCredentials{ClientID: "next-client", ClientSecret: "next-secret", SigningSecret: "next-signing"}); err != nil {
+		t.Fatal(err)
+	}
+	f.publication = setup.ID
+	grant := refreshResult().grant
+	grant.app = "next-app"
+	var calls []uuid.UUID
+	bind := func(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID) error {
+		target, err := slackroute.ReadConnection(ctx, tx, env, agent, "C1")
+		if err != nil || env != f.Environment || agent != f.Agent {
+			t.Errorf("binder ran before the connection was eligible: %v", err)
+		}
+		calls = append(calls, target.ConnectionID)
+		return nil
+	}
+	installation, err := f.reauthorizeBinding(t, store, grant, bind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same, err := f.reauthorizeBinding(t, store, grant, bind); err != nil || same != installation {
+		t.Fatal("re-authorization changed generation", err)
+	}
+	if len(calls) != 2 || calls[0] != setup.ID || calls[1] != setup.ID {
+		t.Fatalf("binder calls %v", calls)
+	}
+	// A binder failure rolls back the authorization.
+	failure := errors.New("binding failed")
+	if _, err = f.reauthorizeBinding(t, store, grant, func(context.Context, pgx.Tx, uuid.UUID, uuid.UUID) error { return failure }); !errors.Is(err, failure) {
+		t.Fatal("binder failure committed", err)
 	}
 }

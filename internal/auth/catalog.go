@@ -27,7 +27,6 @@ const (
 	PermissionAgentsRead                Permission = "agents.read"
 	PermissionSessionsCreate            Permission = "sessions.create"
 	PermissionAgentsDelete              Permission = "agents.delete"
-	PermissionAgentsRestore             Permission = "agents.restore"
 	PermissionAgentConnectionsRead      Permission = "agent_connections.read"
 	PermissionAgentConnectionsConfigure Permission = "agent_connections.configure"
 	PermissionAgentConnectionsDelete    Permission = "agent_connections.delete"
@@ -93,7 +92,6 @@ var permissionCatalog = []PermissionDefinition{
 	{"agents", PermissionAgentsRead, "Read agents", "List/read the authorized Agent's definition and retained status, including deleted status; not other Agents or full deployment catalogs.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsCreate, "Create sessions", "Create a Session with initial input, an optional key and Slack destination. Returns a creation receipt without granting history or control of the Session.", []PermissionScope{ScopeAgent}, true, nil},
 	{"agents", PermissionAgentsDelete, "Delete agents", "Preview and apply Agent deletion. Deleting cancels its Sessions and the Sessions they started, without a separate Session cancel permission. The Agent must be absent from the current deployment.", []PermissionScope{ScopeAgent}, false, nil},
-	{"agents", PermissionAgentsRestore, "Restore agents", "Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsRead, "Read agent connections", "Read the Agent's Slack connection status/setup metadata, without credential values.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsConfigure, "Configure agent connections", "Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsDelete, "Delete agent connections", "Disconnect the Agent's connection and perform its fixed cleanup.", []PermissionScope{ScopeAgent}, false, nil},

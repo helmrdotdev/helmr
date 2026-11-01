@@ -258,7 +258,6 @@ POST /api/projects
 POST /api/projects/{project}/environments
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize
-POST /api/projects/{project}/environments/{environment}/agents/{agent}/restore
 POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/api-keys/{id}/rotate
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel

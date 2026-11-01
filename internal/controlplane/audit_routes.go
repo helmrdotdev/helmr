@@ -213,7 +213,6 @@ var auditRoutes = map[string]auditRoute{
 	"POST /api/projects/{project}/environments":                         {"environment.created", ""},
 	"POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack":                                {"slack_connection.authorized", ""},
 	"POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize":       {"slack_connection.authorized", ""},
-	"POST /api/projects/{project}/environments/{environment}/agents/{agent}/restore":                                  {"agent.restored", ""},
 	"POST /api/projects/{project}/environments/{environment}/api-keys":                                                {"api_key.issued", ""},
 	"POST /api/projects/{project}/environments/{environment}/api-keys/{id}/rotate":                                    {"api_key.rotated", ""},
 	"POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel":                             {"command.cancel_requested", ""},

@@ -1,6 +1,6 @@
 ---
 title: helmr agent
-description: Inspect Agent definitions and delete or restore Agent identities.
+description: Inspect Agent definitions and delete Agent identities.
 sidebarLabel: agent
 ---
 
@@ -43,17 +43,15 @@ Environment has no current Deployment. JSON returns `agent`,
 identity, rather than a definition snapshot. `get` remains a definition read;
 use the [status API](/docs/reference/api/agents) to inspect retained status directly.
 
-## Delete and restore
+## Delete
 
 ```text
 helmr agent delete AGENT -p PROJECT -e ENV [--dry-run] [--if-match REVISION] [--json]
-helmr agent restore AGENT -p PROJECT -e ENV [--dry-run] [--if-match REVISION] [--json]
 ```
 
-These commands use your saved human login, including when `HELMR_API_KEY` is set.
-Delete requires `agents.delete`; Restore requires `agents.restore` on the target Agent.
-Both use their dedicated permission for preview and mutation.
-They act on the Environment's stable Agent identity, not a selected Deployment.
+The command uses your saved human login, including when `HELMR_API_KEY` is set.
+Delete requires `agents.delete` on the target Agent for preview and mutation.
+It acts on the Environment's stable Agent identity, not a selected Deployment.
 
 Preview first to see blockers, cleanup effects and warnings:
 
@@ -61,7 +59,6 @@ Preview first to see blockers, cleanup effects and warnings:
 helmr agent delete support -p demo -e staging --dry-run --json
 # Use the revision returned by the preview, for example 7:
 helmr agent delete support -p demo -e staging --if-match 7
-helmr agent restore support -p demo -e staging --dry-run --json
 ```
 
 `--dry-run` changes nothing and does not require a revision. A preview with
@@ -75,6 +72,7 @@ Delete requires the Agent to be absent from the current Deployment. Deleting
 cancels its Sessions and the Sessions they started, including ones of other
 Agents; `agents.delete` is the only permission it needs. The preview reports
 their count as `sessions_cancelled`, and execution cleanup continues after
-deletion. Restore does not recover removed
-Role selections or Slack Connections, nor does it activate a Deployment or replay
-old scheduled work. See [Deleting and restoring an Agent](/docs/concepts/agents#deleting-and-restoring-an-agent).
+deletion. To restore a deleted Agent, promote a Deployment that declares it with
+[`helmr deployment promote`](/docs/reference/cli/deployment); removed Role
+selections, Slack Connections and old scheduled work stay removed. See
+[Deleting and restoring an Agent](/docs/concepts/agents#deleting-and-restoring-an-agent).

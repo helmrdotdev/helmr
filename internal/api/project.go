@@ -112,6 +112,16 @@ type DeploymentResponse struct {
 	Version          string    `json:"version"`
 	BundleDigest     string    `json:"bundle_digest"`
 	CreatedAt        time.Time `json:"created_at"`
+	// RestoredAgents and WaitingTriggers report what a completed promotion did.
+	RestoredAgents  []string         `json:"restored_agents,omitempty"`
+	WaitingTriggers []WaitingTrigger `json:"waiting_triggers,omitempty"`
+}
+
+// WaitingTrigger is a promoted trigger whose Slack destination waits for a
+// connection of its Agent.
+type WaitingTrigger struct {
+	Agent   string `json:"agent"`
+	Trigger string `json:"trigger"`
 }
 
 type DeploymentListItem struct {

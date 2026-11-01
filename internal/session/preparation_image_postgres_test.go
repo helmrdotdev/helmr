@@ -65,7 +65,8 @@ func TestPreparationImageAgeAndDeadline(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := p.f.waiter(t)
 			if tc.age {
-				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET preparation_max_age_ms=86400000 WHERE environment_id=$1 AND id=$2`, p.f.env, c)
+				// A refresh every 8h limits the origin definition's images to 24h.
+				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE template_definitions d SET refresh_every_ms=28800000 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)`, p.f.env, c)
 			}
 			if tc.expired {
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, c)
@@ -201,7 +202,7 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 			}
 			switch reason {
 			case "age", "rotation-and-age":
-				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE images SET published_at=clock_timestamp()-interval '2 days' WHERE environment_id=$1; UPDATE computers SET preparation_max_age_ms=86400000 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, p.f.env)
+				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE images SET published_at=clock_timestamp()-interval '2 days' WHERE environment_id=$1; UPDATE template_definitions SET refresh_every_ms=28800000 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, p.f.env)
 			case "revoked":
 				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)

@@ -14,9 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
-func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request)  { s.changeAgent(w, r, false) }
-func (s *Server) restoreAgent(w http.ResponseWriter, r *http.Request) { s.changeAgent(w, r, true) }
-func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore bool) {
+func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, p)
 	if err != nil {
@@ -30,22 +28,13 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 	}
 	dry := false
 	for name, values := range r.URL.Query() {
-		if restore || name != "dry_run" || len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+		if name != "dry_run" || len(values) != 1 || (values[0] != "true" && values[0] != "false") {
 			s.writeOperationError(w, r, badRequest(errors.New("unsupported query parameter")))
 			return
 		}
 		dry = values[0] == "true"
 	}
-	if restore {
-		var input struct {
-			DryRun bool `json:"dry_run"`
-		}
-		if err = decodeOptionalRequestJSON(r, &input); err != nil {
-			s.writeOperationError(w, r, badRequest(err))
-			return
-		}
-		dry = input.DryRun
-	} else if r.ContentLength != 0 {
+	if r.ContentLength != 0 {
 		s.writeOperationError(w, r, badRequest(errors.New("DELETE uses query parameters, not a request body")))
 		return
 	}
@@ -63,7 +52,7 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 			return
 		}
 	}
-	result, err := deployment.ChangeAgent(r.Context(), s.tx, s.auditPolicy, p, scope, key, revision, restore, dry)
+	result, err := deployment.ChangeAgent(r.Context(), s.tx, s.auditPolicy, p, scope, key, revision, dry)
 	if err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrAgentNotFound):

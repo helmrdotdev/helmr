@@ -154,7 +154,7 @@ func ReadTemplateBuild(ctx context.Context, q db.DBTX, principal auth.Principal,
 
 func readTemplateBuildState(ctx context.Context, q db.DBTX, env uuid.UUID, result *TemplateBuild) error {
 	var maxAge *int64
-	if err := q.QueryRow(ctx, `SELECT d.max_image_age_ms FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND d.image_spec_id=$3 AND t.key=$4`, env, result.DeploymentID, result.ImageSpecID, result.TemplateID).Scan(&maxAge); err != nil {
+	if err := q.QueryRow(ctx, `SELECT 3*d.refresh_every_ms FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND d.image_spec_id=$3 AND t.key=$4`, env, result.DeploymentID, result.ImageSpecID, result.TemplateID).Scan(&maxAge); err != nil {
 		return err
 	}
 	state, err := computer.ReadImageBuildState(ctx, q, env, result.ImageBuildID, maxAge)

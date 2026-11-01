@@ -23,11 +23,8 @@ type AgentGrantCleanup struct {
 	permission         auth.Permission
 }
 
-func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env, agent uuid.UUID, restore bool) (*AgentGrantCleanup, error) {
+func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env, agent uuid.UUID) (*AgentGrantCleanup, error) {
 	permission := auth.PermissionAgentsDelete
-	if restore {
-		permission = auth.PermissionAgentsRestore
-	}
 	if err := lockActiveMembers(ctx, tx, m); err != nil {
 		return nil, err
 	}

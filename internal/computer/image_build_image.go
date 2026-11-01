@@ -75,8 +75,11 @@ func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) 
 	var pinned, attached *uuid.UUID
 	var live bool
 	var maxAge *int64
-	if err := tx.QueryRow(ctx, `SELECT image_id,image_build_id,initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>clock_timestamp(),preparation_max_age_ms
- FROM computers WHERE environment_id=$1 AND id=$2 AND image_spec_id=$3 FOR NO KEY UPDATE`, env, computer, *spec).Scan(&pinned, &attached, &live, &maxAge); err != nil {
+	// The age limit is three refresh intervals of the Computer's origin
+	// definition; a definition without refresh has no age limit.
+	if err := tx.QueryRow(ctx, `SELECT c.image_id,c.image_build_id,c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>clock_timestamp(),3*d.refresh_every_ms
+ FROM computers c JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)
+ WHERE c.environment_id=$1 AND c.id=$2 AND c.image_spec_id=$3 FOR NO KEY UPDATE OF c`, env, computer, *spec).Scan(&pinned, &attached, &live, &maxAge); err != nil {
 		return result, err
 	}
 	if pinned != nil {

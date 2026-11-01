@@ -6,7 +6,7 @@ export function agentContractFixture() {
     id: "workspace", image: image("base").from("ubuntu:24.04"),
     resources: { cpu: 2, memory: "4GiB", disk: "16GiB" },
     prepare: async build => { await build.exec(["true"]) },
-    refresh: { every: "24h", maxAge: "48h" },
+    refresh: { every: "24h" },
     secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }],
     prepareSecrets: [{ secret: "SOURCE_TOKEN", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
   })

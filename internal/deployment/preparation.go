@@ -10,12 +10,14 @@ import (
 )
 
 type preparationSpec struct {
-	id     uuid.UUID
+	id uuid.UUID
+	// maxAge is the strictest image age limit of the definitions sharing the
+	// spec: three refresh intervals. No refresh means no age limit.
 	maxAge *int64
 }
 
 func preparationSpecs(ctx context.Context, q db.DBTX, env, deployment uuid.UUID) ([]preparationSpec, error) {
-	rows, err := q.Query(ctx, `SELECT image_spec_id,min(max_image_age_ms) FROM template_definitions
+	rows, err := q.Query(ctx, `SELECT image_spec_id,min(3*refresh_every_ms) FROM template_definitions
  WHERE environment_id=$1 AND deployment_id=$2 AND prepare GROUP BY image_spec_id ORDER BY image_spec_id`, env, deployment)
 	if err != nil {
 		return nil, err

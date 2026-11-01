@@ -27,8 +27,11 @@ The install command, build secrets and build environment are
 [build settings](/docs/reference/config#build-environment) in `helmr.config.ts`, which the command evaluates
 once on this machine (Node.js 22 or newer required).
 
-Human progress is written to stderr and the final version to stdout. The
-Control Plane never installs dependencies or rebuilds the uploaded artifacts.
+Human progress is written to stderr and the final version to stdout. After
+promotion, stderr also lists each restored Agent and each trigger that waits for
+a Slack connection; with `--json`, the `deployment_result` line carries them as
+`restored_agents` and `waiting_triggers`. The Control Plane never installs
+dependencies or rebuilds the uploaded artifacts.
 
 Uploads use the configured Helmr origin with current authorization. When upload
 capacity is busy, the CLI honors `Retry-After` within the per-object deadline.

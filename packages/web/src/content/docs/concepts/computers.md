@@ -30,7 +30,7 @@ export const repo = template({
     await build.exec(["git", "clone", "https://github.com/acme/app.git", "/workspace/app"])
     await build.exec("npm ci", { cwd: "/workspace/app" })
   },
-  refresh: { every: "1d", maxAge: "7d" },
+  refresh: { every: "1d" },
   prepareSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
   secrets: [{ secret: GITHUB_TOKEN, env: { name: "GITHUB_TOKEN", mode: "raw" } }],
   deleteAfterUnused: "30d",
@@ -78,21 +78,23 @@ or definitions produces a new image the next time a Computer needs one.
 
 ## Refresh
 
-A prepared image ages. `refresh` controls how old it may be:
-
-- `maxAge`: a new Computer does not start from an image older than this.
-  Helmr prepares a new image instead.
-- `every`: the intended interval between background re-preparations.
+A prepared image ages. `refresh: { every }` sets the interval between
+background re-preparations, and it also limits how old an image may be: a new
+Computer does not start from an image older than three `every` intervals.
+Helmr prepares a new image instead. Without `refresh`, images have no age limit
+and are not re-prepared in the background.
 
 Refresh affects only Computers created afterward. A Computer keeps the image it
 started from for its whole life, and its disk then changes only through its own
 work.
 
-`maxAge` is enforced when a Computer is created. Promoting a Deployment activates
-its `every` policy for background preparation. The interval is best effort: a
-usable build already in progress satisfies the interval, missed intervals are
-coalesced, and capacity or an executor awaiting physical shutdown can delay work.
-It does not guarantee a successful image at each interval.
+The age limit is enforced when a Computer is created and when a Deployment is
+promoted. Promoting a Deployment activates its `every` policy for background
+preparation. The interval is best effort: a usable build already in progress
+satisfies the interval, missed intervals are coalesced, and capacity or an
+executor awaiting physical shutdown can delay work. It does not guarantee a
+successful image at each interval; the age limit allows two missed intervals
+before a new Computer waits for preparation.
 
 Helmr keeps the newest usable prepared image for each immutable recipe and images
 still needed by existing Computers or waiting preparations. Superseded payloads

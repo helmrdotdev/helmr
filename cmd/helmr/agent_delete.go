@@ -6,14 +6,10 @@ import (
 	"strconv"
 )
 
-func agentChangeCommand(restore bool) *cobra.Command {
-	action := "delete"
-	if restore {
-		action = "restore"
-	}
+func agentDeleteCommand() *cobra.Command {
 	var project, environment, revision string
 	var dry, jsonOutput bool
-	cmd := &cobra.Command{Use: action + " AGENT", Short: action + " an Agent using human management authority.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "delete AGENT", Short: "Delete an Agent using human management authority.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cp, err := sessionControlPlaneClient(cmd)
 		if err != nil {
 			return err
@@ -29,7 +25,7 @@ func agentChangeCommand(restore bool) *cobra.Command {
 			}
 			revision = strconv.FormatInt(status.Revision, 10)
 		}
-		result, err := cp.ChangeAgent(cmd.Context(), args[0], scope, restore, dry, revision)
+		result, err := cp.ChangeAgent(cmd.Context(), args[0], scope, dry, revision)
 		if err != nil {
 			return err
 		}

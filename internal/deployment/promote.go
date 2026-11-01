@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"slices"
+	"strings"
 	"time"
 	"uuid"
 
@@ -23,22 +25,36 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Promote atomically switches the current Deployment, closes prior trigger
-// intervals and recomputes background preparation cadence. Existing Sessions keep
-// their deployment pins. Re-promotion starts new intervals, never reopens old ones.
-func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
+// Promotion is the receipt of a promotion. RestoredAgents names the deleted
+// Agents the Deployment declares and the promotion restored. WaitingTriggers
+// names the triggers whose Slack destination waits for a connection.
+type Promotion struct {
+	Record
+	RestoredAgents  []string
+	WaitingTriggers []WaitingTrigger
+}
+
+type WaitingTrigger struct {
+	Agent, Trigger string
+}
+
+// Promote atomically switches the current Deployment, restores the deleted
+// Agents it declares, closes prior trigger intervals and recomputes background
+// preparation cadence. Existing Sessions keep their deployment pins.
+// Re-promotion starts new intervals, never reopens old ones.
+func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Promotion, error) {
 	if err := authorize(principal, scope, auth.PermissionDeploymentsPromote); err != nil {
-		return Record{}, err
+		return Promotion{}, err
 	}
 	project, env, err := scopeIDs(scope)
 	if err != nil {
-		return Record{}, err
+		return Promotion{}, err
 	}
 	routes, err := prepareTriggerRoutes(ctx, txb, principal, pgvalue.MustUUIDValue(env), pgvalue.MustUUIDValue(project), id, preflight)
 	if err != nil {
-		return Record{}, err
+		return Promotion{}, err
 	}
-	var result Record
+	var result Promotion
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		// Retained human authority precedes environment and route locks, matching
 		// membership changes and Agent cleanup. Re-read permissions below.
@@ -71,9 +87,6 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 		} else if err != nil {
 			return err
 		}
-		if err := requireUndeletedAgents(ctx, tx, pgvalue.MustUUIDValue(env), id); err != nil {
-			return err
-		}
 		// The Environment lock also serializes connection configuration. An
 		// active conversational front cannot acquire a structured input contract.
 		var incompatible bool
@@ -88,15 +101,21 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 			return err
 		}
 		if !ready {
-			result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)
+			result.Record, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)
 			result.PreparationState = "preparing"
+			return err
+		}
+		if err := confirmWaitingRoutes(ctx, tx, pgvalue.MustUUIDValue(env), routes); err != nil {
 			return err
 		}
 		var cutover time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&cutover); err != nil {
 			return err
 		}
-		if err := reconcileTriggers(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover, pins); err != nil {
+		if result.RestoredAgents, err = restoreDeclaredAgents(ctx, tx, policy, actor, pgvalue.MustUUIDValue(env), id); err != nil {
+			return err
+		}
+		if result.WaitingTriggers, err = reconcileTriggers(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover, pins); err != nil {
 			return err
 		}
 		if err := reconcileImageRefresh(ctx, tx, pgvalue.MustUUIDValue(env), id, cutover); err != nil {
@@ -111,50 +130,87 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
 			return err
 		}
-		result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)
+		result.Record, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)
 		return err
 	})
 	if err != nil {
-		return Record{}, err
+		return Promotion{}, err
 	}
 	return result, nil
 }
 
-func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT agent_id,key,cron,timezone,slack_channel_id FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 ORDER BY agent_id,key`, env, deployment)
+// restoreDeclaredAgents clears deletion of the Agents the Deployment declares.
+// Grants, Slack connections, sealed activations and cancelled Sessions removed
+// by deletion stay removed. The caller holds the Environment lock, which
+// precedes the Agent rows as in deletion.
+func restoreDeclaredAgents(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, env, deployment uuid.UUID) ([]string, error) {
+	rows, err := tx.Query(ctx, `UPDATE agents a SET deleted_at=NULL,revision=a.revision+1 FROM agent_definitions d
+ WHERE d.environment_id=$1 AND d.deployment_id=$2 AND (a.environment_id,a.id)=(d.environment_id,d.agent_id) AND a.deleted_at IS NOT NULL
+ RETURNING a.id,a.key,a.revision`, env, deployment)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	type restored struct {
+		id       uuid.UUID
+		key      string
+		revision int64
+	}
+	values, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (restored, error) {
+		var r restored
+		err := row.Scan(&r.id, &r.key, &r.revision)
+		return r, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(values, func(a, b restored) int { return strings.Compare(a.key, b.key) })
+	keys := []string{}
+	for _, r := range values {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: env, DeploymentID: deployment, Action: "agent.restored", TargetKind: "agent", TargetID: r.id, Details: audit.AgentChangeDetails{Revision: r.revision}}); err != nil {
+			return nil, err
+		}
+		keys = append(keys, r.key)
+	}
+	return keys, nil
+}
+
+func reconcileTriggers(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time, pins map[triggerRouteKey]uuid.UUID) ([]WaitingTrigger, error) {
+	rows, err := tx.Query(ctx, `SELECT t.agent_id,a.key,t.key,t.cron,t.timezone,t.slack_channel_id FROM agent_triggers t JOIN agents a ON (a.environment_id,a.id)=(t.environment_id,t.agent_id) WHERE t.environment_id=$1 AND t.deployment_id=$2 ORDER BY a.key,t.key`, env, deployment)
+	if err != nil {
+		return nil, err
 	}
 	type declared struct {
-		agent               uuid.UUID
-		key, cron, timezone string
-		destination         *string
+		agent                         uuid.UUID
+		agentKey, key, cron, timezone string
+		destination                   *string
 	}
 	declarations, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (declared, error) {
 		var d declared
-		err := row.Scan(&d.agent, &d.key, &d.cron, &d.timezone, &d.destination)
+		err := row.Scan(&d.agent, &d.agentKey, &d.key, &d.cron, &d.timezone, &d.destination)
 		return d, err
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	entries := make([]agent.Activation, 0, len(declarations))
+	waiting := []WaitingTrigger{}
 	for _, d := range declarations {
 		next, err := definition.NextCronTime(d.cron, d.timezone, cutover.Add(-time.Nanosecond))
 		if err != nil {
-			return invalidInput(fmt.Errorf("agent trigger %q cannot be scheduled: %w", d.key, err))
+			return nil, invalidInput(fmt.Errorf("agent trigger %q cannot be scheduled: %w", d.key, err))
 		}
 		var pin *uuid.UUID
 		if d.destination != nil {
-			value, ok := pins[triggerRouteKey{d.agent, *d.destination}]
-			if !ok {
-				return ErrNotDeployable
+			if value, ok := pins[triggerRouteKey{d.agent, *d.destination}]; ok {
+				pin = &value
+			} else {
+				// The activation waits for a Slack connection of its Agent.
+				waiting = append(waiting, WaitingTrigger{Agent: d.agentKey, Trigger: d.key})
 			}
-			pin = &value
 		}
 		entries = append(entries, agent.Activation{SlackChannelBindingID: pin, Agent: d.agent, Key: d.key, Next: next, ID: uuid.NewV7()})
 	}
-	return agent.ReplaceActivations(ctx, tx, env, deployment, cutover, entries)
+	return waiting, agent.ReplaceActivations(ctx, tx, env, deployment, cutover, entries)
 }
 
 func reconcileImageRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
@@ -176,15 +232,4 @@ func reconcileImageRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.
 		return err
 	}
 	return computer.ApplyImageRefreshPolicy(ctx, tx, env, deployment, cutover)
-}
-
-func requireUndeletedAgents(ctx context.Context, q db.DBTX, env, deployment uuid.UUID) error {
-	var deleted DeletedAgentsError
-	if err := q.QueryRow(ctx, `WITH deleted AS (SELECT a.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.deleted_at IS NOT NULL) SELECT (SELECT count(*) FROM deleted), ARRAY(SELECT key FROM deleted ORDER BY key LIMIT 20)`, env, deployment).Scan(&deleted.Count, &deleted.Keys); err != nil {
-		return err
-	}
-	if deleted.Count > 0 {
-		return deleted
-	}
-	return nil
 }

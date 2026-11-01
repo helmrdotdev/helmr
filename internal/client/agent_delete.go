@@ -19,7 +19,7 @@ func (c *Client) GetAgentStatus(ctx context.Context, agent string, scope Environ
 	err = c.permissionRequest(ctx, http.MethodGet, path, nil, &out, "")
 	return out, err
 }
-func (c *Client) ChangeAgent(ctx context.Context, agent string, scope EnvironmentScopeOptions, restore, dryRun bool, revision string) (api.AgentChangeResponse, error) {
+func (c *Client) ChangeAgent(ctx context.Context, agent string, scope EnvironmentScopeOptions, dryRun bool, revision string) (api.AgentChangeResponse, error) {
 	var out api.AgentChangeResponse
 	if err := api.ValidateDefinitionID(agent); err != nil {
 		return out, err
@@ -28,17 +28,9 @@ func (c *Client) ChangeAgent(ctx context.Context, agent string, scope Environmen
 	if err != nil {
 		return out, err
 	}
-	method := http.MethodDelete
-	var input any
-	if restore {
-		method = http.MethodPost
-		path += "/restore"
-		input = struct {
-			DryRun bool `json:"dry_run"`
-		}{dryRun}
-	} else if dryRun {
+	if dryRun {
 		path += "?dry_run=true"
 	}
-	err = c.permissionRequest(ctx, method, path, input, &out, revision)
+	err = c.permissionRequest(ctx, http.MethodDelete, path, nil, &out, revision)
 	return out, err
 }

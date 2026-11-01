@@ -22,7 +22,7 @@ func TestPermissionCatalog(t *testing.T) {
 		case "deployments", "templates", "computers", "commands", "secrets", "api_keys":
 			scope = ScopeEnvironment
 		}
-		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && !slices.Contains([]Permission{"agents.delete", "agents.restore"}, d.ID)
+		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && d.ID != PermissionAgentsDelete
 		scopes := []PermissionScope{scope}
 		if d.ID == PermissionAuditEventsRead {
 			scopes = []PermissionScope{ScopeOrganization, ScopeEnvironment}

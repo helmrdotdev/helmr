@@ -129,11 +129,11 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	}
 	grant := refreshResult().grant
 	grant.app = "dedicated-app"
-	installation, err := store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant)
+	installation, err := store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant, bindNoTriggers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant, bindNoTriggers); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("repeated callback created another installation", err)
 	}
 	var pin bool
@@ -147,10 +147,10 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	}
 	other := grant
 	other.bot = "another-bot"
-	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, other); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, other, bindNoTriggers); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("sender identity replaced", err)
 	}
-	repaired, err := store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant)
+	repaired, err := store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant, bindNoTriggers)
 	if err != nil || repaired != installation {
 		t.Fatal("same identity repair changed generation", err)
 	}
@@ -158,7 +158,7 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 	if err = store.StoreAppCredentials(t.Context(), f.Principal(t), setup.RegistrationID, credentials); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), setup.ID, observed, grant, bindNoTriggers); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("stale registration exchange committed", err)
 	}
 }

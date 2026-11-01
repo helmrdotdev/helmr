@@ -37,8 +37,9 @@ the accepted result; reusing a key with different canonical input can return a
 conflict. Whether the field is optional or required is endpoint-specific—for
 example Computer exec requires it, while many creates generate or accept one.
 
-Agent Delete and Restore use revision preconditions instead of idempotency keys.
+Agent Delete uses revision preconditions instead of idempotency keys.
 A missing `If-Match` returns 428 `revision_required`; a stale one returns 412
 `stale_revision`. Blocked deletion returns 409 `agent_deletion_blocked` with a
-preview in `error.details.preview`. Promotion or execution against a deleted
-Agent returns 409 `agent_deleted`. See [Agent lifecycle](/docs/reference/api/agents).
+preview in `error.details.preview`. Execution against a deleted Agent returns
+409 `agent_deleted`; promotion restores the deleted Agents a Deployment declares.
+See [Agent lifecycle](/docs/reference/api/agents).

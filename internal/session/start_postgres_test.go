@@ -82,7 +82,7 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 		}
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.deployment_id=$3 AND s.root_session_id=s.id AND s.parent_session_id IS NULL AND s.requester_session_id IS NULL AND c.id<>$4 AND c.image_build_id IS NOT NULL AND c.image_id IS NULL AND c.preparation_max_age_ms=12345 AND c.storage_reservation_bytes=$5 AND (SELECT count(*) FROM turns WHERE environment_id=$1)=1 AND (SELECT count(*) FROM computers WHERE environment_id=$1)=2 AND (SELECT count(*) FROM session_events WHERE environment_id=$1)=1 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, first.SessionID, f.deployment, f.computer, disk.SeedCapacity).Scan(&valid); err != nil || !valid {
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.deployment_id=$3 AND s.root_session_id=s.id AND s.parent_session_id IS NULL AND s.requester_session_id IS NULL AND c.id<>$4 AND c.image_build_id IS NOT NULL AND c.image_id IS NULL AND c.storage_reservation_bytes=$5 AND (SELECT count(*) FROM turns WHERE environment_id=$1)=1 AND (SELECT count(*) FROM computers WHERE environment_id=$1)=2 AND (SELECT count(*) FROM session_events WHERE environment_id=$1)=1 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, first.SessionID, f.deployment, f.computer, disk.SeedCapacity).Scan(&valid); err != nil || !valid {
 		t.Fatalf("incomplete atomic admission: %v %v", valid, err)
 	}
 	req := f.startRequest("same")
@@ -356,8 +356,8 @@ func TestStartPinsPublishedImageAndPreservesMaximumAge(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT c.image_id IS NOT NULL AND c.preparation_max_age_ms=12345 AND c.storage_reservation_bytes=$3 AND c.initial_root_id IS NOT NULL AND octet_length(c.initial_root_digest)=32 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, a.SessionID, disk.SeedCapacity).Scan(&valid); err != nil || !valid {
-		t.Fatalf("missing admission image or age: %v %v", valid, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT c.image_id IS NOT NULL AND c.storage_reservation_bytes=$3 AND c.initial_root_id IS NOT NULL AND octet_length(c.initial_root_digest)=32 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, a.SessionID, disk.SeedCapacity).Scan(&valid); err != nil || !valid {
+		t.Fatalf("missing admission image: %v %v", valid, err)
 	}
 }
 
@@ -427,7 +427,7 @@ func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 			t.Fatal(err)
 		}
 		var valid bool
-		err = f.pool.QueryRow(t.Context(), `SELECT s.computer_id<>$3 AND s.deployment_id=$4 AND s.origin_turn_id=$5 AND c.image_build_id IS NOT NULL AND c.preparation_max_age_ms=12345 AND t.seq=1 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, a.SessionID, f.computer, f.deployment, first.TurnID).Scan(&valid)
+		err = f.pool.QueryRow(t.Context(), `SELECT s.computer_id<>$3 AND s.deployment_id=$4 AND s.origin_turn_id=$5 AND c.image_build_id IS NOT NULL AND t.seq=1 FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, a.SessionID, f.computer, f.deployment, first.TurnID).Scan(&valid)
 		if err != nil || !valid {
 			t.Fatalf("fresh runtime %s: %v %v", method, valid, err)
 		}

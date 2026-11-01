@@ -6,6 +6,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -96,7 +97,7 @@ func (s *Server) finishSlackAuthorization(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("invalid Agent connection")))
 		return
 	}
-	installation, err := s.slackConfig.Credentials.AuthorizeConnection(r.Context(), principal, connection, request.Code, s.slackRedirectURL(), s.slackConfig.Transport)
+	installation, err := s.slackConfig.Credentials.AuthorizeConnection(r.Context(), principal, connection, request.Code, s.slackRedirectURL(), s.slackConfig.Transport, agent.BindSlackTriggers)
 	if err != nil {
 		s.writeSlackError(w, r, err)
 		return

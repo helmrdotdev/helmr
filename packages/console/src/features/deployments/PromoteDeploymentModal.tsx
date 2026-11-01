@@ -38,10 +38,11 @@ export function PromoteDeploymentModal(props: {
         await promoteDeployment(props.deployment.id, { projectID: props.projectID, environmentID: props.environmentID }, controller.signal);
         await queryClient.invalidateQueries({ queryKey: ["deployments"] });
         await queryClient.invalidateQueries({ queryKey: ["triggers"] });
+        await queryClient.invalidateQueries({ queryKey: ["agents"] });
       }}
       errorMessage={promoteErrorMessage}
     >
-      Environment preparation completes before this deployment becomes current. New sessions then use it and its triggers take effect. Open sessions keep their deployment. Agents missing from it stop taking new sessions and Slack conversations.
+      Environment preparation completes before this deployment becomes current. New sessions then use it and its triggers take effect. Open sessions keep their deployment. Deleted agents it includes are restored without their removed access or Slack connections. Agents missing from it stop taking new sessions and Slack conversations.
     </ConfirmDialog>
   );
 }

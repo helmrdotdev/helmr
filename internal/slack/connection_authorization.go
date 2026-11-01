@@ -49,9 +49,14 @@ func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, prior 
 	return oauth.AuthorizationURL(state, redirect), nil
 }
 
+// TriggerBinder binds the Agent's schedules that wait for Slack to its newly
+// authorized connection, in the authorization transaction. The trigger owner
+// supplies it; the caller already holds the Environment lock.
+type TriggerBinder func(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID) error
+
 // AuthorizeConnection performs remote exchange outside SQL locks, then verifies
 // the unchanged registration and connection slot before attaching the grant.
-func (s *CredentialStore) AuthorizeConnection(ctx context.Context, prior auth.Principal, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
+func (s *CredentialStore) AuthorizeConnection(ctx context.Context, prior auth.Principal, connection uuid.UUID, code, redirect string, transport http.RoundTripper, bind TriggerBinder) (uuid.UUID, error) {
 	if code == "" || len(code) > 4096 || redirect == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
@@ -73,10 +78,10 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, prior auth.Pr
 			return uuid.Nil(), ErrOAuthAuthorization
 		}
 	}
-	return s.attachConnectionGrant(ctx, prior, connection, observed, result.grant)
+	return s.attachConnectionGrant(ctx, prior, connection, observed, result.grant, bind)
 }
 
-func (s *CredentialStore) attachConnectionGrant(ctx context.Context, prior auth.Principal, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
+func (s *CredentialStore) attachConnectionGrant(ctx context.Context, prior auth.Principal, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant, bind TriggerBinder) (uuid.UUID, error) {
 	org := prior.OrgID
 	user := prior.UserID
 	installation := uuid.NewV7()
@@ -119,8 +124,8 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, prior auth.
 			tokenRevision++
 		}
 		var current *uuid.UUID
-		var environment uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT environment_id,slack_installation_id FROM slack_connections WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, connection, observed.registration).Scan(&environment, &current)
+		var environment, agent uuid.UUID
+		err = tx.QueryRow(ctx, `SELECT environment_id,agent_id,slack_installation_id FROM slack_connections WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, connection, observed.registration).Scan(&environment, &agent, &current)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionUnavailable
 		}
@@ -153,6 +158,11 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, prior auth.
 			return err
 		}
 		if err = slackroute.AttachInstallation(ctx, tx, connection, installation); err != nil {
+			return err
+		}
+		// The Environment lock above precedes activation rows, as in promotion
+		// and trigger evaluation.
+		if err = bind(ctx, tx, environment, agent); err != nil {
 			return err
 		}
 		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Details: audit.PermissionsDetails{Permissions: grant.scopes}})

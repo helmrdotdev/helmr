@@ -26,9 +26,10 @@ const imageBuildSuccessorEligibilitySQL = `p.predecessor_build_id IS NULL AND p.
  AND NOT EXISTS(SELECT 1 FROM image_builds other WHERE other.environment_id=p.environment_id AND other.image_spec_id=p.image_spec_id
    AND (other.status IN ('queued','running') OR (other.worker_host_id IS NOT NULL AND other.fenced_at IS NULL)))
  AND EXISTS(SELECT 1 FROM computers c JOIN images i ON (i.environment_id,i.image_build_id)=(c.environment_id,c.image_build_id)
+   JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)
    WHERE c.environment_id=p.environment_id AND c.image_build_id=p.id AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL
    AND c.preparation_deadline_at>clock_timestamp()
-   AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms))`
+   AND (d.refresh_every_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=3*d.refresh_every_ms))`
 
 // EnsureImageBuildSuccessor consumes the one automatic replacement allowed for
 // a successfully published image made stale solely by ordinary Secret rotation.
@@ -89,8 +90,9 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 		}
 		var deadline *time.Time
 		if err = tx.QueryRow(ctx, `SELECT max(c.preparation_deadline_at) FROM computers c JOIN images i ON (i.environment_id,i.image_build_id)=(c.environment_id,c.image_build_id)
+ JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)
  WHERE c.environment_id=$1 AND c.image_build_id=$2 AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>clock_timestamp()
- AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms)`, env, predecessor).Scan(&deadline); err != nil {
+ AND (d.refresh_every_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=3*d.refresh_every_ms)`, env, predecessor).Scan(&deadline); err != nil {
 			return err
 		}
 		if deadline == nil {
