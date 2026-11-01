@@ -60,13 +60,7 @@ func (k *testObjectKeys) fail(err error) {
 	k.err = err
 }
 
-// rotateCheckpoint makes later deliveries for id return a different key.
-func (k *testObjectKeys) rotateCheckpoint(id string) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	delete(k.keys, "checkpoint/"+id)
-}
-
+// rotateBootSeed makes later deliveries for build return a different key.
 func (k *testObjectKeys) rotateBootSeed(build uuid.UUID) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
