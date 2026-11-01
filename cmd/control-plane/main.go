@@ -45,6 +45,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
+	"github.com/helmrdotdev/helmr/internal/sso"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -306,6 +307,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, cfg.AuditPolicy, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
+		{name: "SAML assertion retention", run: func(ctx context.Context) error { return sso.RunAssertionRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, cfg.AuditPolicy, pool, log) }},
 		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, cfg.AuditPolicy, pool, log) }},
 		{name: "Computer execution admissions", run: func(ctx context.Context) error {

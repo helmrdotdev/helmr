@@ -10,13 +10,16 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.61.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/aws/smithy-go v1.28.1
+	github.com/beevik/etree v1.7.0
 	github.com/cilium/ebpf v0.22.0
 	github.com/coder/websocket v1.8.15
 	github.com/containernetworking/plugins v1.9.1
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/distribution/reference v0.6.0
 	github.com/felixge/httpsnoop v1.1.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.20.1
@@ -29,6 +32,8 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/resend/resend-go/v4 v4.4.0
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/russellhaering/gosaml2 v0.12.0
+	github.com/russellhaering/goxmldsig v1.6.1
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
 	github.com/vishvananda/netlink v1.3.1
@@ -42,7 +47,6 @@ require (
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
 	golang.org/x/text v0.42.0
 	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.12
@@ -108,6 +112,8 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
+	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mdlayher/socket v0.7.0 // indirect
 	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect

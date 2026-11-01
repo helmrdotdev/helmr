@@ -624,6 +624,22 @@ column org_members.removed_at timestamp with time zone
 column org_members.suspended_at timestamp with time zone
 column org_members.updated_at timestamp with time zone not null default now()
 column org_members.user_id uuid not null
+column org_sso_connections.activated_at timestamp with time zone
+column org_sso_connections.created_at timestamp with time zone not null default clock_timestamp()
+column org_sso_connections.created_by_member_id uuid not null
+column org_sso_connections.id uuid not null
+column org_sso_connections.oidc_client_id text
+column org_sso_connections.oidc_issuer text
+column org_sso_connections.oidc_secret_ciphertext bytea
+column org_sso_connections.oidc_secret_nonce bytea
+column org_sso_connections.org_id uuid not null
+column org_sso_connections.protocol text not null
+column org_sso_connections.retired_at timestamp with time zone
+column org_sso_connections.saml_certificates text[]
+column org_sso_connections.saml_idp_entity_id text
+column org_sso_connections.saml_sso_url text
+column org_sso_connections.state text not null
+column org_sso_connections.tested_at timestamp with time zone
 column organizations.created_at timestamp with time zone not null default now()
 column organizations.id uuid not null
 column organizations.name text not null
@@ -688,6 +704,9 @@ column roles.org_id uuid not null
 column roles.permissions text[] not null
 column roles.revision bigint not null default 1
 column roles.updated_at timestamp with time zone not null default now()
+column saml_consumed_assertions.assertion_id text not null
+column saml_consumed_assertions.connection_id uuid not null
+column saml_consumed_assertions.expires_at timestamp with time zone not null
 column secret_bindings.allowed_origins text[] not null default '{}'::text[]
 column secret_bindings.computer_id uuid
 column secret_bindings.deployment_id uuid
@@ -1801,6 +1820,20 @@ constraint org_members f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CA
 constraint org_members p PRIMARY KEY (id)
 constraint org_members u UNIQUE (org_id, id)
 constraint org_members u UNIQUE (org_id, id, user_id)
+constraint org_sso_connections c CHECK (cardinality(saml_certificates) >= 1)
+constraint org_sso_connections c CHECK (octet_length(oidc_secret_ciphertext) >= 16)
+constraint org_sso_connections c CHECK (octet_length(oidc_secret_nonce) = 12)
+constraint org_sso_connections c CHECK (oidc_client_id <> ''::text)
+constraint org_sso_connections c CHECK (oidc_issuer ~~ 'https://%'::text)
+constraint org_sso_connections c CHECK (protocol = ANY (ARRAY['oidc'::text, 'saml'::text]))
+constraint org_sso_connections c CHECK (saml_idp_entity_id <> ''::text)
+constraint org_sso_connections c CHECK (saml_sso_url ~~ 'https://%'::text)
+constraint org_sso_connections c CHECK (state = ANY (ARRAY['candidate'::text, 'active'::text, 'retired'::text]))
+constraint org_sso_connections c org_sso_connections_protocol_shape CHECK (protocol = 'oidc'::text AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 4 AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 0 OR protocol = 'saml'::text AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 3 AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 0)
+constraint org_sso_connections c org_sso_connections_state_shape CHECK (state = 'candidate'::text AND activated_at IS NULL AND retired_at IS NULL OR state = 'active'::text AND activated_at IS NOT NULL AND retired_at IS NULL OR state = 'retired'::text AND retired_at IS NOT NULL)
+constraint org_sso_connections f FOREIGN KEY (org_id) REFERENCES organizations(id)
+constraint org_sso_connections f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id)
+constraint org_sso_connections p PRIMARY KEY (id)
 constraint organizations c CHECK (btrim(name) <> ''::text)
 constraint organizations c CHECK (btrim(slug) <> ''::text)
 constraint organizations p PRIMARY KEY (id)
@@ -1860,6 +1893,9 @@ constraint roles f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE C
 constraint roles p PRIMARY KEY (id)
 constraint roles u UNIQUE (org_id, builtin_key)
 constraint roles u UNIQUE (org_id, id)
+constraint saml_consumed_assertions c CHECK (assertion_id <> ''::text)
+constraint saml_consumed_assertions f FOREIGN KEY (connection_id) REFERENCES org_sso_connections(id)
+constraint saml_consumed_assertions p PRIMARY KEY (connection_id, assertion_id)
 constraint secret_bindings c CHECK ((deployment_id IS NULL) = (template_id IS NULL))
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$'::text OR mode = 'raw'::text AND placeholder IS NULL)
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placement_kind = 'env'::text AND cardinality(allowed_origins) >= 1 AND cardinality(allowed_origins) <= 16 OR mode = 'raw'::text AND cardinality(allowed_origins) = 0)
@@ -2450,6 +2486,7 @@ index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id
 index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)
 index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, group_id) WHERE (group_id IS NOT NULL)
 index CREATE INDEX role_grants_member ON public.role_grants USING btree (org_id, member_id) WHERE (member_id IS NOT NULL)
+index CREATE INDEX saml_consumed_assertions_expiry ON public.saml_consumed_assertions USING btree (expires_at)
 index CREATE INDEX secret_bindings_secret ON public.secret_bindings USING btree (environment_id, secret_id)
 index CREATE INDEX secret_exposures_secret ON public.secret_exposures USING btree (environment_id, secret_id)
 index CREATE INDEX session_events_closed ON public.session_events USING btree (environment_id, session_id) INCLUDE (created_at) WHERE (kind = 'session.closed'::text)
@@ -2508,6 +2545,8 @@ index CREATE UNIQUE INDEX idempotency_receipts_command_creation ON public.idempo
 index CREATE UNIQUE INDEX image_builds_exclusive ON public.image_builds USING btree (environment_id, image_spec_id) WHERE ((status = ANY (ARRAY['queued'::text, 'running'::text])) OR ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL)))
 index CREATE UNIQUE INDEX invitations_pending_invitee_idx ON public.invitations USING btree (org_id, invitee_email) WHERE ((accepted_at IS NULL) AND (revoked_at IS NULL))
 index CREATE UNIQUE INDEX org_members_active ON public.org_members USING btree (org_id, user_id) WHERE (removed_at IS NULL)
+index CREATE UNIQUE INDEX org_sso_connections_active ON public.org_sso_connections USING btree (org_id) WHERE (state = 'active'::text)
+index CREATE UNIQUE INDEX org_sso_connections_candidate ON public.org_sso_connections USING btree (org_id) WHERE (state = 'candidate'::text)
 index CREATE UNIQUE INDEX permission_groups_name ON public.permission_groups USING btree (org_id, lower(name))
 index CREATE UNIQUE INDEX projects_one_default ON public.projects USING btree (org_id) WHERE is_default
 index CREATE UNIQUE INDEX roles_name ON public.roles USING btree (org_id, lower(name))

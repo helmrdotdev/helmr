@@ -42,6 +42,8 @@ var tableOwners = map[string]string{
 	"account_security_notifications": "internal/identity",
 	"operator_passkey_enrollments":   "internal/identity",
 	"email_challenges":               "internal/identity",
+	"org_sso_connections":            "internal/sso",
+	"saml_consumed_assertions":       "internal/sso",
 	"passkey_credentials":            "internal/identity",
 	"platform_operators":             "internal/identity",
 	"webauthn_challenges":            "internal/identity",

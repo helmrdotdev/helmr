@@ -49,7 +49,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-hK32q0IQfC/UZ3yWrmI7VHxzOkUxrC/2RwyRCyZFTGk=";
+  vendorHash = "sha256-Lg5Zv5I45QD5mJ7IHxQtvJeSUeuQikxvnA4t1wQvFjg=";
   overrideModAttrs = _: {
     # Contract checks reuse goModules for CLI and Control Plane package tests.
     # Include their test dependencies while excluding tests from the shipped CLI.
