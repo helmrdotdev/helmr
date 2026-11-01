@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -42,9 +41,6 @@ func (p *liveSavePublication) Reuse(ctx context.Context, i blockformat.ObjectIns
 }
 func (p *liveSavePublication) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	p.uploads.Add(1)
-	if err := sessiontest.RecordUpload(ctx, p.storage.f.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
-		return cas.Object{}, err
-	}
 	return p.storage.remote.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }
 
@@ -156,7 +152,7 @@ func TestLiveSaveRetirementSustainedOverwriteSweepsPhysicalCAS(t *testing.T) {
 	}
 	defer local.Close()
 	reclaims := &liveSaveReclamation{store: storage.remote}
-	reclaimer, err := computer.NewCASReclaimer(f.pool, reclaims, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reclaimer, err := computer.NewCASReclaimer(f.pool, everyOrganization[computer.ReclamationStore](reclaims), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

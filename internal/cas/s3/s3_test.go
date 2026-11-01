@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -30,7 +31,7 @@ func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 	}
 	checksum, _ := descriptorChecksum(descriptor.Digest)
 	client := &fakeS3Client{}
-	store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+	store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 	if err := store.PutQuarantine(t.Context(), "019abcde-1234", descriptor, bytes.NewReader(body)); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 		t.Fatalf("object = %+v", object)
 	}
 	if client.copyObject == nil || aws.ToString(client.copyObject.Key) !=
-		"cas/sha256/"+descriptor.Digest[len("sha256:"):] ||
+		"cas/orgs/0198c0de-0000-7000-8000-000000000001/sha256/"+descriptor.Digest[len("sha256:"):] ||
 		aws.ToString(client.copyObject.CopySource) != "bucket%2Fcas%2Fquarantine%2F019abcde-1234%2Fsha256%2F"+descriptor.Digest[len("sha256:"):] ||
 		aws.ToString(client.copyObject.IfNoneMatch) != "*" ||
 		aws.ToString(client.copyObject.Tagging) != "helmr-expirable=true" ||
@@ -121,7 +122,7 @@ func TestS3HasExactQuarantine(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := &fakeS3Client{headObject: test.output, headObjectErr: test.err}
-			store := &Store{
+			store := &Store{org: testOrg,
 				client: client,
 				bucket: "bucket", prefix: "cas",
 			}
@@ -146,7 +147,7 @@ func TestS3QuarantineFailsClosed(t *testing.T) {
 		SizeBytes: int64(len("expected")),
 		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
 	}
-	store := &Store{client: &fakeS3Client{}, bucket: "bucket"}
+	store := &Store{org: testOrg, client: &fakeS3Client{}, bucket: "bucket"}
 	if err := store.PutQuarantine(t.Context(), "../other", descriptor, bytes.NewReader([]byte("expected"))); err == nil {
 		t.Fatal("PutQuarantine accepted an invalid owner")
 	}
@@ -180,14 +181,55 @@ func TestValidateDistinctS3Stores(t *testing.T) {
 	}
 }
 
+var testOrg = uuid.MustParse("0198c0de-0000-7000-8000-000000000001")
+
+func TestS3ObjectKeysBelongToOneOrganization(t *testing.T) {
+	const digest = "sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
+	const hash = "7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
+	unscoped := &Store{prefix: "cas"}
+	if _, err := unscoped.objectKey(digest); err == nil {
+		t.Fatal("a store without an organization addressed an object")
+	}
+	other := uuid.MustParse("0198c0de-0000-7000-8000-000000000002")
+	first, second := unscoped.Organization(testOrg), unscoped.Organization(other)
+	if unscoped.org != uuid.Nil() {
+		t.Fatal("scoping changed the unscoped store")
+	}
+	firstKey, err := first.objectKey(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondKey, err := second.objectKey(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstKey != "cas/orgs/"+testOrg.String()+"/sha256/"+hash || secondKey != "cas/orgs/"+other.String()+"/sha256/"+hash {
+		t.Fatalf("organization keys = %q, %q", firstKey, secondKey)
+	}
+	if key, err := (&Store{org: testOrg}).objectKey(digest); err != nil || key != "orgs/"+testOrg.String()+"/sha256/"+hash {
+		t.Fatalf("unprefixed organization key = %q, %v", key, err)
+	}
+	// Quarantine and staging keys stay at the prefix root for lifecycle rules.
+	if key, err := first.quarantineKey("owner", digest); err != nil || key != "cas/quarantine/owner/sha256/"+hash {
+		t.Fatalf("quarantine key = %q, %v", key, err)
+	}
+	if key, err := first.stagingKey("owner", digest); err != nil || key != "cas/staging/owner/sha256/"+hash {
+		t.Fatalf("staging key = %q, %v", key, err)
+	}
+	// The release-only platform keyspace belongs to no organization.
+	if key, err := (&Store{prefix: "runtime", global: true}).objectKey(digest); err != nil || key != "runtime/sha256/"+hash {
+		t.Fatalf("platform key = %q, %v", key, err)
+	}
+}
+
 func TestS3ShardedObjectKey(t *testing.T) {
-	store := &Store{prefix: "retained"}
+	store := &Store{org: testOrg, prefix: "retained"}
 	WithShardedKeys()(store)
 	key, err := store.objectKey("sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "retained/sha256/7b/927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
+	const want = "retained/orgs/0198c0de-0000-7000-8000-000000000001/sha256/7b/927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
 	if key != want {
 		t.Fatalf("key = %q, want %q", key, want)
 	}
@@ -195,7 +237,7 @@ func TestS3ShardedObjectKey(t *testing.T) {
 
 func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &Store{
+	store := &Store{org: testOrg,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "prefix",
@@ -220,7 +262,7 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	if client.createdMultipart {
 		t.Fatal("did not expect multipart upload")
 	}
-	if got := aws.ToString(client.putObject.Key); got != "prefix/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+	if got := aws.ToString(client.putObject.Key); got != "prefix/orgs/0198c0de-0000-7000-8000-000000000001/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
 		t.Fatalf("key = %q", got)
 	}
 	if got := client.putObject.ContentLength; got == nil || *got != 5 {
@@ -234,7 +276,7 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -268,7 +310,7 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 			ChecksumSHA256: aws.String("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
 		},
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -295,7 +337,7 @@ func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
 			ContentType:    aws.String("application/octet-stream"),
 		},
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -321,7 +363,7 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 			ChecksumSHA256: aws.String("LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="),
 		},
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -340,7 +382,7 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -365,7 +407,7 @@ func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 func TestImmutableS3MultipartPublishUsesOnlySealedDescriptor(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -404,7 +446,7 @@ func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.
 			nil,
 		},
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -435,7 +477,7 @@ func TestImmutableS3MultipartPublishDoesNotRetryAfterAmbiguousAbort(t *testing.T
 		},
 		abortMultipartErr: errors.New("abort failed"),
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -458,7 +500,7 @@ func TestImmutableS3MultipartPublishDoesNotRetryAfterAmbiguousAbort(t *testing.T
 func TestImmutableS3PublishUsesOnlySealedDescriptor(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -479,7 +521,7 @@ func TestImmutableS3PublishUsesOnlySealedDescriptor(t *testing.T) {
 func TestImmutableS3PublishRejectsDescriptorMismatchBeforeUpload(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 10,
@@ -508,7 +550,7 @@ func TestImmutableS3PublishRejectsWritableDescriptor(t *testing.T) {
 	if err := os.Chmod(file.Name(), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	store := &ImmutableStore{store: &Store{client: &fakeS3Client{}, bucket: "bucket"}}
+	store := &ImmutableStore{store: &Store{global: true, client: &fakeS3Client{}, bucket: "bucket"}}
 	if _, err := store.Publish(t.Context(), expected, writer); err == nil {
 		t.Fatal("expected writable descriptor rejection")
 	}
@@ -524,7 +566,7 @@ func TestImmutableS3PublishRejectsIdentityChangeAfterUpload(t *testing.T) {
 			}
 		},
 	}
-	store := &ImmutableStore{store: &Store{
+	store := &ImmutableStore{store: &Store{global: true,
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 10,
@@ -536,7 +578,7 @@ func TestImmutableS3PublishRejectsIdentityChangeAfterUpload(t *testing.T) {
 
 func TestS3PutUsesMultipartAtOrAboveThreshold(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &Store{
+	store := &Store{org: testOrg,
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 6,
@@ -588,7 +630,7 @@ func TestS3PutUsesMultipartAtOrAboveThreshold(t *testing.T) {
 
 func TestS3MultipartAbortsOnUploadFailure(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1", uploadPartErr: fmt.Errorf("upload failed")}
-	store := &Store{
+	store := &Store{org: testOrg,
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 1,
@@ -609,7 +651,7 @@ func TestS3MultipartAbortsOnUploadFailure(t *testing.T) {
 
 func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &Store{
+	store := &Store{org: testOrg,
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "prefix",
@@ -637,10 +679,10 @@ func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 	if object.Digest != "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
 		t.Fatalf("digest = %s", object.Digest)
 	}
-	if object.Key != "prefix/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+	if object.Key != "prefix/orgs/0198c0de-0000-7000-8000-000000000001/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
 		t.Fatalf("object key = %q", object.Key)
 	}
-	if got := aws.ToString(client.putObject.Key); got != "prefix/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+	if got := aws.ToString(client.putObject.Key); got != "prefix/orgs/0198c0de-0000-7000-8000-000000000001/sha256/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
 		t.Fatalf("key = %q", got)
 	}
 	if string(client.putObjectBody) != "hello" {
@@ -653,7 +695,7 @@ func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 
 func TestS3StageAbortCleansTempWithoutUpload(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &Store{client: client, bucket: "bucket"}
+	store := &Store{org: testOrg, client: client, bucket: "bucket"}
 	stage, err := store.Stage(t.Context(), "text/plain")
 	if err != nil {
 		t.Fatal(err)
@@ -678,7 +720,7 @@ func TestS3StageAbortCleansTempWithoutUpload(t *testing.T) {
 
 func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1", uploadPartErr: fmt.Errorf("upload failed")}
-	store := &Store{
+	store := &Store{org: testOrg,
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 1,
@@ -713,7 +755,7 @@ func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) 
 func TestS3GetVerifiesDigest(t *testing.T) {
 	content := []byte("hello")
 	client := &fakeS3Client{getObjectBody: content}
-	store := &Store{client: client, bucket: "bucket"}
+	store := &Store{org: testOrg, client: client, bucket: "bucket"}
 
 	body, err := store.Get(t.Context(), sha256sum.DigestBytes(content))
 	if err != nil {
@@ -733,7 +775,7 @@ func TestS3GetVerifiesDigest(t *testing.T) {
 
 func TestS3GetRejectsDigestMismatch(t *testing.T) {
 	client := &fakeS3Client{getObjectBody: []byte("HELLO")}
-	store := &Store{client: client, bucket: "bucket"}
+	store := &Store{org: testOrg, client: client, bucket: "bucket"}
 
 	body, err := store.Get(t.Context(), sha256sum.DigestBytes([]byte("hello")))
 	if err != nil {
@@ -1038,7 +1080,7 @@ func TestS3VerifyRequiresFullObjectChecksumOrReadback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &fakeS3Client{headObject: &awss3.HeadObjectOutput{ContentLength: aws.Int64(5), ContentType: aws.String("application/octet-stream"), ChecksumSHA256: aws.String(tc.checksum), ChecksumType: tc.kind}, getObjectBody: []byte(tc.body)}
-			store := &Store{client: client, bucket: "test"}
+			store := &Store{org: testOrg, client: client, bucket: "test"}
 			_, err := store.Verify(t.Context(), digest)
 			if (err != nil) != tc.fail {
 				t.Fatalf("error=%v", err)
@@ -1056,7 +1098,7 @@ func TestImmutableS3PublishPreservesLocalCustodyOnRemoteDigestMismatch(t *testin
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
 		headObject:   &awss3.HeadObjectOutput{ContentLength: aws.Int64(5), ContentType: aws.String("application/vnd.helmr.runtime.v0+squashfs"), ChecksumSHA256: aws.String("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")},
 	}
-	store := &ImmutableStore{store: &Store{client: client, bucket: "bucket", prefix: "runtime", multipartThresholdBytes: 10}}
+	store := &ImmutableStore{store: &Store{global: true, client: client, bucket: "bucket", prefix: "runtime", multipartThresholdBytes: 10}}
 	expected, file := sealedPublicationFile(t, []byte("hello"))
 	if _, err := store.Publish(t.Context(), expected, file); !errors.Is(err, cas.ErrRemoteIntegrity) || !errors.Is(err, cas.ErrDigestMismatch) {
 		t.Fatalf("remote mismatch classification: %v", err)

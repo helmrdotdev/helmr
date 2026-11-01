@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -192,11 +193,15 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
 			}
 			// Inspect the real object before injecting an unavailable verification in the child.
 			// This is a transient storage-call failure, not a claim of a natural S3 outage.
+			var org uuid.UUID
+			if err := g.pool.QueryRow(r.Context(), `SELECT org_id FROM environments WHERE id=$1`, g.environment).Scan(&org); err != nil {
+				return err
+			}
 			store, err := cass3.New(r.Context(), g.restart.casURI)
 			if err != nil {
 				return err
 			}
-			stored, err := store.Stat(r.Context(), digest)
+			stored, err := store.Organization(org).Stat(r.Context(), digest)
 			if err != nil {
 				return err
 			}

@@ -41,7 +41,7 @@ func TestDeploymentHTTPPostgresUploadAuthorityAndManifest(t *testing.T) {
 	store := newDeploymentHTTPUploadStore(manifest)
 	bundleDigest := store.addBundle(t, manifest)
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.CAS, cfg.PlatformStore = store, store
+		cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 		cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 	})
 	orgID, token := fixture.organizationOwner(t, "upload")
@@ -185,7 +185,7 @@ func TestDeploymentHTTPPostgresUploadBodyLimits(t *testing.T) {
 			store := newDeploymentHTTPUploadStore(manifest)
 			digest := store.addBundle(t, manifest)
 			fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-				cfg.CAS, cfg.PlatformStore = store, store
+				cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 				cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 			})
 			org, token := fixture.organizationOwner(t, "large-upload")
@@ -240,7 +240,7 @@ func TestDeploymentHTTPPostgresUploadCapacity(t *testing.T) {
 	store := newDeploymentHTTPUploadStore(manifest)
 	digest := store.addBundle(t, manifest)
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.CAS, cfg.PlatformStore = store, store
+		cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 		cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 	})
 	tokens := make([]string, 4)
@@ -396,7 +396,7 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 	digest := store.addBundle(t, manifest)
 	const capacity = 18 // Greater than both ordinary process and principal budgets.
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.CAS, cfg.PlatformStore = store, store
+		cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 		cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 		cfg.DeploymentUploadLimits.ProcessConcurrency = capacity
 		cfg.DeploymentUploadLimits.OrganizationConcurrency = capacity
@@ -519,7 +519,7 @@ func TestDeploymentHTTPPostgresUploadStorageFailure(t *testing.T) {
 	digest := base.addBundle(t, manifest)
 	store := &deploymentUploadFaultStore{UploadStore: base, runtimeDigest: manifest.Runtime.Artifact.Digest}
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.CAS, cfg.PlatformStore = store, store
+		cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 		cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 	})
 	org, token := fixture.organizationOwner(t, "upload-storage-failure")
@@ -565,7 +565,7 @@ func TestDeploymentHTTPPostgresUploadPreflightDeadline(t *testing.T) {
 	digest := base.addBundle(t, manifest)
 	store := &deploymentUploadFaultStore{UploadStore: base, phase: "blocked", deadline: make(chan time.Time, 1)}
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.CAS, cfg.PlatformStore = store, store
+		cfg.CAS, cfg.PlatformStore = everyOrganization[cas.UploadStore](store), store
 		cfg.BundleAdmission = bundle.Admission{Runtime: deploymentUploadRuntime(manifest)}
 		cfg.DeploymentUploadLimits.IdleTimeout = time.Hour
 	})

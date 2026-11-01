@@ -208,9 +208,6 @@ func (p preparationHTTPPublication) Upload(ctx context.Context, d cas.Descriptor
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {
 		return cas.Object{}, err
 	}
-	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
-		return cas.Object{}, err
-	}
 	return p.store.Put(ctx, d.MediaType, io.NewSectionReader(file, 0, d.SizeBytes))
 }
 func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
@@ -220,7 +217,10 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper; cfg.CAS = store }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.ComputerKeys = wrapper
+		cfg.CAS = everyOrganization[cas.UploadStore](store)
+	}))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	key, err := client.PreparationWriteKey(t.Context(), request)
@@ -345,7 +345,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 				}
 			}
-			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store }))
+			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = everyOrganization[cas.UploadStore](store) }))
 			defer server.Close()
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
@@ -400,7 +400,10 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secretID)
 	opener := &preparationSecretOpener{opener: secrets, after: func() { t.Error("seed-only preparation decrypted a Secret") }}
 	store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store; cfg.SecretDelivery = opener }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.CAS = everyOrganization[cas.UploadStore](store)
+		cfg.SecretDelivery = opener
+	}))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	start, err := client.PreparationStart(t.Context(), request)

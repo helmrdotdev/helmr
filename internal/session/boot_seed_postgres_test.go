@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -104,7 +103,7 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher, err := computer.NewBootSeedPublisher(f.pool, p.remote)
+	publisher, err := computer.NewBootSeedPublisher(f.pool, everyOrganization[cas.Reader](p.remote))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +111,6 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 		t.Helper()
 		o, err := p.remote.Put(t.Context(), media, bytes.NewBufferString(content))
 		if err != nil {
-			t.Fatal(err)
-		}
-		if err := sessiontest.RecordUpload(t.Context(), p.f.pool, o.Digest, o.SizeBytes, o.MediaType); err != nil {
 			t.Fatal(err)
 		}
 		return cas.Descriptor{Digest: o.Digest, SizeBytes: o.SizeBytes, MediaType: o.MediaType}

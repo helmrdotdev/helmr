@@ -53,7 +53,7 @@ func TestBootSeedKeyFollowsSeedAuthority(t *testing.T) {
 		t.Fatalf("forged executor credential = %v", err)
 	}
 	// The builder reads its image root's disk graph and nothing outside it.
-	grants, err := computer.NewStorageBroker(f.pool, nullSigner{}, nullSigner{})
+	grants, err := computer.NewStorageBroker(f.pool, everyOrganization[computer.WriteSigner](nullSigner{}), nullSigner{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestBootSeedKeyFollowsSeedAuthority(t *testing.T) {
 		t.Fatalf("builder image root = %v", err)
 	}
 	unrelated = "sha256:" + strings.Repeat("e", 64)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($2,7);
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,7 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$2,7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$2,org_id,project_id,7,'application/octet-stream','segment',0,'{}',clock_timestamp() FROM environments WHERE id=$1`,
 		pgx.QueryExecModeSimpleProtocol, f.env, unrelated)

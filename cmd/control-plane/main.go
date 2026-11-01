@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/platformhttp"
@@ -24,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -269,10 +271,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		TX:                             pool,
 		ReadinessDB:                    pool,
 		Auth:                           identity.NewAPIKeyAuthenticator(pool),
-		CAS:                            casStore,
+		CAS:                            func(org uuid.UUID) cas.UploadStore { return casStore.Organization(org) },
 		BundleAdmission:                bundleAdmission,
 		PlatformStore:                  platformStore,
-		StorageObjects:                 casStore,
+		StorageObjects:                 func(org uuid.UUID) computer.WriteSigner { return casStore.Organization(org) },
 		StoragePlatform:                platformStore,
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,
@@ -296,7 +298,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
-	casReclaimer, err := computer.NewCASReclaimer(pool, casStore, log)
+	casReclaimer, err := computer.NewCASReclaimer(pool, func(org uuid.UUID) computer.ReclamationStore { return casStore.Organization(org) }, log)
 	if err != nil {
 		return fmt.Errorf("configure CAS reclamation: %w", err)
 	}

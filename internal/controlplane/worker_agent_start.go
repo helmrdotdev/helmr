@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -82,25 +83,27 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 
 // The pinned immutable bundle root supplies executable descriptor authority.
 func (server *Server) sessionProgram(ctx context.Context, start session.ProcessStart) (workerapi.RuntimeProgram, error) {
-	manifest, err := server.readExecutableBundle(ctx, start.BundleDigest)
+	manifest, err := server.readExecutableBundle(ctx, start.OrganizationID, start.BundleDigest)
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
 	}
 	return runtimeProgram(start.DeploymentID.String(), manifest)
 }
 
-func (server *Server) readExecutableBundle(ctx context.Context, digestPin string) (bundle.Manifest, error) {
+// readExecutableBundle reads a bundle pin from its organization's keyspace.
+func (server *Server) readExecutableBundle(ctx context.Context, org uuid.UUID, digestPin string) (bundle.Manifest, error) {
 	if server.cas == nil {
 		return bundle.Manifest{}, errors.New("executable Program store is unavailable")
 	}
-	object, err := server.cas.Stat(ctx, digestPin)
+	store := server.cas(org)
+	object, err := store.Stat(ctx, digestPin)
 	if err != nil {
 		return bundle.Manifest{}, err
 	}
 	if object.Digest != digestPin || object.MediaType != bundle.MediaType || object.SizeBytes < 1 || object.SizeBytes > bundle.MaxBytes {
 		return bundle.Manifest{}, errors.New("invalid executable bundle descriptor")
 	}
-	reader, err := server.cas.Get(ctx, digestPin)
+	reader, err := store.Get(ctx, digestPin)
 	if err != nil {
 		return bundle.Manifest{}, err
 	}

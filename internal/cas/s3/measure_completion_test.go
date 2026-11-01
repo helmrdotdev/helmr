@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"golang.org/x/sync/errgroup"
@@ -23,7 +24,8 @@ import (
 // worker does. It runs with Control Plane storage credentials against
 // HELMR_MEASURE_COMPLETION_URI and fails when completion reaches
 // HELMR_MEASURE_COMPLETION_LIMIT_SECONDS (the load balancer idle timeout,
-// 180 by default). The measured object is deleted afterwards.
+// 180 by default). The object is written in the keyspace of the organization
+// HELMR_MEASURE_COMPLETION_ORG, or of a random one, and deleted afterwards.
 func TestMeasureMultipartCompletion(t *testing.T) {
 	uri := os.Getenv("HELMR_MEASURE_COMPLETION_URI")
 	if uri == "" {
@@ -41,10 +43,17 @@ func TestMeasureMultipartCompletion(t *testing.T) {
 		}
 		limit = time.Duration(seconds) * time.Second
 	}
-	store, err := New(t.Context(), uri)
+	org := uuid.New()
+	if raw := os.Getenv("HELMR_MEASURE_COMPLETION_ORG"); raw != "" {
+		if org, err = uuid.Parse(raw); err != nil {
+			t.Fatal("HELMR_MEASURE_COMPLETION_ORG must be a UUID")
+		}
+	}
+	unscoped, err := New(t.Context(), uri)
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := unscoped.Organization(org)
 	seed := uint64(time.Now().UnixNano())
 	// Incompressible bytes, regenerated per part instead of held in memory.
 	bytesAt := func(offset, length int64) []byte {

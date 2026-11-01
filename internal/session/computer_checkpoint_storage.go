@@ -27,10 +27,11 @@ type CheckpointPublication struct {
 type CheckpointPublisher struct {
 	auditPolicy auditpolicy.Policy
 	pool        db.TxBeginner
-	objects     computer.SaveObjectStore
+	objects     func(org uuid.UUID) computer.SaveObjectStore
 }
 
-func NewCheckpointPublisher(pool db.TxBeginner, auditPolicy auditpolicy.Policy, objects computer.SaveObjectStore) (*CheckpointPublisher, error) {
+// NewCheckpointPublisher takes the content store of each organization's keyspace.
+func NewCheckpointPublisher(pool db.TxBeginner, auditPolicy auditpolicy.Policy, objects func(org uuid.UUID) computer.SaveObjectStore) (*CheckpointPublisher, error) {
 	if err := auditPolicy.Validate(); err != nil {
 		return nil, err
 	}
@@ -94,14 +95,21 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 		ready = committed
 		return nil
 	}
-	if err = db.RunTx(ctx, p.pool, check); err != nil {
+	var org uuid.UUID
+	if err = db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
+		if e := check(tx); e != nil || ready {
+			return e
+		}
+		return tx.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, ref.EnvironmentID).Scan(&org)
+	}); err != nil {
 		return hideMissing(err)
 	}
 	if ready {
 		return nil
 	}
+	objects := p.objects(org)
 	for _, o := range manifest.Objects() {
-		observed, e := p.objects.Stat(ctx, o.Digest)
+		observed, e := objects.Stat(ctx, o.Digest)
 		if e != nil {
 			return computer.SaveStorageUnavailable(e)
 		}

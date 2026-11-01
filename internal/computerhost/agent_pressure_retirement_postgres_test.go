@@ -82,9 +82,6 @@ type receiptedSavePublisher struct {
 }
 
 func (p receiptedSavePublisher) Publish(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
-	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
-		return cas.Object{}, err
-	}
 	return p.saveStoragePublisher.Publish(ctx, d, f)
 }
 
@@ -181,14 +178,14 @@ func TestPressureLifetimeSerializesPublicationWhileRetirementSweeps(t *testing.T
 	rawInspection, _ := json.Marshal(blockformat.ObjectInspection{Pack: &inspected})
 	digest, _ := base.Digest()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,NULL,'test',decode('01','hex')),($3,$2,$4,'test',decode('02','hex'));
- INSERT INTO cas_blobs(digest,size_bytes) VALUES($5,$6);
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$5,$6 FROM environments WHERE id=$2;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$5,$6,'application/octet-stream' FROM environments WHERE id=$2;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$5,org_id,project_id,$6,'application/octet-stream','root',$7,$8,clock_timestamp() FROM environments WHERE id=$2;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$5,$1,true);
  `+sessiontest.DiskRootInsert("$2", "$9", "$10")+`;
  UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex') WHERE environment_id=$2 AND id=$4;
  UPDATE computer_leases SET base_root_id=$9,write_key_id=$3 WHERE environment_id=$2 AND computer_id=$4 AND epoch=1`, pgx.QueryExecModeSimpleProtocol, baseKey, f.Environment, writeKey, f.Computer, base.Pack.Digest, base.Pack.SizeBytes, base.Pack.Rank, string(rawInspection), rootID, string(rawRoot), digest)
-	publisher, err := computer.NewSavePublisher(f.Pool, remote)
+	publisher, err := computer.NewSavePublisher(f.Pool, func(uuid.UUID) computer.SaveObjectStore { return remote })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +285,7 @@ func TestPressureLifetimeSerializesPublicationWhileRetirementSweeps(t *testing.T
 	pressureDone := make(chan error, 1)
 	go func() { pressureDone <- s.relievePressure(ctx) }()
 	sweepStore := pressureRetirementReclaimer{remote}
-	reclaimer, err := computer.NewCASReclaimer(f.Pool, sweepStore, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reclaimer, err := computer.NewCASReclaimer(f.Pool, func(uuid.UUID) computer.ReclamationStore { return sweepStore }, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

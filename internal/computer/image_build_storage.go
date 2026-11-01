@@ -21,10 +21,10 @@ import (
 // then join physical stop separately; capture never supplies fence evidence.
 type ImageBuildPublisher struct {
 	pool    db.TxBeginner
-	objects SaveObjectStore
+	objects func(org uuid.UUID) SaveObjectStore
 }
 
-func NewImageBuildPublisher(pool db.TxBeginner, objects SaveObjectStore) (*ImageBuildPublisher, error) {
+func NewImageBuildPublisher(pool db.TxBeginner, objects func(org uuid.UUID) SaveObjectStore) (*ImageBuildPublisher, error) {
 	if pool == nil || objects == nil {
 		return nil, errors.New("preparation database and object store are required")
 	}
@@ -105,12 +105,13 @@ func (p *ImageBuildPublisher) CertifyBatch(ctx context.Context, host workergroup
 		return err
 	}
 	var committed bool
+	var org uuid.UUID
 	err = db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, done, err := lockImageBuildStorage(ctx, tx, host, ref)
 		if err != nil {
 			return err
 		}
-		committed = done
+		committed, org = done, pgvalue.MustUUIDValue(scope.orgID)
 		for _, inspection := range inspections {
 			if done {
 				err = scope.verifyCertified(ctx, tx, inspection)
@@ -126,7 +127,7 @@ func (p *ImageBuildPublisher) CertifyBatch(ctx context.Context, host workergroup
 	if err != nil || committed {
 		return hideMissing(err)
 	}
-	stored, err := verifySaveBatch(ctx, p.objects, inspections)
+	stored, err := verifySaveBatch(ctx, p.objects(org), inspections)
 	if err != nil {
 		return err
 	}

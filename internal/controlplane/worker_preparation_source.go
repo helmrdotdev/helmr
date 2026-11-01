@@ -36,7 +36,7 @@ func (s *Server) workerPreparationSource(w http.ResponseWriter, r *http.Request)
 		s.writeAllocationError(w, r, err)
 		return
 	}
-	bundle, err := s.readExecutableBundle(r.Context(), metadata.BundleDigest)
+	bundle, err := s.readExecutableBundle(r.Context(), metadata.OrganizationID, metadata.BundleDigest)
 	if err != nil {
 		s.writeAllocationError(w, r, err)
 		return

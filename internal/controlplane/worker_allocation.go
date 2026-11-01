@@ -212,7 +212,7 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 	}
 	if selected != nil {
 		prefetchCtx, prefetchCancel := context.WithTimeout(r.Context(), 2*time.Second)
-		manifest, readErr := server.readExecutableBundle(prefetchCtx, selected.BundleDigest)
+		manifest, readErr := server.readExecutableBundle(prefetchCtx, selected.OrganizationID, selected.BundleDigest)
 		prefetchCancel()
 		if readErr == nil {
 			program, programErr := runtimeProgram(selected.DeploymentID.String(), manifest)

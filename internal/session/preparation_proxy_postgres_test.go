@@ -208,7 +208,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				publisher, err := computer.NewImageBuildPublisher(f.pool, remote)
+				publisher, err := computer.NewImageBuildPublisher(f.pool, everyOrganization[computer.SaveObjectStore](remote))
 				if err != nil {
 					t.Fatal(err)
 				}

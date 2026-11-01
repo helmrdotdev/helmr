@@ -273,7 +273,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, r, err)
 		return
 	}
-	manifest, err := server.readExecutableBundle(r.Context(), start.BundleDigest)
+	manifest, err := server.readExecutableBundle(r.Context(), start.OrganizationID, start.BundleDigest)
 	if err != nil {
 		server.writeAllocationError(w, r, err)
 		return

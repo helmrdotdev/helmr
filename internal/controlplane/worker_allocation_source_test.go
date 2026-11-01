@@ -72,7 +72,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 	// HTTP path are real; OpenVersion below authenticates the returned key/root.
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$4,$5);
- INSERT INTO cas_blobs(digest,size_bytes) VALUES($6,$7);
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$6,$7 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,$7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);

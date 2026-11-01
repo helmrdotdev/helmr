@@ -547,7 +547,14 @@ func assertExecutionOwnershipSchema(t *testing.T, ctx context.Context, pool *pgx
 		{"checkpoints", "environment_id, computer_id, disk_save_id", "computer_saves(environment_id, computer_id, id)"},
 		{"checkpoints", "environment_id, computer_id, source_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
 		{"checkpoints", "environment_id, computer_id, target_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
-		{"checkpoint_objects", "digest, size_bytes, availability_required", "cas_blobs(digest, size_bytes, not_retired)"},
+		{"checkpoint_objects", "org_id, environment_id", "environments(org_id, id)"},
+		{"checkpoint_objects", "org_id, digest, size_bytes, availability_required", "cas_blobs(org_id, digest, size_bytes, not_retired)"},
+		{"boot_seed_objects", "org_id, environment_id", "environments(org_id, id)"},
+		{"boot_seed_objects", "org_id, digest, size_bytes, availability_required", "cas_blobs(org_id, digest, size_bytes, not_retired)"},
+		{"cas_objects", "org_id, digest, size_bytes, availability_required", "cas_blobs(org_id, digest, size_bytes, not_retired)"},
+		{"disk_objects", "org_id, digest, size_bytes, availability_required", "cas_blobs(org_id, digest, size_bytes, not_retired)"},
+		{"allocation_storage_writes", "org_id, digest, size_bytes, availability_required", "cas_blobs(org_id, digest, size_bytes, not_retired)"},
+		{"cas_upload_reclaims", "org_id, digest", "cas_blobs(org_id, digest)"},
 	} {
 		assertForeignKey(t, ctx, pool, fk[0], fk[1], fk[2])
 	}

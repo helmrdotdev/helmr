@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -79,10 +80,10 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 		DiagnosticDB:                   panicDatabase{},
 		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		Auth:                           identity.NewAPIKeyAuthenticator(store),
-		CAS:                            unusedUploadStore{},
+		CAS:                            func(uuid.UUID) cas.UploadStore { return unusedUploadStore{} },
 		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:                  unusedUploadStore{},
-		StorageObjects:                 signer,
+		StorageObjects:                 func(org uuid.UUID) computer.WriteSigner { return signer.Organization(org) },
 		StoragePlatform:                platformSigner,
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
 		AuthKey:                        make([]byte, auth.RootKeySize),

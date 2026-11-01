@@ -37,16 +37,19 @@ func TestSchemaCASMembershipRequiresOrganizationUntilRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	org, digest := uuid.NewV7(), dbtest.Digest("membership-owner")
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1)`, digest)
-	rejectSchemaRow(t, tx, "23503", `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, org, digest)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO organizations(id,slug,name) VALUES($1,'membership-owner','Membership owner')`, org)
+	org, other, digest := uuid.NewV7(), uuid.NewV7(), dbtest.Digest("membership-owner")
+	rejectSchemaRow(t, tx, "23503", `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,1)`, org, digest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO organizations(id,slug,name) VALUES($1,'membership-owner','Membership owner'),($2,'membership-other','Membership other')`, org, other)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,1)`, org, digest)
+	// The same digest of another organization is a different object.
+	rejectSchemaRow(t, tx, "23503", `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, other, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, org, digest)
 	rejectSchemaRow(t, tx, "23503", `DELETE FROM organizations WHERE id=$1`, org)
 	dbtest.MustExec(t, t.Context(), tx, `DELETE FROM cas_objects WHERE org_id=$1 AND digest=$2`, org, digest)
-	dbtest.MustExec(t, t.Context(), tx, `DELETE FROM organizations WHERE id=$1`, org)
+	// The released lifetime still belongs to its organization's keyspace.
+	rejectSchemaRow(t, tx, "23503", `DELETE FROM organizations WHERE id=$1`, org)
 	var retained bool
-	if err := tx.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM cas_blobs WHERE digest=$1)`, digest).Scan(&retained); err != nil || !retained {
+	if err := tx.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM cas_blobs WHERE org_id=$1 AND digest=$2)`, org, digest).Scan(&retained); err != nil || !retained {
 		t.Fatalf("membership release removed physical blob: retained=%v err=%v", retained, err)
 	}
 }

@@ -86,7 +86,7 @@ type Server struct {
 	tx                         db.TxDB
 	readinessDB                db.DBTX
 	auth                       auth.Authenticator
-	cas                        cas.UploadStore
+	cas                        func(org uuid.UUID) cas.UploadStore
 	bundleAdmission            bundle.Admission
 	platformStore              cas.Reader
 	secrets                    SecretManager
@@ -132,13 +132,15 @@ type ServerConfig struct {
 	TX          db.TxDB
 	ReadinessDB db.DBTX
 
-	Auth            auth.Authenticator
-	CAS             cas.UploadStore
+	Auth auth.Authenticator
+	// CAS resolves the content store of one organization's keyspace.
+	CAS             func(org uuid.UUID) cas.UploadStore
 	BundleAdmission bundle.Admission
 	PlatformStore   cas.Reader
 	// StorageObjects and StoragePlatform sign Host storage grants; Hosts hold
-	// no storage credentials.
-	StorageObjects    computer.WriteSigner
+	// no storage credentials. StorageObjects resolves one organization's
+	// keyspace.
+	StorageObjects    func(org uuid.UUID) computer.WriteSigner
 	StoragePlatform   computer.ReadSigner
 	Secrets           SecretManager
 	SecretDelivery    SecretDeliveryOpener
@@ -238,6 +240,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("email code delivery worker is required")
 	}
 	storageGrants, err := computer.NewStorageBroker(cfg.TX, cfg.StorageObjects, cfg.StoragePlatform)
+	diskObjects := func(org uuid.UUID) computer.SaveObjectStore { return cfg.CAS(org) }
 	if err != nil {
 		return nil, err
 	}
@@ -249,19 +252,19 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, cfg.CAS)
+	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, diskObjects)
 	if err != nil {
 		return nil, err
 	}
-	bootSeedPublisher, err := computer.NewBootSeedPublisher(cfg.TX, cfg.CAS)
+	bootSeedPublisher, err := computer.NewBootSeedPublisher(cfg.TX, func(org uuid.UUID) cas.Reader { return cfg.CAS(org) })
 	if err != nil {
 		return nil, err
 	}
-	savePublisher, err := computer.NewSavePublisher(cfg.TX, cfg.CAS)
+	savePublisher, err := computer.NewSavePublisher(cfg.TX, diskObjects)
 	if err != nil {
 		return nil, err
 	}
-	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.AuditPolicy, cfg.CAS)
+	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.AuditPolicy, diskObjects)
 	if err != nil {
 		return nil, err
 	}

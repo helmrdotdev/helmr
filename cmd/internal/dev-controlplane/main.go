@@ -33,6 +33,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -218,10 +219,10 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		TX:                             pool,
 		ReadinessDB:                    pool,
 		Auth:                           identity.NewAPIKeyAuthenticator(pool),
-		CAS:                            casStore,
+		CAS:                            func(org uuid.UUID) cas.UploadStore { return casStore.Organization(org) },
 		BundleAdmission:                bundleAdmission,
 		PlatformStore:                  platformStore,
-		StorageObjects:                 casStore,
+		StorageObjects:                 func(org uuid.UUID) computer.WriteSigner { return casStore.Organization(org) },
 		StoragePlatform:                platformStore,
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,

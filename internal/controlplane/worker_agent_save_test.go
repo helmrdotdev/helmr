@@ -45,16 +45,13 @@ func (p saveHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, file 
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {
 		return cas.Object{}, err
 	}
-	if err := sessiontest.RecordUpload(ctx, p.pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
-		return cas.Object{}, err
-	}
 	return p.store.Put(ctx, d.MediaType, io.NewSectionReader(file, 0, d.SizeBytes))
 }
 
 func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	f := sessiontest.New(t)
 	store := newTestUploadStore(t)
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = store }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = everyOrganization[cas.UploadStore](store) }))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}

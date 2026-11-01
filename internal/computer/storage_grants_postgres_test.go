@@ -16,12 +16,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-// grantSigner records what the broker asked storage to sign.
+// grantSigner records what the broker asked one keyspace to sign.
 type grantSigner struct {
+	keyspace  string
 	mu        sync.Mutex
 	signed    []string
 	stored    map[string]cas.Descriptor
@@ -29,7 +31,26 @@ type grantSigner struct {
 	aborted   []string
 }
 
-func newGrantSigner() *grantSigner { return &grantSigner{stored: map[string]cas.Descriptor{}} }
+func newGrantSigner(keyspace string) *grantSigner {
+	return &grantSigner{keyspace: keyspace, stored: map[string]cas.Descriptor{}}
+}
+
+// grantKeyspaces holds one content keyspace per organization.
+type grantKeyspaces struct {
+	mu   sync.Mutex
+	orgs map[uuid.UUID]*grantSigner
+}
+
+func (k *grantKeyspaces) of(org uuid.UUID) *grantSigner {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.orgs[org] == nil {
+		k.orgs[org] = newGrantSigner("orgs/" + org.String())
+	}
+	return k.orgs[org]
+}
+
+func (k *grantKeyspaces) signer(org uuid.UUID) WriteSigner { return k.of(org) }
 
 func (s *grantSigner) record(op, digest string) {
 	s.mu.Lock()
@@ -43,7 +64,7 @@ func (s *grantSigner) calls() []string {
 }
 func (s *grantSigner) request(op, digest string, expiresAt time.Time) cas.SignedRequest {
 	s.record(op, digest)
-	return cas.SignedRequest{Method: op, URL: "https://storage.test/" + digest, ExpiresAt: expiresAt}
+	return cas.SignedRequest{Method: op, URL: "https://storage.test/" + s.keyspace + "/" + digest, ExpiresAt: expiresAt}
 }
 func (s *grantSigner) Stat(_ context.Context, digest string) (cas.Object, error) {
 	s.mu.Lock()
@@ -107,8 +128,11 @@ func (s *grantSigner) AbortUpload(_ context.Context, upload cas.Upload, digest s
 
 type grantFixture struct {
 	fixture
-	broker *StorageBroker
+	broker    *StorageBroker
+	keyspaces *grantKeyspaces
+	// signer is the keyspace of the fixture's organization.
 	signer *grantSigner
+	org    uuid.UUID
 	host   workergroup.HostPrincipal
 	lease  LeaseIdentity
 	own    string
@@ -117,8 +141,12 @@ type grantFixture struct {
 func newGrantFixture(t *testing.T) grantFixture {
 	t.Helper()
 	f := newFixture(t)
-	signer := newGrantSigner()
-	broker, err := NewStorageBroker(f.pool, signer, signer)
+	var org uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	keyspaces := &grantKeyspaces{orgs: map[uuid.UUID]*grantSigner{}}
+	broker, err := NewStorageBroker(f.pool, keyspaces.signer, newGrantSigner("platform"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +156,7 @@ func newGrantFixture(t *testing.T) grantFixture {
 	}
 	// The lease mounts the Computer's initial root, which roots its disk graph.
 	mountInitialRoot(t, f, f.computer)
-	return grantFixture{fixture: f, broker: broker, signer: signer, own: own,
+	return grantFixture{fixture: f, broker: broker, keyspaces: keyspaces, signer: keyspaces.of(org), org: org, own: own,
 		host:  workergroup.HostPrincipal{HostID: f.base.Worker, GroupID: f.base.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1},
 		lease: LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}}
 }
@@ -146,24 +174,27 @@ func (g grantFixture) scope() StorageScope { lease := g.lease; return StorageSco
 
 func digestOf(fill string) string { return "sha256:" + strings.Repeat(fill, 64) }
 
-// foreignObject stores digest under another organization's environment graph.
-func (g grantFixture) foreignObject(t *testing.T, digest string) {
+// otherOrganizationObject stores digest in another organization's keyspace and
+// environment graph, and returns that organization.
+func (g grantFixture) otherOrganizationObject(t *testing.T, digest string) uuid.UUID {
 	t.Helper()
 	org, project, env := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other');
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($2,$1,'test','other','Other');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'other','Other','#112233',1,clock_timestamp());
- INSERT INTO cas_blobs(digest,size_bytes) VALUES($4,7);
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$4,7);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$4,7,'application/octet-stream');
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) VALUES($3,$4,$1,$2,7,'application/octet-stream','segment',0,'{}',clock_timestamp())`,
 		pgx.QueryExecModeSimpleProtocol, org, project, env, digest)
+	g.keyspaces.of(org).stored[digest] = cas.Descriptor{Digest: digest, SizeBytes: 7, MediaType: "application/octet-stream"}
+	return org
 }
 
 // sameOrgObject stores digest as a certified disk object of the fixture's own
 // environment that no root of the fixture Computer reaches.
 func (g grantFixture) sameOrgObject(t *testing.T, digest string) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($2,7);
+	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,7 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$2,7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$2,org_id,project_id,7,'application/octet-stream','segment',0,'{}',clock_timestamp() FROM environments WHERE id=$1`,
 		pgx.QueryExecModeSimpleProtocol, g.env, digest)
@@ -182,8 +213,8 @@ func TestStorageReadsRequireOwnGraph(t *testing.T) {
 		t.Fatalf("grant outlives its lifetime: %v", grant.Get.ExpiresAt)
 	}
 	foreign, unowned, sibling := digestOf("a"), digestOf("b"), digestOf("c")
-	g.foreignObject(t, foreign)
-	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,7)`, unowned)
+	g.otherOrganizationObject(t, foreign)
+	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,7)`, g.org, unowned)
 	g.sameOrgObject(t, sibling)
 	before := len(g.signer.calls())
 	for name, digest := range map[string]string{"foreign": foreign, "blob only": unowned, "same environment, other graph": sibling, "unknown": digestOf("d")} {
@@ -196,6 +227,9 @@ func TestStorageReadsRequireOwnGraph(t *testing.T) {
 	}
 	if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", "sha256:../../other"); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("malformed digest = %v", err)
+	}
+	if !strings.HasPrefix(grant.Get.URL, "https://storage.test/orgs/"+g.org.String()+"/") {
+		t.Fatalf("read signed outside the organization's keyspace: %s", grant.Get.URL)
 	}
 }
 
@@ -227,9 +261,9 @@ func TestStorageGrantsEndWithAuthority(t *testing.T) {
 	}
 }
 
-// Writes are create-only receipts of one allocation. The same allocation may
-// read back its upload; another allocation and another organization's digest
-// get nothing, and an existing object is verified rather than re-signed.
+// Writes are create-only receipts of one allocation in its organization's
+// keyspace. The same allocation may read back its upload; another allocation
+// gets nothing, and an existing object is verified rather than re-signed.
 func TestStorageWritesAreAllocationReceipts(t *testing.T) {
 	g := newGrantFixture(t)
 	fresh := cas.Descriptor{Digest: digestOf("e"), SizeBytes: 7, MediaType: cas.CheckpointVMStateMediaType}
@@ -237,41 +271,43 @@ func TestStorageWritesAreAllocationReceipts(t *testing.T) {
 	if err != nil || grant.Put == nil || grant.Put.Method != "PUT" || grant.Exists || grant.Upload != nil {
 		t.Fatalf("write = %+v, %v", grant, err)
 	}
+	if !strings.HasPrefix(grant.Put.URL, "https://storage.test/orgs/"+g.org.String()+"/") {
+		t.Fatalf("write signed outside the organization's keyspace: %s", grant.Put.URL)
+	}
 	if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", fresh.Digest); err != nil {
 		t.Fatalf("own upload read back = %v", err)
-	}
-	if err := requireOrganizationUploadTx(t, g, fresh.Digest); err != nil {
-		t.Fatalf("own upload certification = %v", err)
 	}
 	if _, err := g.broker.Write(t.Context(), g.host, g.scope(), cas.Descriptor{Digest: fresh.Digest, SizeBytes: 8, MediaType: fresh.MediaType}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("descriptor change = %v", err)
 	}
-	foreign := digestOf("f")
-	g.foreignObject(t, foreign)
-	g.signer.stored[foreign] = cas.Descriptor{Digest: foreign, SizeBytes: 7, MediaType: "application/octet-stream"}
-	if _, err := g.broker.Write(t.Context(), g.host, g.scope(), cas.Descriptor{Digest: foreign, SizeBytes: 7, MediaType: "application/octet-stream"}); !errors.Is(err, ErrDenied) {
-		t.Fatalf("foreign digest write = %v", err)
+	var lifetime int
+	if err := g.pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_blobs WHERE org_id=$1 AND digest=$2 AND retired_at IS NULL`, g.org, fresh.Digest).Scan(&lifetime); err != nil || lifetime != 1 {
+		t.Fatalf("fresh upload lifetime = %d, %v", lifetime, err)
 	}
-	if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", foreign); !errors.Is(err, ErrDenied) {
-		t.Fatalf("foreign digest read after write attempt = %v", err)
+	// Certification releases the finished receipt: the read back ends with it.
+	if err := db.RunTx(t.Context(), g.pool, func(tx pgx.Tx) error { return releaseFinishedUploads(t.Context(), tx, g.org, fresh.Digest) }); err != nil {
+		t.Fatal(err)
 	}
-	if err := requireOrganizationUploadTx(t, g, foreign); !errors.Is(err, ErrDenied) {
-		t.Fatalf("foreign digest certification = %v", err)
+	if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", fresh.Digest); !errors.Is(err, ErrDenied) {
+		t.Fatalf("read back after certification released the receipt = %v", err)
 	}
-	// A write request for an existing object of the same organization outside
-	// this allocation's graph, correct or not, widens no read access.
+	// Finding an object already stored, correct or not, records no receipt and
+	// widens no read: a later read still requires the object in the graph.
 	sibling := digestOf("7")
 	g.sameOrgObject(t, sibling)
 	g.signer.stored[sibling] = cas.Descriptor{Digest: sibling, SizeBytes: 7, MediaType: "application/octet-stream"}
-	for _, size := range []int64{7, 8} {
-		_, _ = g.broker.Write(t.Context(), g.host, g.scope(), cas.Descriptor{Digest: sibling, SizeBytes: size, MediaType: "application/octet-stream"})
+	for size, want := range map[int64]error{7: nil, 8: ErrConflict} {
+		grant, err := g.broker.Write(t.Context(), g.host, g.scope(), cas.Descriptor{Digest: sibling, SizeBytes: size, MediaType: "application/octet-stream"})
+		if !errors.Is(err, want) || (want == nil && (!grant.Exists || grant.Put != nil)) {
+			t.Fatalf("write of a stored object of size %d = %+v, %v", size, grant, err)
+		}
 		if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", sibling); !errors.Is(err, ErrDenied) {
 			t.Fatalf("write request of size %d minted a read = %v", size, err)
 		}
 	}
-	var lifetime int
-	if err := g.pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_blobs WHERE digest=$1 AND retired_at IS NULL`, fresh.Digest).Scan(&lifetime); err != nil || lifetime != 1 {
-		t.Fatalf("fresh upload lifetime = %d, %v", lifetime, err)
+	var receipts int
+	if err := g.pool.QueryRow(t.Context(), `SELECT count(*) FROM allocation_storage_writes WHERE digest=$1`, sibling).Scan(&receipts); err != nil || receipts != 0 {
+		t.Fatalf("finding a stored object recorded %d receipts, %v", receipts, err)
 	}
 	g.signer.stored[g.own] = cas.Descriptor{Digest: g.own, SizeBytes: 7, MediaType: "application/octet-stream"}
 	if grant, err := g.broker.Write(t.Context(), g.host, g.scope(), cas.Descriptor{Digest: g.own, SizeBytes: 7, MediaType: "application/octet-stream"}); err != nil || !grant.Exists || grant.Put != nil {
@@ -286,6 +322,10 @@ func TestStorageWritesAreAllocationReceipts(t *testing.T) {
 		t.Fatal("preparation source wrote storage")
 	}
 	// A second allocation of the same Host cannot read the first one's upload.
+	upload := cas.Descriptor{Digest: digestOf("8"), SizeBytes: 7, MediaType: "application/octet-stream"}
+	if _, err := g.broker.Write(t.Context(), g.host, g.scope(), upload); err != nil {
+		t.Fatal(err)
+	}
 	second := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes)
  SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3;
@@ -296,23 +336,53 @@ func TestStorageWritesAreAllocationReceipts(t *testing.T) {
 	if _, err := g.broker.Read(t.Context(), g.host, other, "cas", g.own); err != nil {
 		t.Fatalf("second allocation own graph = %v", err)
 	}
-	if _, err := g.broker.Read(t.Context(), g.host, other, "cas", fresh.Digest); !errors.Is(err, ErrDenied) {
+	if _, err := g.broker.Read(t.Context(), g.host, other, "cas", upload.Digest); !errors.Is(err, ErrDenied) {
 		t.Fatalf("second allocation read first allocation's upload = %v", err)
 	}
 }
 
-func requireOrganizationUploadTx(t *testing.T, g grantFixture, digest string) error {
-	t.Helper()
-	tx, err := g.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
+// The same digest in two organizations is two independent objects: each is
+// written, read and retired in its own keyspace, and neither organization's
+// authority reaches the other's.
+func TestStorageOrganizationsHoldIndependentObjects(t *testing.T) {
+	g := newGrantFixture(t)
+	shared := digestOf("f")
+	other := g.otherOrganizationObject(t, shared)
+	descriptor := cas.Descriptor{Digest: shared, SizeBytes: 7, MediaType: "application/octet-stream"}
+	// Another organization holding the digest neither blocks this upload nor
+	// stands in for it: this keyspace has no such object yet.
+	grant, err := g.broker.Write(t.Context(), g.host, g.scope(), descriptor)
+	if err != nil || grant.Put == nil || grant.Exists {
+		t.Fatalf("write of a digest another organization holds = %+v, %v", grant, err)
 	}
-	defer tx.Rollback(context.Background())
-	var org uuid.UUID
-	if err := tx.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, g.env).Scan(&org); err != nil {
-		t.Fatal(err)
+	if !strings.HasPrefix(grant.Put.URL, "https://storage.test/orgs/"+g.org.String()+"/") {
+		t.Fatalf("write signed outside the organization's keyspace: %s", grant.Put.URL)
 	}
-	return requireOrganizationUpload(t.Context(), tx, org, digest)
+	read, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", shared)
+	if err != nil || !strings.HasPrefix(read.Get.URL, "https://storage.test/orgs/"+g.org.String()+"/") {
+		t.Fatalf("own upload read = %+v, %v", read, err)
+	}
+	if calls := g.keyspaces.of(other).calls(); len(calls) != 0 {
+		t.Fatalf("another organization's keyspace was signed: %v", calls)
+	}
+	var lifetimes int
+	if err := g.pool.QueryRow(t.Context(), `SELECT count(DISTINCT org_id) FROM cas_blobs WHERE digest=$1 AND org_id IN ($2,$3)`, shared, g.org, other).Scan(&lifetimes); err != nil || lifetimes != 2 {
+		t.Fatalf("lifetimes = %d, %v", lifetimes, err)
+	}
+	// Retiring one organization's abandoned lifetime leaves the other's.
+	dbtest.MustExec(t, t.Context(), g.pool, `DELETE FROM allocation_storage_writes WHERE org_id=$1 AND digest=$2`, g.org, shared)
+	if n, err := db.New(g.pool).RetireAbandonedCasBlob(t.Context(), db.RetireAbandonedCasBlobParams{OrgID: pgvalue.UUID(g.org), Digest: shared}); err != nil || n != 1 {
+		t.Fatalf("retire own lifetime = %d, %v", n, err)
+	}
+	var available bool
+	if err := g.pool.QueryRow(t.Context(), `SELECT retired_at IS NULL FROM cas_blobs WHERE org_id=$1 AND digest=$2`, other, shared).Scan(&available); err != nil || !available {
+		t.Fatalf("retirement crossed organizations: %v, %v", available, err)
+	}
+	// With its receipt gone and the object outside its graph, this
+	// organization reads nothing, whatever the other one holds.
+	if _, err := g.broker.Read(t.Context(), g.host, g.scope(), "cas", shared); !errors.Is(err, ErrDenied) {
+		t.Fatalf("read of another organization's object = %v", err)
+	}
 }
 
 // Multipart uploads stay owned by the allocation that created them; parts,
@@ -328,13 +398,7 @@ func TestStorageMultipartIsAllocationOwned(t *testing.T) {
 	upload := grant.Upload.ID
 	// The organization certifying the same digest elsewhere does not cancel
 	// this upload in progress.
-	if err := db.RunTx(t.Context(), g.pool, func(tx pgx.Tx) error {
-		var org uuid.UUID
-		if err := tx.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, g.env).Scan(&org); err != nil {
-			return err
-		}
-		return requireOrganizationUpload(t.Context(), tx, org, large.Digest)
-	}); err != nil {
+	if err := db.RunTx(t.Context(), g.pool, func(tx pgx.Tx) error { return releaseFinishedUploads(t.Context(), tx, g.org, large.Digest) }); err != nil {
 		t.Fatal(err)
 	}
 	if parts, err := g.broker.Parts(t.Context(), g.host, g.scope(), large, upload, []int32{1, 4}); err != nil || len(parts) != 2 {
@@ -431,7 +495,7 @@ func TestPreparationGrantsCoverOnlyBuildInputs(t *testing.T) {
 		g.env, build, g.deployment, allocation, digest[:], g.base.Worker)
 	scope := StorageScope{Preparation: &ImageBuildExecutor{EnvironmentID: g.env, ImageBuildID: build, InstanceID: allocation, Epoch: 1, ChannelCredential: credential}}
 	artifact := digestOf("5")
-	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($3,7);
+	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$3,7 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$3,7,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO deployment_objects(environment_id,deployment_id,digest,org_id,project_id,size_bytes,media_type) SELECT id,$2,$3,org_id,project_id,7,'application/octet-stream' FROM environments WHERE id=$1`,
 		pgx.QueryExecModeSimpleProtocol, g.env, g.deployment, artifact)

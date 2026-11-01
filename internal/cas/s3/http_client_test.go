@@ -53,10 +53,11 @@ func TestS3ConfiguredTransportOwnsReadsAndUploads(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Length": {strconv.Itoa(len(data))}, "Content-Type": {d.MediaType}}, Body: io.NopCloser(bytes.NewReader(nil)), Request: request}, nil
 	})
-	store, err := New(t.Context(), "s3://fixture/objects?endpoint=https://storage.invalid", WithHTTPClient(client))
+	unscoped, err := New(t.Context(), "s3://fixture/objects?endpoint=https://storage.invalid", WithHTTPClient(client))
 	if err != nil {
 		t.Fatal(err)
 	}
+	store := unscoped.Organization(testOrg)
 	if _, err := store.Stat(t.Context(), d.Digest); err != nil {
 		t.Fatal(err)
 	}

@@ -28,6 +28,7 @@ type PreparationSource struct {
 	ExpiresAt                  time.Time
 	Manifest                   bootseed.Manifest
 	Shape                      AllocationShape
+	OrganizationID             uuid.UUID
 	DeploymentID               uuid.UUID
 	BundleDigest, RootfsDigest string
 	ImageConfig                oci.RuntimeConfig
@@ -150,7 +151,6 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 			return err
 		}
 		var manifest, seed []byte
-		var org uuid.UUID
 		s := &result.source
 		s.Key = key
 		s.HostID = host.HostID
@@ -164,7 +164,7 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
  JOIN images image ON (image.environment_id,image.id)=(b.environment_id,b.image_id)
  JOIN disk_roots r ON (r.environment_id,r.id)=(image.environment_id,image.root_id)
  WHERE b.environment_id=$4 AND b.id=$5 AND `+eligiblePreparationSourceSQL, host.HostID, host.GroupID, host.Epoch, key.EnvironmentID, key.BuildID).
-			Scan(append([]any{&s.PolicyRevision, &s.ExpiresAt, &manifest, &s.Shape.CPUMillis, &s.Shape.MemoryBytes, &s.Shape.ScratchBytes, &s.Shape.VMPlatformID, &s.Shape.VCPUCount, &s.Shape.CPUConfigDigest, &s.DeploymentID, &s.BundleDigest, &s.RootfsDigest, &seed, &org, &result.disk.rootID}, DiskRootFields(&result.disk.source.Root)...)...)
+			Scan(append([]any{&s.PolicyRevision, &s.ExpiresAt, &manifest, &s.Shape.CPUMillis, &s.Shape.MemoryBytes, &s.Shape.ScratchBytes, &s.Shape.VMPlatformID, &s.Shape.VCPUCount, &s.Shape.CPUConfigDigest, &s.DeploymentID, &s.BundleDigest, &s.RootfsDigest, &seed, &s.OrganizationID, &result.disk.rootID}, DiskRootFields(&result.disk.source.Root)...)...)
 		if err != nil {
 			return err
 		}
@@ -182,7 +182,7 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 			return err
 		}
 		s.ImageConfig = definition.Config
-		result.disk.source.Scope, err = computerkey.EncryptionScope(org.String(), key.EnvironmentID.String())
+		result.disk.source.Scope, err = computerkey.EncryptionScope(s.OrganizationID.String(), key.EnvironmentID.String())
 		if err != nil {
 			return err
 		}
@@ -225,5 +225,5 @@ func (b *KeyBroker) PreparationStart(ctx context.Context, host workergroup.HostP
 	if err != nil {
 		return BootSeedStart{}, err
 	}
-	return BootSeedStart{DeploymentID: pin.source.DeploymentID, BundleDigest: pin.source.BundleDigest, RootfsDigest: pin.source.RootfsDigest, ImageConfig: pin.source.ImageConfig}, nil
+	return BootSeedStart{OrganizationID: pin.source.OrganizationID, DeploymentID: pin.source.DeploymentID, BundleDigest: pin.source.BundleDigest, RootfsDigest: pin.source.RootfsDigest, ImageConfig: pin.source.ImageConfig}, nil
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
@@ -71,4 +72,9 @@ func (testStorageSigner) CompleteUpload(context.Context, cas.Descriptor, cas.Upl
 }
 func (testStorageSigner) AbortUpload(context.Context, cas.Upload, string) error {
 	return errTestQuarantine
+}
+
+// everyOrganization serves one store for every organization's keyspace.
+func everyOrganization[T any](store T) func(uuid.UUID) T {
+	return func(uuid.UUID) T { return store }
 }

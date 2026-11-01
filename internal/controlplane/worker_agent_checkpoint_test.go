@@ -25,7 +25,7 @@ import (
 func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	f := sessiontest.New(t)
 	store := newTestUploadStore(t)
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = store }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = everyOrganization[cas.UploadStore](store) }))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
@@ -87,9 +87,6 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 		t.Fatal("missing objects made checkpoint ready")
 	}
 	for _, d := range descriptors {
-		if err := sessiontest.RecordUpload(t.Context(), f.Pool, d.Digest, d.SizeBytes, d.MediaType); err != nil {
-			t.Fatal(err)
-		}
 		if _, err := store.Put(t.Context(), d.MediaType, strings.NewReader("opaque runtime object: "+d.MediaType)); err != nil {
 			t.Fatal(err)
 		}

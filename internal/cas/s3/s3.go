@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -53,6 +54,10 @@ type s3Client interface {
 	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
+// Store is a content store. Every object lives in one organization's keyspace
+// under <prefix>/orgs/<org>/sha256/, so the same digest in two organizations is
+// two independent objects. A Store addresses objects only once scoped with
+// Organization; quarantine and staging keys stay at the prefix root.
 type Store struct {
 	client     s3Client
 	presign    presigner
@@ -61,6 +66,10 @@ type Store struct {
 	tempDir    string
 	sharded    bool
 	httpClient aws.HTTPClient
+	org        uuid.UUID
+	// global addresses the release-only platform keyspace, which belongs to
+	// no organization.
+	global bool
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
@@ -286,12 +295,23 @@ func (c *Store) PromoteQuarantine(
 	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
 }
 
+// NewImmutable opens the release-only platform store, whose keyspace belongs to
+// no organization.
 func NewImmutable(ctx context.Context, rawURI string, opts ...Option) (*ImmutableStore, error) {
 	store, err := New(ctx, rawURI, opts...)
 	if err != nil {
 		return nil, err
 	}
+	store.global = true
 	return &ImmutableStore{store: store}, nil
+}
+
+// Organization returns the store scoped to one organization's keyspace. It
+// shares the client and configuration of c.
+func (c *Store) Organization(org uuid.UUID) *Store {
+	scoped := *c
+	scoped.org = org
+	return &scoped
 }
 
 func ValidateDistinctS3Stores(firstURI, secondURI string) error {
@@ -843,11 +863,19 @@ func (c *ImmutableStore) Get(ctx context.Context, digest string) (io.ReadCloser,
 
 var _ cas.ImmutableStore = (*ImmutableStore)(nil)
 
+// objectKey fails closed for a store not scoped to an organization.
 func (c *Store) objectKey(digest string) (string, error) {
-	if c.sharded {
-		return cas.ShardedObjectKey(c.prefix, digest)
+	prefix := strings.Trim(c.prefix, "/")
+	if !c.global {
+		if c.org == uuid.Nil() {
+			return "", errors.New("content store is not scoped to an organization")
+		}
+		prefix = strings.TrimPrefix(prefix+"/orgs/"+c.org.String(), "/")
 	}
-	return cas.ObjectKey(c.prefix, digest)
+	if c.sharded {
+		return cas.ShardedObjectKey(prefix, digest)
+	}
+	return cas.ObjectKey(prefix, digest)
 }
 
 func (c *Store) quarantineKey(owner, digest string) (string, error) {

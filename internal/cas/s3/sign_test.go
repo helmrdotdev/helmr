@@ -26,7 +26,7 @@ func signingStore(client s3Client) *Store {
 		Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider("AKID", "SECRET", ""),
 		BaseEndpoint: aws.String("https://storage.example"), UsePathStyle: true,
 	})
-	return &Store{client: client, presign: awss3.NewPresignClient(signer), bucket: "bucket", prefix: "cas"}
+	return &Store{org: testOrg, client: client, presign: awss3.NewPresignClient(signer), bucket: "bucket", prefix: "cas"}
 }
 
 func signedHeaders(t *testing.T, request cas.SignedRequest) []string {
@@ -51,7 +51,7 @@ func TestSignPutBindsDigestChecksumAndCreateOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	checksum, _ := descriptorChecksum(descriptor.Digest)
-	if request.Method != "PUT" || !strings.Contains(request.URL, "/bucket/cas/sha256/"+strings.TrimPrefix(descriptor.Digest, "sha256:")+"?") ||
+	if request.Method != "PUT" || !strings.Contains(request.URL, "/bucket/cas/orgs/0198c0de-0000-7000-8000-000000000001/sha256/"+strings.TrimPrefix(descriptor.Digest, "sha256:")+"?") ||
 		request.Header.Get("X-Amz-Checksum-Sha256") != checksum || request.Header.Get("If-None-Match") != "*" ||
 		request.Header.Get("Content-Type") != descriptor.MediaType || !request.ExpiresAt.Equal(expires) {
 		t.Fatalf("signed put = %+v", request)
@@ -196,7 +196,7 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
 	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
 	hash := strings.TrimPrefix(descriptor.Digest, "sha256:")
-	staging, final := "cas/staging/019abcde-1234/sha256/"+hash, "cas/sha256/"+hash
+	staging, final := "cas/staging/019abcde-1234/sha256/"+hash, "cas/orgs/0198c0de-0000-7000-8000-000000000001/sha256/"+hash
 	for _, readBack := range []bool{false, true} {
 		for _, test := range []struct {
 			name   string
@@ -213,7 +213,7 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("%s/read back %t", test.name, readBack), func(t *testing.T) {
 				client := &completionClient{staged: test.staged, exists: test.exists}
-				store := &Store{client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+				store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
 				if readBack {
 					// Larger than one server-side copy: read back once, never twice.
 					store.copyObjectMaxBytes = 32

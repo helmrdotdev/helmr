@@ -98,9 +98,6 @@ func (f checkpointStorageFixture) upload(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := sessiontest.RecordUpload(t.Context(), f.f.pool, o.Digest, o.SizeBytes, o.MediaType); err != nil {
-			t.Fatal(err)
-		}
 		_, err = f.remote.Put(t.Context(), o.MediaType, file)
 		file.Close()
 		if err != nil {
@@ -131,7 +128,7 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Recreating the publisher retains exact operation identity through DB/CAS.
-	restarted, err := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.remote)
+	restarted, err := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](f.remote))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,10 +168,10 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatalf("ready dispatched: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.f.computer)
-	unavailable, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	unavailable, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		t.Fatal("committed receipt consulted storage")
 		return cas.Object{}, nil
-	}))
+	})))
 	if err = unavailable.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
 		t.Fatalf("lost ready acknowledgement: %v", err)
 	}
@@ -241,14 +238,14 @@ func TestCheckpointRuntimeRechecksAuthorityAfterIO(t *testing.T) {
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
 			<-release
 		}
 		return f.remote.Stat(ctx, digest)
-	}))
+	})))
 	done := make(chan error, 1)
 	go func() { done <- blocked.CompleteCheckpoint(ctx, f.ref, f.manifest) }()
 	<-entered
@@ -292,11 +289,11 @@ func TestCheckpointRuntimeForeignReceiptsAndAbortRace(t *testing.T) {
 				return
 			}
 			if action == "changed-descriptor" {
-				wrong, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+				wrong, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 					o, e := f.remote.Stat(ctx, d)
 					o.SizeBytes++
 					return o, e
-				}))
+				})))
 				if err := wrong.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, session.ErrConflict) {
 					t.Fatalf("wrong remote descriptor: %v", err)
 				}
@@ -379,14 +376,14 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
 			<-release
 		}
 		return f.remote.Stat(ctx, d)
-	}))
+	})))
 	done := make(chan error, 1)
 	go func() { done <- blocked.CompleteCheckpoint(ctx, f.ref, f.manifest) }()
 	<-entered

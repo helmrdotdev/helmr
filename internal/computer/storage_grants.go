@@ -70,16 +70,20 @@ type StorageWrite struct {
 }
 
 // StorageBroker issues short-lived storage grants to authenticated Hosts so
-// that no Host holds storage credentials. Reads cover only objects of the
-// authority's own organization and environment graph, objects the same
-// allocation was granted to write, and released platform artifacts.
+// that no Host holds storage credentials. Every grant addresses the keyspace of
+// the authority's own organization, so the same digest of another organization
+// is a different object. Reads cover only objects of the authority's
+// environment graph, objects the same allocation was granted to upload, and
+// released platform artifacts.
 type StorageBroker struct {
 	database db.TxBeginner
-	objects  WriteSigner
+	objects  func(org uuid.UUID) WriteSigner
 	platform ReadSigner
 }
 
-func NewStorageBroker(database db.TxBeginner, objects WriteSigner, platform ReadSigner) (*StorageBroker, error) {
+// NewStorageBroker takes the content store of each organization's keyspace and
+// the release-only platform store.
+func NewStorageBroker(database db.TxBeginner, objects func(org uuid.UUID) WriteSigner, platform ReadSigner) (*StorageBroker, error) {
 	if database == nil || objects == nil || platform == nil {
 		return nil, errors.New("storage grants require a database, a content store and a platform store")
 	}
@@ -232,10 +236,10 @@ const (
 	readGrantTail = `)) OR ` + ownReceiptSQL
 )
 
-// ownReceiptSQL admits an object this same allocation was granted to upload.
-// Parameters continue the graph's: $6 host, $7 host epoch, $8 allocation.
-const ownReceiptSQL = `EXISTS(SELECT 1 FROM allocation_storage_writes w WHERE w.worker_host_id=$6 AND w.worker_epoch=$7 AND w.allocation_id=$8 AND w.org_id=$1 AND w.digest=$3
-  AND NOT ` + foreignObjectSQL + `)`
+// ownReceiptSQL admits an object this same allocation was granted to upload, so
+// it can read its own upload back before certification. Parameters continue the
+// graph's: $6 host, $7 host epoch, $8 allocation.
+const ownReceiptSQL = `EXISTS(SELECT 1 FROM allocation_storage_writes w WHERE w.worker_host_id=$6 AND w.worker_epoch=$7 AND w.allocation_id=$8 AND w.org_id=$1 AND w.digest=$3)`
 
 func (b *StorageBroker) readAuthority(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, store, digest string) (storageAuthority, error) {
 	var a storageAuthority
@@ -251,8 +255,8 @@ func (b *StorageBroker) readAuthority(ctx context.Context, host workergroup.Host
 			return nil
 		}
 		// Possession of a digest grants nothing: the object must belong to the
-		// authority's organization and its object graph, or have been granted
-		// for upload to this same allocation.
+		// authority's object graph, or have been granted for upload to this
+		// same allocation.
 		var authorized bool
 		var row pgx.Row
 		switch {
@@ -277,18 +281,16 @@ func (b *StorageBroker) readAuthority(ctx context.Context, host workergroup.Host
 // Read grants GET and HEAD of one object. Platform reads cover only objects
 // present in the release-only platform store.
 func (b *StorageBroker) Read(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, store, digest string) (StorageReadGrant, error) {
-	var signer ReadSigner
-	switch store {
-	case "cas":
-		signer = b.objects
-	case "platform":
-		signer = b.platform
-	default:
+	if store != "cas" && store != "platform" {
 		return StorageReadGrant{}, ErrInvalidInput
 	}
 	a, err := b.readAuthority(ctx, host, scope, store, digest)
 	if err != nil {
 		return StorageReadGrant{}, err
+	}
+	var signer ReadSigner = b.platform
+	if store == "cas" {
+		signer = b.objects(a.org)
 	}
 	if store == "platform" {
 		if _, err := signer.Stat(ctx, digest); errors.Is(err, os.ErrNotExist) {
@@ -327,57 +329,18 @@ func (b *StorageBroker) writeAuthority(ctx context.Context, host workergroup.Hos
 	return a, notReadyOnLock(err)
 }
 
-// liveReceiptSQL holds when receipt x belongs to a live allocation.
-const liveReceiptSQL = `EXISTS(SELECT 1 FROM (` + db.AllocationUsageSQL + `) live WHERE live.worker_host_id=x.worker_host_id AND live.worker_epoch=x.worker_epoch AND live.allocation_id=x.allocation_id)`
-
-// foreignObjectSQL holds when digest w.digest belongs to, or is being uploaded
-// by a live allocation of, another organization and does not already belong to
-// w.org_id. Such an object is never receipted, read or adopted.
-const foreignObjectSQL = `((EXISTS(SELECT 1 FROM cas_objects x WHERE x.digest=w.digest AND x.org_id<>w.org_id)
-  OR EXISTS(SELECT 1 FROM allocation_storage_writes x WHERE x.digest=w.digest AND x.org_id<>w.org_id AND ` + liveReceiptSQL + `))
- AND NOT EXISTS(SELECT 1 FROM cas_objects x WHERE x.digest=w.digest AND x.org_id=w.org_id))`
-
-// lockDigestOwnership serializes the foreign-object check with receipt
-// creation and organization admission for one digest.
-func lockDigestOwnership(ctx context.Context, tx pgx.Tx, digest string) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('helmr.cas-owner:'||$1::text,0))`, digest)
-	return err
-}
-
-// requireNotForeign refuses a digest another organization owns or is uploading.
-func requireNotForeign(ctx context.Context, tx pgx.Tx, a storageAuthority, digest string) error {
-	if err := lockDigestOwnership(ctx, tx, digest); err != nil {
-		return err
-	}
-	var foreign bool
-	if err := tx.QueryRow(ctx, `SELECT `+foreignObjectSQL+` FROM (SELECT $1::text digest,$2::uuid org_id) w`, digest, a.org).Scan(&foreign); err != nil {
-		return err
-	}
-	if foreign {
-		// Possession of another organization's digest grants nothing.
-		return ErrDenied
-	}
-	return nil
-}
-
 // recordStorageWrite records the receipt of an upload this allocation is about
-// to make, or of a stored object no organization owns that it adopts. An object
-// some organization owns is never receipted: owning it is the only authority.
-// A new upload's lifetime is registered so an abandoned one is reclaimed once
-// the reclaimer has removed receipts of ended allocations.
+// to make. The receipt binds a multipart upload to this allocation, lets it read
+// its own upload back before certification, and registers the upload's
+// lifetime so an abandoned one is reclaimed once the reclaimer has removed
+// receipts of ended allocations.
 func recordStorageWrite(ctx context.Context, tx pgx.Tx, a storageAuthority, object cas.Descriptor) error {
-	if err := requireNotForeign(ctx, tx, a, object.Digest); err != nil {
-		return err
-	}
-	var owned, available bool
+	var available bool
 	var size int64
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM cas_objects WHERE digest=$1)`, object.Digest).Scan(&owned); err != nil || owned {
+	if _, err := tx.Exec(ctx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, a.org, object.Digest, object.SizeBytes); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, object.Digest, object.SizeBytes); err != nil {
-		return err
-	}
-	if err := tx.QueryRow(ctx, `SELECT size_bytes,not_retired FROM cas_blobs WHERE digest=$1 FOR KEY SHARE`, object.Digest).Scan(&size, &available); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT size_bytes,not_retired FROM cas_blobs WHERE org_id=$1 AND digest=$2 FOR KEY SHARE`, a.org, object.Digest).Scan(&size, &available); err != nil {
 		return err
 	}
 	if size != object.SizeBytes || !available {
@@ -397,61 +360,47 @@ func recordStorageWrite(ctx context.Context, tx pgx.Tx, a storageAuthority, obje
 	return nil
 }
 
-// requireOrganizationUpload admits an object into an organization's CAS
-// membership only if the organization already owns it, or one of its live
-// allocations holds a write receipt for it and no other organization owns or
-// is uploading it. A digest found in storage confers nothing.
-func requireOrganizationUpload(ctx context.Context, tx pgx.Tx, org uuid.UUID, digest string) error {
-	if err := lockDigestOwnership(ctx, tx, digest); err != nil {
-		return err
-	}
-	var admitted bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM cas_objects WHERE org_id=$1 AND digest=$2)
- OR EXISTS(SELECT 1 FROM allocation_storage_writes x WHERE x.org_id=$1 AND x.digest=$2 AND `+liveReceiptSQL+`
-  AND NOT EXISTS(SELECT 1 FROM (SELECT x.digest,x.org_id) w WHERE `+foreignObjectSQL+`))`, org, digest).Scan(&admitted); err != nil {
-		return err
-	}
-	if !admitted {
-		return ErrDenied
-	}
-	// Membership now carries the object; its finished upload receipts would only
-	// keep a released payload from reclamation. A multipart upload still in
-	// progress keeps its receipt until it completes or its allocation ends.
+// releaseFinishedUploads removes an organization's finished upload receipts for
+// a digest once certification admits it into the organization's CAS
+// membership. Membership now carries the object; a lingering receipt would only
+// keep a released payload from reclamation. A multipart upload still in
+// progress keeps its receipt until it completes or its allocation ends.
+func releaseFinishedUploads(ctx context.Context, tx pgx.Tx, org uuid.UUID, digest string) error {
 	_, err := tx.Exec(ctx, `DELETE FROM allocation_storage_writes WHERE org_id=$1 AND digest=$2 AND upload_id IS NULL`, org, digest)
 	return err
 }
 
-// Write grants one create-only publication of exactly the descriptor's bytes.
-// An object already stored is verified rather than replaced.
-// A request that fails or only finds a stored object widens no access.
+// Write grants one create-only publication of exactly the descriptor's bytes
+// into the organization's keyspace. An object already stored is verified rather
+// than replaced. Finding it records no receipt, so it grants no read: a later
+// read still requires the object to be in the authority's graph. A request that
+// fails or only finds a stored object widens no access.
 func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor) (StorageWrite, error) {
-	if _, err := b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return requireNotForeign(ctx, tx, a, object.Digest) }); err != nil {
+	a, err := b.writeAuthority(ctx, host, scope, object, func(pgx.Tx, storageAuthority) error { return nil })
+	if err != nil {
 		return StorageWrite{}, err
 	}
-	switch _, err := b.objects.VerifyDescriptor(ctx, object); {
+	objects := b.objects(a.org)
+	switch _, err := objects.VerifyDescriptor(ctx, object); {
 	case err == nil:
-		_, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return recordStorageWrite(ctx, tx, a, object) })
-		if err != nil {
-			return StorageWrite{}, err
-		}
 		return StorageWrite{Exists: true}, nil
 	case errors.Is(err, cas.ErrRemoteIntegrity):
 		return StorageWrite{}, errors.Join(ErrConflict, err)
 	case !errors.Is(err, os.ErrNotExist):
 		return StorageWrite{}, SaveStorageUnavailable(err)
 	}
-	a, err := b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return recordStorageWrite(ctx, tx, a, object) })
+	a, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return recordStorageWrite(ctx, tx, a, object) })
 	if err != nil {
 		return StorageWrite{}, err
 	}
-	if _, multipart := b.objects.UploadLayout(object); !multipart {
-		put, err := b.objects.SignPut(ctx, object, a.expiresAt)
+	if _, multipart := objects.UploadLayout(object); !multipart {
+		put, err := objects.SignPut(ctx, object, a.expiresAt)
 		if err != nil {
 			return StorageWrite{}, err
 		}
 		return StorageWrite{Put: &put}, nil
 	}
-	upload, err := b.objects.CreateUpload(ctx, a.allocation.String(), object)
+	upload, err := objects.CreateUpload(ctx, a.allocation.String(), object)
 	if err != nil {
 		return StorageWrite{}, SaveStorageUnavailable(err)
 	}
@@ -463,19 +412,18 @@ func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipa
 		return err
 	})
 	if err != nil {
-		return StorageWrite{}, errors.Join(err, b.objects.AbortUpload(context.WithoutCancel(ctx), upload, object.Digest))
+		return StorageWrite{}, errors.Join(err, objects.AbortUpload(context.WithoutCancel(ctx), upload, object.Digest))
 	}
 	return StorageWrite{Upload: &upload}, nil
 }
 
 // ownedUpload requires the upload to be the one recorded for this allocation's
-// write of the exact descriptor.
-func (b *StorageBroker) ownedUpload(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, uploadID string) (storageAuthority, cas.Upload, error) {
-	upload, multipart := b.objects.UploadLayout(object)
-	if uploadID == "" || !multipart {
-		return storageAuthority{}, upload, ErrInvalidInput
+// write of the exact descriptor, and returns the store of the authority's
+// organization that holds it.
+func (b *StorageBroker) ownedUpload(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, uploadID string) (storageAuthority, WriteSigner, cas.Upload, error) {
+	if uploadID == "" {
+		return storageAuthority{}, nil, cas.Upload{}, ErrInvalidInput
 	}
-	upload.ID = uploadID
 	a, err := b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error {
 		var owned bool
 		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM allocation_storage_writes WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4 AND size_bytes=$5 AND media_type=$6 AND upload_id=$7)`,
@@ -485,8 +433,16 @@ func (b *StorageBroker) ownedUpload(ctx context.Context, host workergroup.HostPr
 		}
 		return err
 	})
-	upload.Owner = a.allocation.String()
-	return a, upload, err
+	if err != nil {
+		return a, nil, cas.Upload{}, err
+	}
+	objects := b.objects(a.org)
+	upload, multipart := objects.UploadLayout(object)
+	if !multipart {
+		return a, nil, upload, ErrInvalidInput
+	}
+	upload.ID, upload.Owner = uploadID, a.allocation.String()
+	return a, objects, upload, nil
 }
 
 // Parts grants bounded part uploads of an owned multipart publication. A
@@ -495,7 +451,7 @@ func (b *StorageBroker) Parts(ctx context.Context, host workergroup.HostPrincipa
 	if len(parts) == 0 || len(parts) > maxStorageParts {
 		return nil, ErrInvalidInput
 	}
-	a, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
+	a, objects, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +460,7 @@ func (b *StorageBroker) Parts(ctx context.Context, host workergroup.HostPrincipa
 		if part < 1 || part > upload.Parts {
 			return nil, ErrInvalidInput
 		}
-		if grants[i], err = b.objects.SignPart(ctx, object, upload, part, a.expiresAt); err != nil {
+		if grants[i], err = objects.SignPart(ctx, object, upload, part, a.expiresAt); err != nil {
 			return nil, SaveStorageUnavailable(err)
 		}
 	}
@@ -514,14 +470,14 @@ func (b *StorageBroker) Parts(ctx context.Context, host workergroup.HostPrincipa
 // Complete publishes an owned multipart upload create-only and authenticates
 // the whole object before acknowledging it.
 func (b *StorageBroker) Complete(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, uploadID string, parts []cas.CompletedPart) error {
-	_, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
+	_, objects, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
 	if err != nil {
 		return err
 	}
 	if len(parts) != int(upload.Parts) {
 		return ErrInvalidInput
 	}
-	if _, err := b.objects.CompleteUpload(ctx, object, upload, parts); err != nil {
+	if _, err := objects.CompleteUpload(ctx, object, upload, parts); err != nil {
 		if errors.Is(err, cas.ErrRemoteIntegrity) {
 			return errors.Join(ErrConflict, err)
 		}
@@ -537,11 +493,11 @@ func (b *StorageBroker) Complete(ctx context.Context, host workergroup.HostPrinc
 
 // Abort releases an owned multipart upload.
 func (b *StorageBroker) Abort(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, uploadID string) error {
-	_, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
+	_, objects, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
 	if err != nil {
 		return err
 	}
-	if err := b.objects.AbortUpload(ctx, upload, object.Digest); err != nil {
+	if err := objects.AbortUpload(ctx, upload, object.Digest); err != nil {
 		return SaveStorageUnavailable(err)
 	}
 	return nil
