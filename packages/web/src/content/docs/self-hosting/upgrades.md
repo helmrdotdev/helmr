@@ -67,9 +67,9 @@ resuming work.
 
 ## Worker group ownership migration
 
-Migration `000004_worker_group_ownership` adds worker group ownership,
-environment placements and the worker group recorded on Computers, image builds
-and boot seeds. Existing groups become deployment groups, and builds that already
+Migration `000005_worker_group_ownership` adds worker group ownership,
+environment placements, the organization group a Computer runs on and the worker
+group recorded on image builds and boot seeds. Existing groups become deployment groups, and builds that already
 ran on a host record that host's group.
 
 Releases before this migration assign builds to hosts without recording a group,
@@ -80,8 +80,9 @@ after every Control Plane and dispatcher task runs the new release. Apply
 release cannot prepare Computers against the migrated database.
 
 The down migration refuses to run while any organization worker group exists.
-After a refusal the schema stays at version 4 while the migration table records
-version 3 as dirty; force the recorded version back to 4 before retrying.
+After a refusal the schema stays at version 5 while the migration table records
+the previous version as dirty; force the recorded version back to 5 before
+retrying.
 
 ## Prepare artifacts, recovery and authentication
 

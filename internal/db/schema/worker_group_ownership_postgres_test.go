@@ -4,13 +4,25 @@ import (
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
+const workerGroupOwnershipVersion = 5
+
 func TestWorkerGroupOwnershipMigration(t *testing.T) {
+	source, err := iofs.New(FS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := source.Prev(workerGroupOwnershipVersion)
+	source.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	database := dbtest.Open(t)
 	ctx := t.Context()
-	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(3) }); err != nil {
+	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(previous) }); err != nil {
 		t.Fatal(err)
 	}
 	pool := database.Pool
@@ -99,18 +111,18 @@ func TestWorkerGroupOwnershipMigration(t *testing.T) {
 		INSERT INTO worker_groups (id, owner_org_id, token_id, region_id, name)
 		VALUES ('00000000-0000-0000-0000-000000000021', '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000020', 'test', 'default');
 	`)
-	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(3) }); err == nil {
+	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(previous) }); err == nil {
 		t.Fatal("downgrade dropped an organization group")
 	}
-	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Force(4) }); err != nil {
+	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Force(workerGroupOwnershipVersion) }); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, pool, `DELETE FROM worker_groups WHERE owner_org_id IS NOT NULL`)
-	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(3) }); err != nil {
+	if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(previous) }); err != nil {
 		t.Fatal(err)
 	}
 	var owner int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('owner_org_id','worker_group_id') AND table_name IN ('worker_groups','computers','image_builds','boot_seed_builds')`).Scan(&owner); err != nil || owner != 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('owner_org_id','worker_group_id','worker_group_org_id','worker_group_project_id','worker_group_region_id') AND table_name IN ('worker_groups','computers','image_builds','boot_seed_builds')`).Scan(&owner); err != nil || owner != 0 {
 		t.Fatalf("downgraded columns = %d, %v", owner, err)
 	}
 }

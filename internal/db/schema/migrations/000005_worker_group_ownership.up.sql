@@ -36,8 +36,22 @@ CREATE TABLE environment_placements (
 
 CREATE INDEX environment_placements_worker_group ON environment_placements(worker_group_id) WHERE worker_group_id IS NOT NULL;
 
--- The group this Computer runs on. A Computer never moves between groups.
-ALTER TABLE computers ADD COLUMN worker_group_id uuid REFERENCES worker_groups(id);
+-- The organization group a Computer runs on, or NULL when it runs on the
+-- deployment capacity of its project's region. A Computer never moves between
+-- groups. A pin records the Computer's organization, project and region so the
+-- keys below admit only a group its organization owns in that region.
+ALTER TABLE computers
+    ADD COLUMN worker_group_org_id uuid,
+    ADD COLUMN worker_group_project_id uuid,
+    ADD COLUMN worker_group_region_id text,
+    ADD COLUMN worker_group_id uuid,
+    ADD CONSTRAINT computers_worker_group_pin_check CHECK (num_nonnulls(worker_group_id, worker_group_org_id, worker_group_project_id, worker_group_region_id) IN (0, 4)),
+    ADD FOREIGN KEY (worker_group_org_id, worker_group_project_id, environment_id) REFERENCES environments(org_id, project_id, id),
+    ADD FOREIGN KEY (worker_group_org_id, worker_group_project_id, worker_group_region_id) REFERENCES projects(org_id, id, default_region_id),
+    ADD CONSTRAINT computers_worker_group_fkey
+        FOREIGN KEY (worker_group_id, worker_group_org_id, worker_group_region_id) REFERENCES worker_groups(id, owner_org_id, region_id);
+
+CREATE INDEX computers_worker_group ON computers(worker_group_id) WHERE worker_group_id IS NOT NULL;
 
 -- The producing group is recorded with each executor attempt and is the
 -- group of its host. A boot seed depends on its producing group's VM platform

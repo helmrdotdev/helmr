@@ -91,3 +91,40 @@ func TestSchemaImageBuildAssignmentAndDiagnosticOwnership(t *testing.T) {
 		t.Fatalf("fenced build retained occupancy: %d %v", count, err)
 	}
 }
+
+func TestSchemaComputerPinNamesOwnOrganizationGroupInRegion(t *testing.T) {
+	f := sessiontest.New(t)
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	var org, project uuid.UUID
+	var region string
+	if err := tx.QueryRow(t.Context(), `SELECT e.org_id, e.project_id, p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, f.Environment).Scan(&org, &project, &region); err != nil {
+		t.Fatal(err)
+	}
+	otherOrg, otherRegion := uuid.NewV7(), "pin-other"
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other', $2)`, otherOrg, otherOrg.String())
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO regions (id, display_name) VALUES ($1, 'Other')`, otherRegion)
+	group := func(owner *uuid.UUID, region string) uuid.UUID {
+		t.Helper()
+		id, token := uuid.NewV7(), uuid.NewV7()
+		dbtest.MustExec(t, t.Context(), tx, `INSERT INTO worker_group_tokens (id, token_hash) VALUES ($1::uuid, sha256(convert_to($1::uuid::text, 'UTF8')))`, token)
+		dbtest.MustExec(t, t.Context(), tx, `INSERT INTO worker_groups (id, owner_org_id, token_id, region_id, name, status) VALUES ($1::uuid, $2, $3, $4, $1::uuid::text, 'disabled')`, id, owner, token, region)
+		return id
+	}
+	own, west, foreign, deployment := group(&org, region), group(&org, otherRegion), group(&otherOrg, region), group(nil, region)
+	const pin = `UPDATE computers SET worker_group_org_id=$3, worker_group_project_id=$4, worker_group_region_id=$5, worker_group_id=$6 WHERE environment_id=$1 AND id=$2`
+	// A pin names a group of another organization, another region or the
+	// deployment never; deployment capacity is the absence of a pin.
+	for _, group := range []uuid.UUID{foreign, west, deployment, uuid.NewV7()} {
+		rejectSchemaRow(t, tx, "23503", pin, f.Environment, f.Computer, org, project, region, group)
+	}
+	rejectSchemaRow(t, tx, "23503", pin, f.Environment, f.Computer, otherOrg, project, region, foreign)
+	rejectSchemaRow(t, tx, "23503", pin, f.Environment, f.Computer, org, project, otherRegion, west)
+	rejectSchemaRow(t, tx, "23514", `UPDATE computers SET worker_group_id=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer, own)
+	dbtest.MustExec(t, t.Context(), tx, pin, f.Environment, f.Computer, org, project, region, own)
+	rejectSchemaRow(t, tx, "23503", `UPDATE worker_groups SET owner_org_id=$2 WHERE id=$1`, own, otherOrg)
+	rejectSchemaRow(t, tx, "23503", `DELETE FROM worker_groups WHERE id=$1`, own)
+}

@@ -5,14 +5,18 @@ LOCK TABLE worker_groups IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM worker_groups WHERE owner_org_id IS NOT NULL) THEN
-        RAISE EXCEPTION 'organization worker groups must be removed before downgrading; the schema remains at version 4';
+        RAISE EXCEPTION 'organization worker groups must be removed before downgrading; the schema remains at version 5';
     END IF;
 END
 $$;
 
 ALTER TABLE boot_seed_builds DROP COLUMN worker_group_id;
 ALTER TABLE image_builds DROP COLUMN worker_group_id;
-ALTER TABLE computers DROP COLUMN worker_group_id;
+ALTER TABLE computers
+    DROP COLUMN worker_group_id,
+    DROP COLUMN worker_group_region_id,
+    DROP COLUMN worker_group_project_id,
+    DROP COLUMN worker_group_org_id;
 
 DROP TABLE environment_placements;
 

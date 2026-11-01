@@ -410,8 +410,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	// Placements, Computers and preparation record a group only once one is
-	// assigned.
+	// Placements and Computers name a group only for organization capacity;
+	// preparation records one once an attempt is assigned.
 	tables := []string{"worker_groups", "worker_pools", "worker_hosts", "worker_host_secrets", "worker_scale_in_operations", "environment_placements", "computers", "image_builds", "boot_seed_builds"}
 	columns := []string{"id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id"}
 	nullability := []string{"NO", "NO", "NO", "NO", "NO", "YES", "YES", "YES", "YES"}
