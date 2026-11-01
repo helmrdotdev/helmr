@@ -11,8 +11,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -109,28 +111,129 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 	}
 }
 
-// A live connection that cannot use the declared channel still fails
-// promotion; the operator has no later prompt to fix the channel.
-func TestPromoteFailsOnUnusableChannelOfLiveConnection(t *testing.T) {
-	f := newDeploymentFinalizePostgresFixture(t)
-	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{"tick": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`), Slack: json.RawMessage(`{"channelId":"C1"}`)}}
+// insertSlackConnection gives the fixture's first Agent a non-revoked
+// connection with an installation holding the given scopes.
+func insertSlackConnection(t *testing.T, f deploymentFinalizePostgresFixture, scopes []string) uuid.UUID {
+	t.Helper()
+	user, registration, installation, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
+ INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$8::text[],$1);
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) SELECT $5,$6,id,$2,$4,$1,$3 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, connection, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID, scopes)
+	return connection
+}
+
+var channelScopes = []string{"app_mentions:read", "channels:read", "channels:history", "groups:read", "groups:history", "chat:write", "assistant:write"}
+
+func registerSlackSchedule(t *testing.T, f deploymentFinalizePostgresFixture, channel string) Record {
+	t.Helper()
+	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{"tick": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`), Slack: json.RawMessage(`{"channelId":"` + channel + `"}`)}}
 	registered, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, registration, installation := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
- INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
- INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
- INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) SELECT $5,$6,id,$2,$4,$1,$3 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, uuid.NewV7(), f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
+	return registered
+}
+
+func requireUnchangedAfterFailedPromotion(t *testing.T, f deploymentFinalizePostgresFixture) {
+	t.Helper()
+	var unchanged bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("failed promotion changed state", unchanged, err)
+	}
+}
+
+// A live connection that cannot use the declared channel still fails
+// promotion; the operator has no later prompt to fix the channel.
+func TestPromoteFailsOnUnusableChannelOfLiveConnection(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	registered := registerSlackSchedule(t, f, "C1")
+	insertSlackConnection(t, f, channelScopes)
 	preflight := triggerPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 		return nil, slackroute.ErrChannelUnavailable
 	})
-	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, preflight); !errors.Is(err, slackroute.ErrChannelUnavailable) {
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, preflight); !errors.Is(err, slackroute.ErrChannelUnavailable) {
 		t.Fatal("unusable channel promoted", err)
 	}
-	var unchanged bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT current_deployment_id IS NULL AND NOT EXISTS(SELECT 1 FROM trigger_activations) FROM environments WHERE id=$1`, f.request.environmentID).Scan(&unchanged); err != nil || !unchanged {
-		t.Fatal("failed promotion changed state", unchanged, err)
+	requireUnchangedAfterFailedPromotion(t, f)
+}
+
+// A live connection that cannot reach the channel is not waiting: missing
+// channel scopes or lost authorization fail promotion as an unpublished target.
+func TestPromoteFailsWhenLiveConnectionCannotReachChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		setup  string
+	}{
+		{"missing-channel-scopes", []string{"chat:write", "assistant:write"}, ""},
+		{"authorization-lost", channelScopes, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp()`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDeploymentFinalizePostgresFixture(t)
+			registered := registerSlackSchedule(t, f, "C1")
+			insertSlackConnection(t, f, tc.scopes)
+			if tc.setup != "" {
+				dbtest.MustExec(t, t.Context(), f.pool, tc.setup)
+			}
+			preflight := triggerPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
+				t.Fatal("unreachable channel performed remote preflight")
+				return nil, nil
+			})
+			if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, preflight); !errors.Is(err, slackroute.ErrTargetNotPublished) {
+				t.Fatal("unreachable channel promoted", err)
+			}
+			requireUnchangedAfterFailedPromotion(t, f)
+		})
+	}
+}
+
+// Without Slack configured, an existing connection cannot be checked and fails
+// promotion; an Agent without a connection waits.
+func TestPromoteWithoutSlackConfigured(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	registered := registerSlackSchedule(t, f, "C1")
+	insertSlackConnection(t, f, channelScopes)
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, nil); !errors.Is(err, slackroute.ErrChannelUnavailable) {
+		t.Fatal("connected schedule promoted without Slack", err)
+	}
+	requireUnchangedAfterFailedPromotion(t, f)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp()`)
+	promotion, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, nil)
+	if err != nil || len(promotion.WaitingTriggers) != 1 {
+		t.Fatal("unconnected schedule did not wait", promotion, err)
+	}
+}
+
+func TestPromoteWaitsForConnectionAwaitingAuthorization(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	registered := registerSlackSchedule(t, f, "C1")
+	insertSlackConnection(t, f, channelScopes)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET slack_installation_id=NULL`)
+	promotion, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, nil)
+	if err != nil || len(promotion.WaitingTriggers) != 1 {
+		t.Fatal("schedule of a connection awaiting authorization did not wait", promotion, err)
+	}
+}
+
+// A connection created between preflight and the Environment lock would miss
+// the waiting activation, so the promotion asks for a retry.
+func TestConfirmWaitingRoutesRejectsNewConnection(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	registered := registerSlackSchedule(t, f, "C1")
+	routes, err := prepareTriggerRoutes(t.Context(), f.pool, f.principal(), pgvalue.MustUUIDValue(f.request.environmentID), pgvalue.MustUUIDValue(f.request.projectID), registered.ID, nil)
+	if err != nil || len(routes.waiting) != 1 || len(routes.connected) != 0 {
+		t.Fatal("routes", routes, err)
+	}
+	if err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		return confirmWaitingRoutes(t.Context(), tx, pgvalue.MustUUIDValue(f.request.environmentID), routes)
+	}); err != nil {
+		t.Fatal("unchanged waiting route rejected", err)
+	}
+	insertSlackConnection(t, f, channelScopes)
+	if err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		return confirmWaitingRoutes(t.Context(), tx, pgvalue.MustUUIDValue(f.request.environmentID), routes)
+	}); !errors.Is(err, slackroute.ErrConversationChanged) {
+		t.Fatal("new connection not detected", err)
 	}
 }

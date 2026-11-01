@@ -330,22 +330,6 @@ func TestDeploymentPromote(t *testing.T) {
 	if !strings.Contains(errOut.String(), "Restored Agent reporter\n") || !strings.Contains(errOut.String(), "Trigger reporter/daily waits for a Slack connection of its Agent\n") {
 		t.Fatalf("receipt = %q", errOut.String())
 	}
-
-	out.Reset()
-	cmd = newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"deployment", "promote", deploymentID, "--json"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	var result api.DeploymentResponse
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Version != "v-test" || !slices.Equal(result.RestoredAgents, []string{"reporter"}) || len(result.WaitingTriggers) != 1 || result.WaitingTriggers[0] != (api.WaitingTrigger{Agent: "reporter", Trigger: "daily"}) {
-		t.Fatalf("json receipt = %s", out.String())
-	}
 }
 
 func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {

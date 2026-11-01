@@ -407,7 +407,6 @@ func writePromotionEffects(w io.Writer, value api.DeploymentResponse) {
 func promoteCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
-	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "promote DEPLOYMENT",
 		Short: "Promote an immutable deployment to current.",
@@ -425,9 +424,6 @@ func promoteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), value)
-			}
 			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(value))
 			writePromotionEffects(cmd.ErrOrStderr(), value)
 			return nil
@@ -435,7 +431,6 @@ func promoteCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectID, "project", "p", "", "Project ID or slug for the deployment.")
 	cmd.Flags().StringVarP(&environmentID, "env", "e", "", "Environment ID or slug for the deployment.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit the promoted deployment as JSON.")
 	return cmd
 }
 

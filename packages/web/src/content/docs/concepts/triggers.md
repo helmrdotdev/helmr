@@ -95,12 +95,15 @@ does not mean the scheduled work has started.
 
 With `slack: { channelId: "C0123456789" }`, each fire opens a new thread in
 that channel and binds the Session to it. `channelId` is a raw Slack channel
-ID. When the Agent's Slack app is connected, promotion checks that it can use
-the channel and binds the trigger to that connection; a channel the connected
-app cannot use fails promotion with `channel_unavailable`.
+ID. When the Agent has a Slack connection, promotion checks that it can use
+the channel and binds the trigger to that connection. A connection that has
+lost authorization or lacks the scopes for the channel fails promotion with
+`target_not_published`; a channel the app cannot use, or a Helmr installation
+without Slack configured, fails it with `channel_unavailable`.
 
-When the Agent has no connected Slack app, promotion still succeeds and the
-trigger waits for Slack. The promotion lists it in `waiting_triggers`, and
+When the Agent has no authorized Slack connection, because none was set up
+yet, setup has not been authorized, or the last one was disconnected, promotion still succeeds and the trigger waits for
+Slack. The promotion lists it in `waiting_triggers`, and
 `helmr deploy` and `helmr deployment promote` print it. While it waits, each
 scheduled time is recorded as `rejected` with reason `slack_not_connected`
 and never runs later. Authorizing a Slack connection for the Agent binds its

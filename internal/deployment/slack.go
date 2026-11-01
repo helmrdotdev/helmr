@@ -18,21 +18,30 @@ type triggerRouteKey struct {
 }
 
 // triggerRoutes holds the Slack destinations of the promoted triggers. A
-// destination whose Agent has no eligible connection is waiting: its
-// activation opens without a channel binding and is bound when a connection
-// for the Agent is authorized.
+// destination whose Agent has no live connection is waiting: its activation
+// opens without a channel binding and is bound when a connection for the
+// Agent is authorized.
 type triggerRoutes struct {
 	connected map[triggerRouteKey]slackroute.Connection
 	waiting   map[triggerRouteKey]bool
-	// configured is false when Slack is not configured; every destination waits.
-	configured bool
+}
+
+// hasLiveConnection reports whether the Agent has an authorized connection
+// that is not revoked, whether or not it can currently reach a channel. A
+// connection still awaiting authorization is not live; its authorization binds
+// the waiting activations.
+func hasLiveConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID) (bool, error) {
+	var live bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL AND slack_installation_id IS NOT NULL)`, env, agent).Scan(&live)
+	return live, err
 }
 
 // Promotion verifies authored channel IDs of connected Agents before locking
 // the Environment. The resolved connection generations, not current defaults
-// at fire time, are bound.
+// at fire time, are bound. A live connection that cannot reach the channel, or
+// cannot be checked because Slack is not configured, fails promotion.
 func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal auth.Principal, env, project, deployment uuid.UUID, preflight slackroute.StartPreflight) (triggerRoutes, error) {
-	routes := triggerRoutes{connected: map[triggerRouteKey]slackroute.Connection{}, waiting: map[triggerRouteKey]bool{}, configured: preflight != nil}
+	routes := triggerRoutes{connected: map[triggerRouteKey]slackroute.Connection{}, waiting: map[triggerRouteKey]bool{}}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var allowed bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE e.id=$1 AND e.project_id=$2 AND e.org_id=$3 AND d.id=$4)`, env, project, principal.OrgID, deployment).Scan(&allowed); err != nil {
@@ -54,15 +63,18 @@ func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal aut
 			return err
 		}
 		for _, value := range values {
-			if !routes.configured {
+			live, err := hasLiveConnection(ctx, tx, env, value.agent)
+			if err != nil {
+				return err
+			}
+			if !live {
 				routes.waiting[value] = true
 				continue
+			}
+			if preflight == nil {
+				return slackroute.ErrChannelUnavailable
 			}
 			connection, err := slackroute.ReadConnection(ctx, tx, env, value.agent, value.channel)
-			if errors.Is(err, slackroute.ErrTargetNotPublished) {
-				routes.waiting[value] = true
-				continue
-			}
 			if err != nil {
 				return err
 			}
@@ -119,21 +131,17 @@ func pinTriggerRoutes(ctx context.Context, tx pgx.Tx, env uuid.UUID, routes trig
 }
 
 // confirmWaitingRoutes runs under the Environment lock, which also serializes
-// connection authorization. A connection authorized after preflight would
-// otherwise miss the activations this promotion opens.
+// connection configuration and authorization. A connection created after
+// preflight would otherwise miss the activations this promotion opens.
 func confirmWaitingRoutes(ctx context.Context, tx pgx.Tx, env uuid.UUID, routes triggerRoutes) error {
-	if !routes.configured {
-		return nil
-	}
 	for key := range routes.waiting {
-		_, err := slackroute.ReadConnection(ctx, tx, env, key.agent, key.channel)
-		if errors.Is(err, slackroute.ErrTargetNotPublished) {
-			continue
-		}
+		live, err := hasLiveConnection(ctx, tx, env, key.agent)
 		if err != nil {
 			return err
 		}
-		return slackroute.ErrConversationChanged
+		if live {
+			return slackroute.ErrConversationChanged
+		}
 	}
 	return nil
 }

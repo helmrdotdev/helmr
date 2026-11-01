@@ -182,7 +182,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	promotion, err := deployment.Promote(r.Context(), s.tx, s.auditPolicy, principal, scope, deploymentID, preflight)
 	if err != nil {
-		if errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
+		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
 			s.writeAgentHTTPError(w, r, err)
 		} else {
 			s.writeDeploymentError(w, r, err)

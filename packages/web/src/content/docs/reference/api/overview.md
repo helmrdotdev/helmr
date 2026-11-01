@@ -233,8 +233,9 @@ Deployment and, when non-empty:
 | `restored_agents` | Keys of deleted Agents the Deployment declares; promotion restored them. |
 | `waiting_triggers` | `{ "agent", "trigger" }` entries whose Slack destination waits for a connection of the Agent. |
 
-A trigger with a Slack destination waits when its Agent has no connected Slack
-app, and the promotion still succeeds. A connected app that cannot use the
-channel fails promotion with 404 `channel_unavailable`; a connection change
-during promotion returns 409 `conversation_changed`, and the request can be
-retried. See [Triggers](/docs/concepts/triggers#slack-delivery).
+A trigger with a Slack destination waits when its Agent has no authorized
+Slack connection, and the promotion still succeeds. When the Agent has a connection,
+one that has lost authorization or lacks the channel's scopes fails promotion
+with 409 `target_not_published`, and a channel the app cannot use fails it with
+404 `channel_unavailable`. A connection change during promotion returns 409
+`conversation_changed`, and the request can be retried. See [Triggers](/docs/concepts/triggers#slack-delivery).
