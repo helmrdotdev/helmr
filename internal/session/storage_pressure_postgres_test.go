@@ -90,7 +90,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	}
 	manual := controlRequest(f, "resume", "pressure-is-automatic")
 	manual.HoldID = pressureHold
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), manual); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), manual); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("manual resume cleared automatic pressure hold %v", err)
 	}
 	independent := uuid.NewV7()

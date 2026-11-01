@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"log/slog"
 	"sync"
 	"testing"
@@ -125,7 +126,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	before := demoFingerprint(ctx, t, pool)
 	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, make([]byte, 32), nil)
+	}, sessiontest.ExecutionLimits(), make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,14 +193,14 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	env := uuid.MustParse(demoSeedEnvironmentID)
 	// The promoted Deployment is synthetic: its image spec has no Computer seed
 	// profile, so work sent to it is refused before anything is admitted.
-	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, computer.ErrInvalidInput) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("synthetic Deployment start=%v, want refused", err)
 	}
 	var admitted int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE environment_id=$1`, demoSeedEnvironmentID).Scan(&admitted); err != nil || admitted != 10 {
 		t.Fatalf("Sessions after refused start=%d %v, want the 10 seeded", admitted, err)
 	}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("closed synthetic history enqueue=%v, want not ready", err)
 	}
 }

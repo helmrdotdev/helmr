@@ -479,8 +479,6 @@ column email_challenges.revoked_at timestamp with time zone
 column email_challenges.safe_next text not null default '/'::text
 column email_challenges.sent_at timestamp with time zone
 column email_challenges.session_id uuid
-column environments.admission_burst bigint not null
-column environments.admission_rate_per_second bigint not null
 column environments.admission_refilled_at timestamp with time zone not null
 column environments.admission_tokens numeric not null
 column environments.color_hex text not null
@@ -488,15 +486,8 @@ column environments.created_at timestamp with time zone not null default now()
 column environments.current_deployment_id uuid
 column environments.id uuid not null
 column environments.is_default boolean not null default false
-column environments.max_causal_depth integer not null
-column environments.max_cpu_millis bigint not null
-column environments.max_memory_bytes bigint not null
-column environments.max_outstanding_admissions bigint not null
-column environments.max_reserved_storage_bytes bigint not null
-column environments.max_resident_computers bigint not null
 column environments.name text not null
 column environments.org_id uuid not null
-column environments.preparation_timeout_ms bigint not null
 column environments.project_id uuid not null
 column environments.slug text not null
 column environments.updated_at timestamp with time zone not null default now()
@@ -1682,20 +1673,10 @@ constraint email_challenges c CHECK (purpose <> 'email_change'::text OR session_
 constraint email_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'email_change'::text]))
 constraint email_challenges f FOREIGN KEY (session_id) REFERENCES login_sessions(id)
 constraint email_challenges p PRIMARY KEY (id)
-constraint environments c CHECK (admission_burst > 0)
-constraint environments c CHECK (admission_rate_per_second > 0)
-constraint environments c CHECK (admission_tokens <= admission_burst::numeric)
 constraint environments c CHECK (admission_tokens >= 0::numeric)
 constraint environments c CHECK (btrim(name) <> ''::text)
 constraint environments c CHECK (btrim(slug) <> ''::text)
 constraint environments c CHECK (color_hex ~ '^#[0-9A-Fa-f]{6}$'::text)
-constraint environments c CHECK (max_causal_depth > 0)
-constraint environments c CHECK (max_cpu_millis > 0)
-constraint environments c CHECK (max_memory_bytes > 0)
-constraint environments c CHECK (max_outstanding_admissions > 0)
-constraint environments c CHECK (max_reserved_storage_bytes > 0)
-constraint environments c CHECK (max_resident_computers > 0)
-constraint environments c CHECK (preparation_timeout_ms > 0)
 constraint environments f FOREIGN KEY (id, current_deployment_id) REFERENCES deployments(environment_id, id)
 constraint environments f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
 constraint environments p PRIMARY KEY (id)

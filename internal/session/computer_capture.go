@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"slices"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -19,10 +18,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// UnusedComputerHibernateAfter is how long a Computer with no open Session and
-// no unsettled Command stays running before it hibernates.
-const UnusedComputerHibernateAfter = 10 * time.Minute
-
 // captureAllowedSQL decides whether a Computer may hibernate now. An accepted
 // hibernate request always allows it. Otherwise, while no wake is pending:
 //   - with open Sessions, every one of them must allow automatic hibernation
@@ -31,7 +26,7 @@ const UnusedComputerHibernateAfter = 10 * time.Minute
 //     last wake request. A closing Session always waits for its close to
 //     finish;
 //   - with no such Session and no unsettled Command, the Computer must have
-//     been unused for UnusedComputerHibernateAfter since its last Session closed,
+//     been unused for computer.UnusedComputerHibernateAfter since its last Session closed,
 //     its last Command settled, its last wake request or its creation.
 //
 // Work in progress (running Turns, runnable queued Turns, unsettled Commands
@@ -133,7 +128,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 			return err
 		}
 		var permitted bool
-		if err = tx.QueryRow(ctx, captureAllowedSQL, req.EnvironmentID, req.ComputerID, UnusedComputerHibernateAfter.Milliseconds()).Scan(&permitted); err != nil {
+		if err = tx.QueryRow(ctx, captureAllowedSQL, req.EnvironmentID, req.ComputerID, computer.UnusedComputerHibernateAfter.Milliseconds()).Scan(&permitted); err != nil {
 			return err
 		}
 		if !permitted {

@@ -54,7 +54,7 @@ func (f fixture) claim() ClaimRequest {
 }
 func (f fixture) create(t *testing.T, key string) db.Command {
 	t.Helper()
-	c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request(key))
+	c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request(key))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestCommandCreateConcurrentRetryAndConflict(t *testing.T) {
 	errs := make(chan error, 12)
 	for range 12 {
 		wg.Go(func() {
-			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, r)
+			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, r)
 			if err != nil {
 				errs <- err
 			} else {
@@ -127,12 +127,12 @@ func TestCommandCreateConcurrentRetryAndConflict(t *testing.T) {
 	}
 	r.Argv = []string{"false"}
 	var conflict idempotency.ConflictError
-	if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, r); !errors.As(err, &conflict) {
+	if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, r); !errors.As(err, &conflict) {
 		t.Fatalf("changed request: %v", err)
 	}
 	r = f.request("once")
 	r.ProjectID = uuid.NewV7()
-	if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, r); !errors.Is(err, computer.ErrNotFound) {
+	if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, r); !errors.Is(err, computer.ErrNotFound) {
 		t.Fatalf("scope: %v", err)
 	}
 }
@@ -144,16 +144,16 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer)
-	replay, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("replay"))
+	replay, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("replay"))
 	if err != nil || replay.ID != c.ID {
 		t.Fatalf("replay: %+v %v", replay, err)
 	}
-	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("new")); !errors.Is(err, computer.ErrDeleting) {
+	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("new")); !errors.Is(err, computer.ErrDeleting) {
 		t.Fatalf("new admission: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE idempotency_receipts SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND command_id=$2`, f.Environment, id)
 	var expired idempotency.ExpiredError
-	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("replay")); !errors.As(err, &expired) {
+	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("replay")); !errors.As(err, &expired) {
 		t.Fatalf("expired create: %v", err)
 	}
 	if _, err = Cancel(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.ref(id)); !errors.As(err, &expired) {
@@ -428,7 +428,7 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	}
 	// New Commands needing the revoked raw value are refused at admission and
 	// at claim; running Commands keep running.
-	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("after-revoke")); !errors.Is(err, computer.ErrSecretUnavailable) {
+	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("after-revoke")); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("revoked raw admission: %v", err)
 	}
 	req.ActiveCommandIDs = []uuid.UUID{id, uuid.UUID(second.ID.Bytes)}
@@ -486,7 +486,7 @@ func TestCommandCaptureWaitsForPhysicalReconciliation(t *testing.T) {
 	if err := Reconcile(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "reconciled"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "reconciled"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); err != nil {
@@ -530,7 +530,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	store, secretID := commandSecrets(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2`, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed='{"profile":"linux-amd64-ext4-v1"}' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)
-	creator := computer.NewCreator(store, auditpolicy.Policy{RetentionSeconds: 3600})
+	creator := computer.NewCreator(store, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits())
 	key := "repair-shell"
 	scope := computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment}
 	request := computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", Key: &key, Secrets: []secretbinding.Reference{{Secret: "COMMAND_TOKEN", Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "raw"}}}, IdempotencyKey: "create"}
@@ -561,7 +561,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers c SET initial_root_id=source.initial_root_id,initial_root_digest=source.initial_root_digest FROM computers source WHERE c.environment_id=$1 AND c.id=$2 AND source.environment_id=$1 AND source.id=$3`, f.Environment, first.ComputerID, f.Computer)
 	exec := f.request("repair")
 	exec.ComputerID = first.ComputerID
-	cmd, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, exec)
+	cmd, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, exec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +584,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if err != nil || !again.Replayed {
 		t.Fatalf("delete replay %+v %v", again, err)
 	}
-	snapshot, err := computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
+	snapshot, err := computer.Read(t.Context(), f.Pool, sessiontest.ExecutionLimits(), scope, first.ComputerID)
 	if err != nil || snapshot.Status != computer.StatusDeleting {
 		t.Fatalf("deletion accepted before storage release: %+v %v", snapshot, err)
 	}
@@ -593,11 +593,11 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err = computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
+	snapshot, err = computer.Read(t.Context(), f.Pool, sessiontest.ExecutionLimits(), scope, first.ComputerID)
 	if err != nil || snapshot.Status != computer.StatusDeleted {
 		t.Fatalf("tombstone %+v %v", snapshot, err)
 	}
-	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, exec); err != nil {
+	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, exec); err != nil {
 		t.Fatalf("retained command replay: %v", err)
 	}
 	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, "revoke-after-create"); err != nil {
@@ -695,7 +695,7 @@ func TestCommandPendingTimeoutRetainsIdentity(t *testing.T) {
 	if string(c.Error) != `{"code": "computer_command_assignment_timed_out", "retryable": true}` {
 		t.Fatalf("pending timeout error = %s", c.Error)
 	}
-	retry, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("timeout"))
+	retry, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("timeout"))
 	if err != nil || retry.ID != c.ID || retry.Status != "failed" {
 		t.Fatalf("pending replay %+v %v", retry, err)
 	}

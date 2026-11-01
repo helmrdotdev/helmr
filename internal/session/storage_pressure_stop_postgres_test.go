@@ -79,7 +79,7 @@ func TestPressureStopSupersedesHoldACKAndOnlyMatchingStopReleasesDispatch(t *tes
 	}
 	exact := controlRequest(f, "turn_interrupt", "already-interrupted")
 	exact.TurnID = *stop.StopTurnID
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), exact); err == nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), exact); err == nil {
 		t.Fatal("exact interrupt unexpectedly changed terminal Turn")
 	}
 	if !pressureDeadline(t, f).Equal(deadline) {
@@ -163,7 +163,7 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 			case "integrity":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='test'`)
 			default:
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, kind, "explicit")); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, kind, "explicit")); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -188,7 +188,7 @@ func TestOrdinaryStopDeadlineSurvivesStoragePressure(t *testing.T) {
 	}
 	request := controlRequest(f, "turn_interrupt", "ordinary")
 	request.TurnID = turn.TurnID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), request); err != nil {
 		t.Fatal(err)
 	}
 	deadline := pressureDeadline(t, f)

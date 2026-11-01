@@ -93,15 +93,9 @@ CREATE TABLE environments (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     current_deployment_id uuid,
-    max_outstanding_admissions bigint NOT NULL CHECK (max_outstanding_admissions > 0),
-    max_causal_depth integer NOT NULL CHECK (max_causal_depth > 0),
-    max_resident_computers bigint NOT NULL CHECK (max_resident_computers>0),
-    max_cpu_millis bigint NOT NULL CHECK (max_cpu_millis>0),
-    max_memory_bytes bigint NOT NULL CHECK (max_memory_bytes>0),
-    max_reserved_storage_bytes bigint NOT NULL CHECK (max_reserved_storage_bytes>0),
-    preparation_timeout_ms bigint NOT NULL CHECK (preparation_timeout_ms>0),
-    admission_rate_per_second bigint NOT NULL CHECK (admission_rate_per_second>0),
-    admission_burst bigint NOT NULL CHECK (admission_burst>0),
+    -- Admission token bucket. Rate and burst are operator configuration applied
+    -- to every Environment; creation starts the bucket full and each charge
+    -- clamps it to the configured burst.
     admission_tokens numeric NOT NULL CHECK (admission_tokens>=0),
     admission_refilled_at timestamptz NOT NULL,
     UNIQUE (org_id, id),
@@ -109,10 +103,7 @@ CREATE TABLE environments (
     UNIQUE (org_id, project_id, slug),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
-        ON DELETE CASCADE,
-    -- Creation supplies the operating limits with the row; there is no unlimited
-    -- or unconfigured Environment.
-    CHECK (admission_tokens<=admission_burst)
+        ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX environments_one_default ON environments(org_id, project_id) WHERE is_default;

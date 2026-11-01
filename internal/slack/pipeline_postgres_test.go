@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"log/slog"
 	"net/http"
 	"os"
@@ -56,7 +57,7 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	done := make(chan error, 4)
 	go func() { done <- changes.Run(ctx, f.Pool.Config().ConnConfig, log) }()
 	go func() {
-		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, config, client, log, changes)
+		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, config, client, log, changes)
 	}()
 	go func() { done <- RunProjection(ctx, f.Pool, config, log, changes) }()
 	go func() {

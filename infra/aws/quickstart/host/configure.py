@@ -53,10 +53,8 @@ def compose_config(config, credentials, platform, data_dir="/var/lib/helmr", con
         "ENVIRONMENT_MAX_MEMORY_BYTES": "8589934592",
         "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES": "1099511627776",
         "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS": "20",
-        "ENVIRONMENT_MAX_CAUSAL_DEPTH": "8",
         "ENVIRONMENT_ADMISSION_RATE_PER_SECOND": "5",
         "ENVIRONMENT_ADMISSION_BURST": "10",
-        "ENVIRONMENT_PREPARATION_TIMEOUT_MS": "600000",
     }, config["controlplane_environment"], common | {
         "CONTROL_PLANE_ADDR": "127.0.0.1:8080",
         "CONTROL_PLANE_HTTP_IDLE_TIMEOUT": "270s",
@@ -82,11 +80,13 @@ def compose_config(config, credentials, platform, data_dir="/var/lib/helmr", con
         "CLICKHOUSE_USER": "helmr_reader",
         "CLICKHOUSE_PASSWORD": credentials["helmr_reader"],
     })
+    # The dispatcher admits scheduled and Slack Sessions under the same limits.
+    execution_limits = {key: value for key, value in control.items() if key.startswith("ENVIRONMENT_")}
     dispatcher = merge_environment(DIAGNOSTICS | {
         "AUDIT_RETENTION_SECONDS": "2592000",
         "DIAGNOSTIC_EXPORT_BATCH_BYTES": "4194304",
         "DIAGNOSTIC_EXPORT_BATCH_RECORDS": "1024",
-    }, config["dispatcher_environment"], common | {
+    }, config["dispatcher_environment"], common | execution_limits | {
         "CONTROL_PLANE_URL": config["app_origin"],
         "CLICKHOUSE_USER": "helmr_ingester",
         "CLICKHOUSE_PASSWORD": credentials["helmr_ingester"],

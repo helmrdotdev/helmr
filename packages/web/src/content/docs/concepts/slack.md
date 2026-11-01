@@ -105,8 +105,8 @@ ask an administrator to check service health and Worker pool configuration befor
 repeatedly resending it. A confirmed capacity limit or an incompatible workload
 is rejected.
 
-After acceptance, work may remain queued while execution starts. This uses the
-Environment's configured preparation timeout, not the message's five-minute
+After acceptance, work may remain queued while execution starts. This uses a
+fixed 10-minute deadline for execution to start, not the message's five-minute
 acceptance window. You can stop queued work with Slack's Stop control or cancel
 the Session in Console.
 

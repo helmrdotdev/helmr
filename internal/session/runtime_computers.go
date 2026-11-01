@@ -5,12 +5,13 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
 // RuntimeListComputers uses current execution authority to discover the
 // caller's workload Computers. Pagination never carries authorization.
-func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller, page computer.ListPage) (computer.Listing, computer.Scope, error) {
+func RuntimeListComputers(ctx context.Context, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, page computer.ListPage) (computer.Listing, computer.Scope, error) {
 	var result computer.Listing
 	var scope computer.Scope
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
@@ -25,7 +26,7 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 			return err
 		}
 		var err error
-		result, err = computer.ListForSession(ctx, tx, scope, page, caller.ID)
+		result, err = computer.ListForSession(ctx, tx, limits, scope, page, caller.ID)
 		return err
 	})
 	return result, scope, err

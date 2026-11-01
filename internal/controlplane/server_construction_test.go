@@ -3,6 +3,7 @@ package controlplane
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"log/slog"
 	"strings"
@@ -38,7 +39,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 	store := newTestUploadStore(t)
 	allocator, err := dispatch.NewAllocator(constructionDB{}, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, make([]byte, 32), nil)
+	}, sessiontest.ExecutionLimits(), make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		Changes:                        dbnotify.New(),
 		DeploymentUploadLimits:         DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
 		Allocator:                      allocator,
-		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
+		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20},
 		ComputerKeys:                   constructionKeys{},
 		Log:                            discardTestLogger(),
 		DB:                             routeWorkerAuthStore{},

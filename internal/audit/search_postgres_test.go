@@ -29,7 +29,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO regions(id,display_name) VALUES('audit','Audit')`)
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($1,$2,'audit','audit','Audit')`, project, org)
 	for i, e := range []uuid.UUID{env, other} {
-		dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,$4,'Audit','#315FCE',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, e, org, project, []string{"one", "two"}[i])
+		dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,$4,'Audit','#315FCE',1000000,clock_timestamp())`, e, org, project, []string{"one", "two"}[i])
 	}
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	eventIDs := []uuid.UUID{}
@@ -82,7 +82,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	}
 	for i := range 60 {
 		extra := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $1,org_id,project_id,$2,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$3`, extra, fmt.Sprintf("extra-%d", i), env)
+		dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) SELECT $1,org_id,project_id,$2,name,color_hex,admission_tokens,admission_refilled_at FROM environments WHERE id=$3`, extra, fmt.Sprintf("extra-%d", i), env)
 		dbtest.GrantMember(t, d.Pool, org, user, &extra, "audit_events.read")
 	}
 	f.EnvironmentID = env

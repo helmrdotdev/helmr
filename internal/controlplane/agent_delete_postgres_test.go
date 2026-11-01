@@ -289,7 +289,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 			}()
 			for {
 				var waiting bool
-				if err = f.h.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT current_deployment_id,max_outstanding_admissions%')`).Scan(&waiting); err != nil {
+				if err = f.h.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT current_deployment_id FROM environments WHERE id=$1 FOR NO KEY UPDATE%')`).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {

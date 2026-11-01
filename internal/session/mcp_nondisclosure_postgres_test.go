@@ -36,11 +36,11 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 			return err
 		},
 		"inspect_turn": func(target, turn uuid.UUID) error {
-			_, err := session.RuntimeObserveTurn(t.Context(), policy, f.pool, caller, target, turn)
+			_, err := session.RuntimeObserveTurn(t.Context(), policy, f.limits, f.pool, caller, target, turn)
 			return err
 		},
 		"enqueue": func(target, turn uuid.UUID) error {
-			_, err := session.Enqueue(t.Context(), policy, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "nondisclosure-enqueue", Input: json.RawMessage(`[]`)})
+			_, err := session.Enqueue(t.Context(), policy, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "nondisclosure-enqueue", Input: json.RawMessage(`[]`)})
 			return err
 		},
 		"send_turn": func(target, turn uuid.UUID) error {
@@ -57,7 +57,7 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 			if kind == "resume" {
 				req.HoldID = uuid.NewV7()
 			}
-			_, err := session.ControlSession(t.Context(), policy, f.pool, caller, req)
+			_, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, caller, req)
 			return err
 		}
 	}
@@ -74,7 +74,7 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 	// Exact-Turn observation has an additional visibility boundary even when the
 	// caller can otherwise reach the Session. Scope rejection follows that check.
 	for _, turn := range []uuid.UUID{callerHumanTurn.TurnID, uuid.NewV7()} {
-		_, err := session.RuntimeObserveTurn(t.Context(), policy, f.pool, caller, f.session, turn)
+		_, err := session.RuntimeObserveTurn(t.Context(), policy, f.limits, f.pool, caller, f.session, turn)
 		if !errors.Is(err, session.ErrDenied) || errors.Is(err, session.ErrRuntimeMCPDenied) {
 			t.Fatalf("unattributed or absent Turn changed denial classification: %v", err)
 		}

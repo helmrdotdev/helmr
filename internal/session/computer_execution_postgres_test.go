@@ -23,7 +23,7 @@ func TestComputerWithoutIdlePeriodNeedsExplicitHibernate(t *testing.T) {
 		t.Fatalf("capture without idle period: %v", err)
 	}
 	req := f.executionRequest("hibernate", "sleep")
-	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil || accepted.Status != "accepted" {
 		t.Fatalf("hibernate: %+v %v", accepted, err)
 	}
@@ -31,7 +31,7 @@ func TestComputerWithoutIdlePeriodNeedsExplicitHibernate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	replay, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil || replay.ID != accepted.ID {
 		t.Fatalf("replay: %+v %v", replay, err)
 	}
@@ -44,7 +44,7 @@ func TestComputerWithoutIdlePeriodNeedsExplicitHibernate(t *testing.T) {
 func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testing.T) {
 	f := newFixture(t)
 	req := f.executionRequest("hibernate", "sleep")
-	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testin
 		t.Fatalf("intent survived new work: %s %v", code, err)
 	}
 	req.IdempotencyKey = "busy"
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, computer.ErrBusy) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("queued work: %v", err)
 	}
 }
@@ -62,11 +62,11 @@ func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testin
 func TestComputerExecutionRechecksAuthorityOnReplay(t *testing.T) {
 	f := newFixture(t)
 	req := f.executionRequest("wake", "wake")
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked actor replay: %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestComputerExecutionDeadlineSettlesWithoutClaimingRollback(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	req := f.executionRequest("hibernate", "unreachable-host")
-	accepted, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestComputerExecutionDeadlineSettlesWithoutClaimingRollback(t *testing.T) {
 	}, f.pool); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	replay, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil || replay.Status != "failed" || replay.ErrorCode == nil || *replay.ErrorCode != "execution_deadline_exceeded" {
 		t.Fatalf("deadline receipt: %+v %v", replay, err)
 	}
@@ -104,12 +104,12 @@ func TestComputerParkedProjectionAndRejectedWakePreserveCheckpoint(t *testing.T)
 	if err := f.pool.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := computer.Read(ctx, f.pool, scope, f.computer)
+	snapshot, err := computer.Read(ctx, f.pool, f.limits, scope, f.computer)
 	if err != nil || snapshot.Residency != "parked" || snapshot.ExecutionControl == nil || snapshot.ExecutionControl.Status != "completed" {
 		t.Fatalf("parked: %+v %v", snapshot, err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE environments SET max_memory_bytes=1 WHERE id=$1`, f.env)
-	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "no-room")); !errors.Is(err, computer.ErrExecutionLimit) {
+	f.limits.MaxMemoryBytes = 1
+	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), f.executionRequest("wake", "no-room")); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("wake limit: %v", err)
 	}
 	var preserved bool
@@ -156,7 +156,7 @@ func TestComputerWakeFromClosedThreadDoesNotAdmitExecution(t *testing.T) {
 	req := f.executionRequest("wake", "closed-thread")
 	req.OpenSessionID = f.session
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.session)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrTerminal) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req); !errors.Is(err, session.ErrTerminal) {
 		t.Fatalf("closed thread wake: %v", err)
 	}
 	var count int

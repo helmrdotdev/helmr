@@ -22,7 +22,7 @@ func executionWaitScope(t *testing.T, f fixture) computer.Scope {
 func assertExecutionWait(t *testing.T, f fixture, id uuid.UUID, want string) {
 	t.Helper()
 	scope := executionWaitScope(t, f)
-	snapshot, err := computer.Read(t.Context(), f.pool, scope, id)
+	snapshot, err := computer.Read(t.Context(), f.pool, f.limits, scope, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func assertExecutionWait(t *testing.T, f fixture, id uuid.UUID, want string) {
 		}
 	}
 	check(snapshot.ExecutionWait)
-	list, err := computer.List(t.Context(), f.pool, scope, computer.ListPage{Limit: 100})
+	list, err := computer.List(t.Context(), f.pool, f.limits, scope, computer.ListPage{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,10 @@ func assertExecutionWait(t *testing.T, f fixture, id uuid.UUID, want string) {
 }
 
 func TestComputerExecutionWaitAdmissionAndHolds(t *testing.T) {
-	f, a, id := freshComputerAllocationFixture(t)
+	f, _, id := freshComputerAllocationFixture(t)
 	assertExecutionWait(t, f, id, "scheduling")
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1 WHERE id=$1`, f.env)
+	f.limits.MaxCPUMillis = 1
+	a := testAllocator(t, f.pool, f.limits, nil)
 	assertExecutionWait(t, f, id, "environment_limit")
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("quota did not block admission: %v", err)
@@ -62,7 +63,8 @@ func TestComputerExecutionWaitAdmissionAndHolds(t *testing.T) {
 	assertExecutionWait(t, f, id, "")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET released_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 	assertExecutionWait(t, f, id, "environment_limit")
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=8000 WHERE id=$1`, f.env)
+	f.limits.MaxCPUMillis = 8000
+	a = testAllocator(t, f.pool, f.limits, nil)
 	assertExecutionWait(t, f, id, "scheduling")
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err != nil {
 		t.Fatal(err)

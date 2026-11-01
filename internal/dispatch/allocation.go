@@ -34,19 +34,23 @@ type ImageBuildTrustIssuer interface {
 
 type Allocator struct {
 	auditPolicy auditpolicy.Policy
+	limits      org.ExecutionLimits
 	database    db.TxDB
 	key         [32]byte
 	trust       ImageBuildTrustIssuer
 }
 
-func NewAllocator(database db.TxDB, auditPolicy auditpolicy.Policy, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
+func NewAllocator(database db.TxDB, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
 	if database == nil || len(channelKey) != 32 {
 		return nil, ErrInvalidInput
 	}
 	if err := auditPolicy.Validate(); err != nil {
 		return nil, err
 	}
-	a := &Allocator{database: database, trust: trust, auditPolicy: auditPolicy}
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	a := &Allocator{database: database, trust: trust, auditPolicy: auditPolicy, limits: limits}
 	copy(a.key[:], channelKey)
 	return a, nil
 }
@@ -136,11 +140,12 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 	return shape, err
 }
 
-func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, shape computer.AllocationShape, computerID uuid.UUID, imageBuildID uuid.UUID) error {
+func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, limits org.ExecutionLimits, env uuid.UUID, supply allocationSupply, shape computer.AllocationShape, computerID uuid.UUID, imageBuildID uuid.UUID) error {
 	var host allocationCapacity
-	budget, err := db.ReadExecutionBudgetForComputer(ctx, tx, env, computerID)
+	limit := limits.For(env).ExecutionBudget()
+	budget, err := db.ReadExecutionBudgetForComputer(ctx, tx, env, computerID, limit)
 	if imageBuildID != uuid.Nil() {
-		budget, err = db.ReadImageBuildExecutionBudget(ctx, tx, env, imageBuildID)
+		budget, err = db.ReadImageBuildExecutionBudget(ctx, tx, env, imageBuildID, limit)
 	}
 	if err != nil {
 		return err
@@ -217,7 +222,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
 		if err != nil {
 			return err
 		}
@@ -249,7 +254,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err != nil {
 			return err
 		}
-		if err := requireAllocationCapacity(ctx, tx, env, supply, shape, uuid.Nil(), preparation); err != nil {
+		if err := requireAllocationCapacity(ctx, tx, a.limits, env, supply, shape, uuid.Nil(), preparation); err != nil {
 			return err
 		}
 		result = computer.Allocation{EnvironmentID: env, OwnerID: preparation, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
@@ -289,7 +294,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if !current {
 			return ErrNotReady
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.Allocation{}, allocationError(err)
@@ -325,7 +330,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
 		if err != nil {
 			return err
 		}
@@ -362,7 +367,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err != nil {
 			return err
 		}
-		if err := requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
+		if err := requireAllocationCapacity(ctx, tx, a.limits, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
 		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: base}
@@ -375,7 +380,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
@@ -426,7 +431,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
 		if err != nil {
 			return err
 		}
@@ -490,7 +495,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if shape.VMPlatformID != supply.shape.VMPlatformID || shape.VCPUCount != int64(manifest.Runtime.VMVCPUCount) || shape.CPUConfigDigest != manifest.Runtime.CPUConfigDigest || shape.MemoryBytes > supply.maxMemory || shape.CPUMillis > supply.maxCPU || shape.ScratchBytes > supply.shape.ScratchBytes {
 			return ErrNotReady
 		}
-		if err := requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
+		if err := requireAllocationCapacity(ctx, tx, a.limits, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
 		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: save.String(), RestoredFrom: &save}
@@ -500,7 +505,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

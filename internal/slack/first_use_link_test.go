@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/url"
 	"strings"
 	"testing"
@@ -46,7 +47,7 @@ func TestFirstUseLinkRetainsContextButNeverAdmitsRejectedWork(t *testing.T) {
 	f := newStatusFixture(t)
 	request := f.reply(t, "first-use", false)
 	config := testProjectionConfig()
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, config, nil, request); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, config, nil, request); err != nil {
 		t.Fatal(err)
 	}
 	// Feedback expires the message body, but its receipt remains the identity owner.

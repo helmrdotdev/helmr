@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func TestSlackSharedConversationUsesExplicitSessionActions(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['sessions.create']`)
 	root := slackNow()
 	first := f.newMessage(t, "shared-start", root)
-	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), first); err != nil {
+	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), first); err != nil {
 		t.Fatal(err)
 	}
 	var target, thread uuid.UUID
@@ -74,7 +75,7 @@ func TestSlackSharedConversationUsesExplicitSessionActions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), r.ID); err != nil {
+		if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), r.ID); err != nil {
 			t.Fatal(err)
 		}
 		return r.ID
@@ -103,7 +104,7 @@ func TestSharedRuntimeCannotAttachToUnrelatedComputer(t *testing.T) {
 		if method == "spawn" {
 			start = session.Spawn
 		}
-		if _, err := start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+		if _, err := start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("shared %s attached Computer: %v", method, err)
 		}
 	}
@@ -125,7 +126,7 @@ func TestSlackAcceptedInputSurvivesAccessRevocation(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
 				}
 				request := f.reply(t, "accepted-revocation", false)
-				if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
+				if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), request); err != nil {
 					t.Fatal(err)
 				}
 				if strings.Contains(mutation, "$1") {
@@ -151,7 +152,7 @@ func TestSlackAcceptedInputRespectsWorkAndPhysicalControls(t *testing.T) {
 			ctx := t.Context()
 			f.link(t)
 			request := f.reply(t, "queued-wait", false)
-			if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
+			if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
 			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}

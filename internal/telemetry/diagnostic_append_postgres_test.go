@@ -31,7 +31,7 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 	}
 	s := DiagnosticSource{EnvironmentID: env, Kind: kind, ID: uuid.NewV7(), ProducerEpoch: 1}
 	if env != baseEnv {
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) SELECT $1::uuid,org_id,project_id,$1::text,'diagnostic test','#112233',admission_tokens,admission_refilled_at FROM environments WHERE id=$2 ON CONFLICT(id) DO NOTHING`, env, baseEnv)
 	}
 	switch kind {
 	case "session":

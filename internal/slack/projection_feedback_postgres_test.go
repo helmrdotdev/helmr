@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/url"
 	"testing"
 	"uuid"
@@ -35,7 +36,7 @@ func TestSlackAdmissionKeepsReceiptsWithoutPublicAcceptancePosts(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_posts ADD CONSTRAINT no_receipt_posts CHECK(role<>'request_feedback')`)
 			for range 2 {
-				if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+				if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -52,7 +53,7 @@ func TestSlackQuietAdmissionStillProjectsNativeStatusAndAuthoredContent(t *testi
 	f.link(t)
 	write := f.outputWriter(t)
 	id := f.reply(t, "message", false)
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	claim, err := ClaimStatus(t.Context(), f.Pool, f.thread)

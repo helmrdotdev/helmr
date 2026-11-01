@@ -35,7 +35,7 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	projectID, environmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO regions (id, display_name) VALUES ('api-keys', 'API keys')`)
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'api-keys', 'API keys', true)`, projectID, orgID)
-	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, environmentID, orgID, projectID)
+	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1000000,clock_timestamp())`, environmentID, orgID, projectID)
 	dbtest.GrantMember(t, fixture.pool, orgID, userID, nil, "members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete")
 	dbtest.GrantMember(t, fixture.pool, orgID, userID, &environmentID, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
 	principal, err := AuthenticateLoginSession(t.Context(), fixture.pool, fixture.cfg, fixture.session(t, userID, uuid.Nil()), orgID)
@@ -187,7 +187,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	fixture.member(t, otherOrg, other.UserID, "owner")
 	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)
-	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironmentID, otherOrg, otherProjectID)
+	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1000000,clock_timestamp())`, otherEnvironmentID, otherOrg, otherProjectID)
 	other.MemberID = dbtest.GrantMember(t, fixture.pool, otherOrg, other.UserID, &otherEnvironmentID, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
 	var otherErr error
 	other, otherErr = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, fixture.session(t, other.UserID, uuid.Nil()), otherOrg)

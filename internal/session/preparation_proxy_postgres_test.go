@@ -27,7 +27,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, co
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
-	a := testAllocator(t, f.pool, f.secrets)
+	a := testAllocator(t, f.pool, f.limits, f.secrets)
 	allocation, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
 		t.Fatal(err)

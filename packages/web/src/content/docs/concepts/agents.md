@@ -86,7 +86,7 @@ Validate application-specific input in the handler.
 | --- | --- |
 | `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
 | `hibernateAfterIdle` | Hibernates the Session's Computer after the Session has been idle this long. Default `"never"`, which keeps background work running. Same values as `closeAfterIdle`. See [Hibernation](/docs/concepts/durability#hibernation). |
-| `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. |
+| `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. A Turn waiting on an unanswered question keeps its Computer resident. |
 
 A Session is idle when it has no running Turn, no queued Turn it can run, no
 pending question and no in-flight message. New input restarts its idle clock,

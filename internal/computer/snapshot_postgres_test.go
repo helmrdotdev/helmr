@@ -41,11 +41,11 @@ func TestComputerResidencyWithoutInitialRoot(t *testing.T) {
 				t.Fatalf("initial root was not removed: %v", err)
 			}
 
-			snapshot, err := Read(ctx, f.Pool, scope, f.Computer)
+			snapshot, err := Read(ctx, f.Pool, sessiontest.ExecutionLimits(), scope, f.Computer)
 			if err != nil || snapshot.Status != test.status || snapshot.Residency != test.residency || snapshot.ExecutionWait != nil {
 				t.Fatalf("Computer snapshot: %+v, error: %v", snapshot, err)
 			}
-			listing, err := List(ctx, f.Pool, scope, ListPage{Limit: 100})
+			listing, err := List(ctx, f.Pool, sessiontest.ExecutionLimits(), scope, ListPage{Limit: 100})
 			if err != nil || len(listing.Items) != 1 {
 				t.Fatalf("Computer list: %+v, error: %v", listing, err)
 			}

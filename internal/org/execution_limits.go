@@ -2,38 +2,46 @@ package org
 
 import (
 	"fmt"
-	"math"
-	"time"
+	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-// ExecutionLimits are operator-supplied values written with each newly created
-// Environment; the token bucket starts full. There are no implicit production
-// capacity or rate defaults and no Environment without limits.
+// ExecutionLimits are the operator-configured admission and capacity bounds of
+// an Environment. There are no implicit production capacity or rate defaults
+// and no Environment without limits.
 type ExecutionLimits struct {
 	MaxResidentComputers     int64
 	MaxCPUMillis             int64
 	MaxMemoryBytes           int64
 	MaxReservedStorageBytes  int64
 	MaxOutstandingAdmissions int64
-	MaxCausalDepth           int64
 	AdmissionRatePerSecond   int64
 	AdmissionBurst           int64
-	PreparationTimeoutMS     int64
 }
 
-func (p ExecutionLimits) Validate() error {
+func (l ExecutionLimits) Validate() error {
 	for _, field := range []struct {
 		name  string
 		value int64
 	}{
-		{"resident Computers", p.MaxResidentComputers}, {"CPU", p.MaxCPUMillis}, {"memory", p.MaxMemoryBytes}, {"storage", p.MaxReservedStorageBytes}, {"outstanding admissions", p.MaxOutstandingAdmissions}, {"causal depth", p.MaxCausalDepth}, {"admission rate", p.AdmissionRatePerSecond}, {"admission burst", p.AdmissionBurst}, {"preparation timeout", p.PreparationTimeoutMS},
+		{"resident Computers", l.MaxResidentComputers}, {"CPU", l.MaxCPUMillis}, {"memory", l.MaxMemoryBytes}, {"storage", l.MaxReservedStorageBytes}, {"outstanding admissions", l.MaxOutstandingAdmissions}, {"admission rate", l.AdmissionRatePerSecond}, {"admission burst", l.AdmissionBurst},
 	} {
 		if field.value <= 0 {
 			return fmt.Errorf("execution limit %s must be configured and positive", field.name)
 		}
 	}
-	if p.MaxCausalDepth > math.MaxInt32 || p.PreparationTimeoutMS > math.MaxInt64/int64(time.Millisecond) {
-		return fmt.Errorf("execution limit exceeds supported range")
-	}
 	return nil
+}
+
+// For returns the limits that apply to env. Every Environment currently uses
+// the configured limits.
+func (l ExecutionLimits) For(env uuid.UUID) ExecutionLimits {
+	return l
+}
+
+// ExecutionBudget is the aggregate CPU, memory and resident Computer bound
+// before current usage is subtracted.
+func (l ExecutionLimits) ExecutionBudget() db.ExecutionBudget {
+	return db.ExecutionBudget{CPU: l.MaxCPUMillis, Memory: l.MaxMemoryBytes, Residents: l.MaxResidentComputers}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/url"
@@ -93,7 +94,7 @@ func TestSlackFormOpeningAndSubmissionKeepImmediateReceiptBoundary(t *testing.T)
 	if response := serveSignedInteraction(h, submit("changed")); response.Code != http.StatusConflict {
 		t.Fatalf("changed form reused receipt: %d", response.Code)
 	}
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	if response := serveSignedInteraction(h, submit("yes")); response.Code != http.StatusOK {
@@ -123,7 +124,7 @@ func TestSlackDeniedFormCannotReviveAfterIdentityRestoration(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var denied bool
@@ -134,7 +135,7 @@ func TestSlackDeniedFormCannotReviveAfterIdentityRestoration(t *testing.T) {
 	if response := serveSignedInteraction(h, body); response.Code != http.StatusOK {
 		t.Fatalf("retry: %d", response.Code)
 	}
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var unchanged bool
@@ -162,7 +163,7 @@ func TestSlackInvalidFormRetainsFirstSubmissionAndLeavesAskPending(t *testing.T)
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var denied bool

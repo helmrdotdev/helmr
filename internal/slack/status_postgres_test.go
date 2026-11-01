@@ -60,7 +60,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
+	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,17 +175,17 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
 	caller := session.UserCaller(f.Principal(t))
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause"}); err != nil {
 		t.Fatal(err)
 	}
 	suspended := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -232,7 +232,7 @@ func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 func TestSlackStatusAcknowledgesOnlyTheClaimedValue(t *testing.T) {
 	f := newStatusFixture(t)
 	first := f.claim(t, "active")
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Recompute the desired state while the original HTTP attempt still owns the lane.
@@ -277,7 +277,7 @@ func TestSlackStatusCoalescesReturnToAcknowledgedValue(t *testing.T) {
 				// Defer sending without deferring observation of authoritative state.
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
 			}
-			turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "brief-work", Input: json.RawMessage(`[]`)})
+			turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "brief-work", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -331,7 +331,7 @@ func TestSlackStatusAcceptsExpiredUnreplacedCompletion(t *testing.T) {
 func TestSlackStatusPeriodicAssertionRepairsLateRemoteWrite(t *testing.T) {
 	f := newStatusFixture(t)
 	old := f.claim(t, "active")
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "current-work", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "current-work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Recover after the original sender disappeared with an unresolved request.

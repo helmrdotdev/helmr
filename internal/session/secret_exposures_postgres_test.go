@@ -46,7 +46,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	reject("wrong process epoch", "23503", `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id) VALUES(uuidv7(),$1,$2,9,$3,$4)`, f.env, f.session, f.secretID, version)
 	reject("unknown command", "23503", `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id) VALUES(uuidv7(),$1,$2,$3,$4)`, f.env, uuid.NewV7(), f.secretID, version)
 	other := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other-exposure','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other-exposure','Other','#123456',admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, other)
 	if _, err = f.secrets.Create(t.Context(), dbtest.SecretManager(t, f.pool, other), other, "OTHER", []byte("other"), "other-exposure"); err != nil {
 		t.Fatal(err)
 	}

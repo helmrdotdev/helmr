@@ -36,7 +36,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			r, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+			r, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 			if err != nil {
 				t.Error(err)
 			}
@@ -99,16 +99,16 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		t.Fatalf("message rejection reasons missing: %v %v", auditValid, err)
 	}
 	req.IdempotencyKey = "steer"
-	retried, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	retried, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {
 		t.Fatalf("rejected steering fell back: %+v %v", retried, err)
 	}
 	req.Input = json.RawMessage(`[{"type":"text","text":"false"}]`)
-	if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
 	req.IdempotencyKey = "new"
-	queued, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	queued, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil || queued.MessageID != uuid.Nil() || queued.TurnID == first.TurnID {
 		t.Fatalf("new send didn't queue: %+v %v", queued, err)
 	}
@@ -127,7 +127,7 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
@@ -154,7 +154,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	if err := session.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
@@ -164,11 +164,11 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 		if err != nil || exact.MessageID == uuid.Nil() {
 			t.Fatalf("closing exact %s: %+v %v", caller.Kind, exact, err)
 		}
-		routed, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+		routed, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 		if err != nil || routed.MessageID == uuid.Nil() {
 			t.Fatalf("closing send %s: %+v %v", caller.Kind, routed, err)
 		}
-		if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err == nil {
+		if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); err == nil {
 			t.Fatalf("closing enqueue allowed: %s", caller.Kind)
 		}
 	}
@@ -178,7 +178,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, caller := range []session.Caller{f.caller(), runtime} {
-		if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
+		if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
 			t.Fatalf("closing send fell back: %s", caller.Kind)
 		}
 	}

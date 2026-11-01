@@ -106,7 +106,7 @@ func TestProcessFailuresHoldAfterConsecutiveThreshold(t *testing.T) {
 	// Releasing the hold restarts the count.
 	release := controlRequest(f, "resume", "release-failures")
 	release.HoldID = *hold
-	if _, err := session.ControlSession(t.Context(), holdPolicy, f.pool, f.caller(), release); err != nil {
+	if _, err := session.ControlSession(t.Context(), holdPolicy, f.limits, f.pool, f.caller(), release); err != nil {
 		t.Fatal(err)
 	}
 	failProcessEpoch(t, f, 6, "process_failed")
@@ -183,7 +183,7 @@ func TestSetupFailuresReconstructUntilThresholdHolds(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND started_at IS NULL FROM turns WHERE session_id=$1`, e.SessionID).Scan(&queued); err != nil || !queued {
 		t.Fatalf("failed setup consumed input: %v %v", queued, err)
 	}
-	if _, err := session.ControlSession(t.Context(), holdPolicy, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
+	if _, err := session.ControlSession(t.Context(), holdPolicy, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
 		t.Fatal(err)
 	}
 	if r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 4); err != nil || r.Epoch != 4 || r.Status != "starting" {
@@ -205,7 +205,7 @@ func TestSessionDeadlineStopsProcessAndQueueContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued, err := session.Enqueue(t.Context(), holdPolicy, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: e.SessionID, IdempotencyKey: "queued", Input: json.RawMessage(`[{"type":"text","text":"next"}]`)})
+	queued, err := session.Enqueue(t.Context(), holdPolicy, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: e.SessionID, IdempotencyKey: "queued", Input: json.RawMessage(`[{"type":"text","text":"next"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestHoldCanReleaseMatchesControlSession(t *testing.T) {
 			}
 			req := controlRequest(child, "resume", "property-"+name)
 			req.HoldID = hold
-			_, controlErr := session.ControlSession(t.Context(), holdPolicy, tx, caller, req)
+			_, controlErr := session.ControlSession(t.Context(), holdPolicy, f.limits, tx, caller, req)
 			if err := tx.Rollback(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -409,7 +409,7 @@ func TestHoldCanReleaseMatchesControlSession(t *testing.T) {
 		}
 		req := controlRequest(child, "resume", "closing-"+state)
 		req.HoldID = hold
-		_, controlErr := session.ControlSession(t.Context(), holdPolicy, tx, closing, req)
+		_, controlErr := session.ControlSession(t.Context(), holdPolicy, f.limits, tx, closing, req)
 		if err := tx.Rollback(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -479,7 +479,7 @@ func TestRecoveryGapSettlementHoldsAffectedAndNotifiesOthers(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1`, f.env, definition.ComputerSeedProfile)
 	start := func(key string) uuid.UUID {
 		t.Helper()
-		admitted, err := session.Start(t.Context(), holdPolicy, f.pool, nil, f.caller(), session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"continue"}]`)})
+		admitted, err := session.Start(t.Context(), holdPolicy, f.limits, f.pool, nil, f.caller(), session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"continue"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -491,7 +491,7 @@ func TestRecoveryGapSettlementHoldsAffectedAndNotifiesOthers(t *testing.T) {
 	}
 	release := controlRequest(f, "resume", "acknowledge")
 	release.HoldID = hold
-	if _, err := session.ControlSession(t.Context(), holdPolicy, f.pool, f.caller(), release); err != nil {
+	if _, err := session.ControlSession(t.Context(), holdPolicy, f.limits, f.pool, f.caller(), release); err != nil {
 		t.Fatal(err)
 	}
 	// Once acknowledged, later Sessions are not notified again.

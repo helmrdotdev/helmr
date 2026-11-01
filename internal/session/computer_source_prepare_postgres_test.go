@@ -19,7 +19,7 @@ func TestSourceAbortPreparationUsesCurrentAuthorityAndPreservesState(t *testing.
 	checkpoint := uuid.MustParse(prior.Capture.CheckpointId)
 	observed := abortReceipt(prior, false, false)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
-	p, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, observed)
+	p, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,16 +36,16 @@ func TestSourceAbortPreparationUsesCurrentAuthorityAndPreservesState(t *testing.
 	if err := f.pool.QueryRow(t.Context(), `SELECT p.status,c.next_control_version FROM checkpoints p JOIN computers c ON c.id=p.computer_id WHERE p.id=$1`, checkpoint).Scan(&state, &next); err != nil || state != "capturing" || next != p.DesiredVersion {
 		t.Fatalf("prepare mutated capture: %s %d %v", state, next, err)
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, observed); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, observed); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, abortReceipt(p, true, false)); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, abortReceipt(p, true, false)); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("regenerated installed authority: %v", err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, observed); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, observed); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("regenerated consumed image: %v", err)
 	}
 }
@@ -55,18 +55,18 @@ func TestSourceAbortPreparationRefreshesTerminalSetOnlyBeforeInstallation(t *tes
 	peer := f.peer(t)
 	original, _ := sourceAbort(t, f)
 	observed := abortReceipt(original, false, false)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, original, observed); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, original, observed); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
-	p, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(original.Capture.CheckpointId), 1, original.Envelope.ChannelCredential, observed)
+	p, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, uuid.MustParse(original.Capture.CheckpointId), 1, original.Envelope.ChannelCredential, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(p.StoppedSessions) != 1 || p.DesiredVersion != original.DesiredVersion {
 		t.Fatal("uninstalled refresh lost terminal set or changed version")
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); !errors.Is(err, session.ErrConflict) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed installed identity accepted: %v", err)
 	}
 	stale := proto.Clone(original).(*agentv1.ComputerSessionInstallation)
@@ -74,10 +74,10 @@ func TestSourceAbortPreparationRefreshesTerminalSetOnlyBeforeInstallation(t *tes
 	// validation from the independent stale-generation refusal.
 	stale.Grants = p.Grants
 	stale.Envelope = p.Envelope
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, stale, observed); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, stale, observed); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale uninstalled terminal set accepted: %v", err)
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, observed); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, observed); err != nil {
 		t.Fatalf("fresh uninstalled terminal state rejected: %v", err)
 	}
 	var state string
@@ -86,10 +86,10 @@ func TestSourceAbortPreparationRefreshesTerminalSetOnlyBeforeInstallation(t *tes
 		t.Fatalf("refresh changed state or version: %s %d %v", state, next, err)
 	}
 
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, original, abortReceipt(original, true, false)); !errors.Is(err, session.ErrConflict) {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, original, abortReceipt(original, true, false)); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("obsolete stop set committed: %v", err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -132,7 +132,7 @@ func TestSourceAbortPreparationRejectsChangedOwnerAndReceipt(t *testing.T) {
 				expected = session.ErrNotReady
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET fenced_at=clock_timestamp()`)
 			}
-			if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, host, f.env, uuid.MustParse(p.Capture.CheckpointId), epoch, credential, observed); !errors.Is(err, expected) {
+			if _, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, uuid.MustParse(p.Capture.CheckpointId), epoch, credential, observed); !errors.Is(err, expected) {
 				t.Fatalf("wrong rejection: got %v want %v", err, expected)
 			}
 			var state string

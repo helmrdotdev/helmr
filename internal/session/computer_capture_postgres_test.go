@@ -27,7 +27,7 @@ func (f fixture) captureRequest() session.ComputerCaptureRequest {
 }
 func beginCapture(t *testing.T, f fixture, req session.ComputerCaptureRequest) (session.ComputerCapture, *agentv1.ComputerSessionCapture) {
 	t.Helper()
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
 		t.Fatal(err)
 	}
 	t.Helper()
@@ -67,7 +67,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		}
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
-	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}
 	other := req
@@ -130,7 +130,7 @@ func TestComputerCaptureSerializesWithNewAdmission(t *testing.T) {
 		t.Run(first+" first", func(t *testing.T) {
 			f := newFixture(t)
 			req := f.captureRequest()
-			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
 				t.Fatalf("idle hibernate intent: %+v %v", control, err)
 			}
 			hold, err := f.pool.Begin(t.Context())
@@ -148,14 +148,14 @@ func TestComputerCaptureSerializesWithNewAdmission(t *testing.T) {
 				}
 				err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
 					var err error
-					admitted, err = session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), input)
+					admitted, err = session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), input)
 					return err
 				})
 				if err != nil {
 					t.Fatalf("public admission behind capture: %v", err)
 				}
 			} else {
-				admitted, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, hold, nil, f.caller(), input)
+				admitted, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, hold, nil, f.caller(), input)
 				if err != nil || admitted.TurnID == uuid.Nil() {
 					t.Fatalf("new admission positive control: %+v %v", admitted, err)
 				}
@@ -263,7 +263,7 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 	// Independent user holds survive; one ineligible-recovery loss is reported
 	// as a counted failure without adding a hold.
 	for _, member := range []fixture{f, peer} {
-		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -506,7 +506,7 @@ func TestPublishedCaptureCloseReleasesSourceWithoutWakingPeer(t *testing.T) {
 	_, capture := beginCapture(t, f, request)
 	// Certified publication, retaining both physical processes on the source.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE computer_id=$2 AND epoch=1),ready_at=clock_timestamp() WHERE id=$1`, request.CheckpointID, f.computer)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close-sleeping")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "close-sleeping")); err != nil {
 		t.Fatal(err)
 	}
 	observed, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), request)
@@ -517,7 +517,7 @@ func TestPublishedCaptureCloseReleasesSourceWithoutWakingPeer(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND s.status='open' AND d.hibernate_after_idle_ms IS NULL AND c.execution_deadline_at IS NULL FROM checkpoints cp JOIN computers c ON (c.environment_id,c.id)=(cp.environment_id,cp.computer_id) JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) WHERE cp.id=$1 AND s.id=$2`, request.CheckpointID, peer.session).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("peer checkpoint or sleep changed: %v %v", preserved, err)
 	}
-	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, request.CheckpointID, 1, sessiontest.ChannelCredential, &agentv1.ComputerSessionReceipt{CheckpointId: request.CheckpointID.String(), DesiredVersion: capture.DesiredVersion}); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, request.CheckpointID, 1, sessiontest.ChannelCredential, &agentv1.ComputerSessionReceipt{CheckpointId: request.CheckpointID.String(), DesiredVersion: capture.DesiredVersion}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("cleanup-only continuation admitted: %v", err)
 	}
 	peer.enqueue(t, "real-work")

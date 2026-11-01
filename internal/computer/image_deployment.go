@@ -60,13 +60,9 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	if successorPending {
 		return nil
 	}
-	var timeout int64
-	if err := tx.QueryRow(ctx, `SELECT preparation_timeout_ms FROM environments WHERE id=$1`, env).Scan(&timeout); err != nil {
-		return err
-	}
 	id := uuid.NewV7()
 	if _, err := tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)
- VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, env, id, spec, "deployment:"+deployment.String()+":"+id.String(), timeout); err != nil {
+ VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*interval '1 millisecond')`, env, id, spec, "deployment:"+deployment.String()+":"+id.String(), BackgroundImageBuildTimeout.Milliseconds()); err != nil {
 		return err
 	}
 	return notifyImageBuildChanged(ctx, tx, env, id)

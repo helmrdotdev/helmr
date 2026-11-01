@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -24,7 +25,7 @@ func lifecycleAction(action string) bool {
 	return false
 }
 
-func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, id uuid.UUID, p *messageAdmission, action string) error {
+func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, id uuid.UUID, p *messageAdmission, action string) error {
 	// Input controls retain their timestamp ordering and do not enter execution admission.
 	if action == "mute" || action == "unmute" {
 		_, err := applyThreadInput(ctx, tx, id, p, action)
@@ -35,7 +36,7 @@ func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	}
 	target := controlTarget{Installation: p.installation, Thread: p.thread, Participant: p.source, Environment: p.route.Target.EnvironmentID, Session: p.session}
 	err := db.RunTx(ctx, tx, func(core pgx.Tx) error {
-		_, err := applyLifecycleControl(ctx, auditPolicy, core, session.UserCaller(p.human), target, controlEnvelope{Action: action}, id)
+		_, err := applyLifecycleControl(ctx, auditPolicy, limits, core, session.UserCaller(p.human), target, controlEnvelope{Action: action}, id)
 		if err != nil {
 			return err
 		}
@@ -74,7 +75,7 @@ func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	return err
 }
 
-func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, caller session.Caller, target controlTarget, c controlEnvelope, id uuid.UUID) (json.RawMessage, error) {
+func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, caller session.Caller, target controlTarget, c controlEnvelope, id uuid.UUID) (json.RawMessage, error) {
 	operation := auth.PermissionSessionsRead
 	if c.Action == "mute" || c.Action == "unmute" {
 		operation = auth.PermissionSessionsInterrupt
@@ -114,13 +115,13 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		if computerID == nil || (c.Action == "hibernate" && *computerID != c.Computer) {
 			return nil, session.ErrNotReady
 		}
-		receipt, err := session.ControlComputerExecution(ctx, auditPolicy, tx, caller, session.ComputerExecutionRequest{EnvironmentID: target.Environment, ComputerID: *computerID, Kind: c.Action, IdempotencyKey: "slack:" + id.String(), OpenSessionID: target.Session})
+		receipt, err := session.ControlComputerExecution(ctx, auditPolicy, limits, tx, caller, session.ComputerExecutionRequest{EnvironmentID: target.Environment, ComputerID: *computerID, Kind: c.Action, IdempotencyKey: "slack:" + id.String(), OpenSessionID: target.Session})
 		if err != nil {
 			return nil, err
 		}
 		return json.Marshal(receipt)
 	case "confirm_close":
-		receipt, err := session.ControlSession(ctx, auditPolicy, tx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "close", IdempotencyKey: "slack:" + id.String()})
+		receipt, err := session.ControlSession(ctx, auditPolicy, limits, tx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "close", IdempotencyKey: "slack:" + id.String()})
 		if err != nil {
 			return nil, err
 		}

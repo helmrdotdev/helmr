@@ -153,10 +153,10 @@ const usableBootSeedImageSQL = `EXISTS(SELECT 1 FROM images i
 func AssignBootSeedBuild(ctx context.Context, tx pgx.Tx, a Allocation, policyRevision int64) (bool, error) {
 	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11,
- deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
+ deadline_at=clock_timestamp()+$14::bigint*interval '1 millisecond'
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND executor_epoch=$12::bigint-1
  AND (retry_after IS NULL OR retry_after<=clock_timestamp()) AND payload_retired_at IS NULL AND NOT `+obsoleteBootSeed+` AND `+usableBootSeedImageSQL,
-		a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, a.Epoch, policyRevision)
+		a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, a.Epoch, policyRevision, BootSeedBuildTimeout.Milliseconds())
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, err
 	}

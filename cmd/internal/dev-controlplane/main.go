@@ -192,7 +192,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.auditPolicy, cfg.computerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.auditPolicy, cfg.environmentExecutionLimits, cfg.computerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}

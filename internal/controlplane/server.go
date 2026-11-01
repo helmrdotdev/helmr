@@ -288,7 +288,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:                    cfg.Secrets,
 		secretDelivery:             cfg.SecretDelivery,
 		secretProxy:                cfg.SecretProxy,
-		computers:                  computer.NewCreator(cfg.SecretProxy, cfg.AuditPolicy),
+		computers:                  computer.NewCreator(cfg.SecretProxy, cfg.AuditPolicy, cfg.EnvironmentExecutionLimits),
 		telemetryReader:            telemetryReader,
 		diagnosticBounds:           cfg.DiagnosticBounds,
 		diagnosticDB:               cfg.DiagnosticDB,

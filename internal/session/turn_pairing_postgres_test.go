@@ -78,7 +78,7 @@ func TestTurnAndAskOperationsRequireTheirParents(t *testing.T) {
 		{"answer Ask under another Turn of its Session", func() error { return answer(f.session, queued) }, session.ErrDenied},
 		{"answer Ask under another Session's Turn", func() error { return answer(peer.session, peerTurn) }, session.ErrDenied},
 		{"interrupt Turn under another Session", func() error {
-			_, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: peer.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "mismatch"})
+			_, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: peer.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "mismatch"})
 			return err
 		}, session.ErrDenied},
 		{"send message to Turn under another Session", func() error {
@@ -122,7 +122,7 @@ func TestTurnAndAskOperationsRequireTheirParents(t *testing.T) {
 	if err := answer(f.session, owned); err != nil {
 		t.Fatalf("answer owned Ask: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "owned"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "owned"}); err != nil {
 		t.Fatalf("interrupt owned Turn: %v", err)
 	}
 }

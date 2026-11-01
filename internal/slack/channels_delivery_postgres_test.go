@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"net/http"
 	"strings"
@@ -120,7 +121,7 @@ func TestHumanMentionRejectsConfirmedChannelDenialWithoutExpiring(t *testing.T) 
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}))
-			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, id)
+			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, id)
 			transient := kind == "transport" || kind == "rate_limited"
 			if transient {
 				if !errors.Is(err, ErrChannelVerification) {

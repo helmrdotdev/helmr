@@ -160,10 +160,10 @@ func FenceLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch i
 		return err
 	}
 	// Recovery of already accepted work starts its own bounded pending interval.
-	if _, err = tx.Exec(ctx, `UPDATE computers c SET execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
+	if _, err = tx.Exec(ctx, `UPDATE computers c SET execution_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond'
  WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status='ready')
- AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computer); err != nil {
+ AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))`, env, computer, ExecutionStartTimeout.Milliseconds()); err != nil {
 		return err
 	}
 	if err := RetireUnusedExecutionAdmission(ctx, tx, env, computer); err != nil {

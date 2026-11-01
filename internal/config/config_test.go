@@ -78,8 +78,13 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.DatabaseURL != "postgres://example" ||
-		cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.AppOrigin != "https://console.example.test" {
+		cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.AppOrigin != "https://console.example.test" ||
+		cfg.EnvironmentExecutionLimits.AdmissionBurst != 20 {
 		t.Fatalf("config = %+v", cfg)
+	}
+	t.Setenv("ENVIRONMENT_ADMISSION_BURST", "")
+	if _, err := LoadDispatcher(); err == nil || !strings.Contains(err.Error(), "ENVIRONMENT_ADMISSION_BURST") {
+		t.Fatalf("dispatcher admitted without execution limits: %v", err)
 	}
 }
 
@@ -104,6 +109,7 @@ func setDispatcherFencing(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	setEnvironmentExecutionLimits(t)
 }
 
 func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
@@ -721,7 +727,7 @@ func TestLoadDispatcherRequiresControlPlaneURL(t *testing.T) {
 func setEnvironmentExecutionLimits(t *testing.T) {
 	t.Helper()
 	for name, value := range map[string]string{
-		"ENVIRONMENT_MAX_RESIDENT_COMPUTERS": "10", "ENVIRONMENT_MAX_CPU_MILLIS": "16000", "ENVIRONMENT_MAX_MEMORY_BYTES": "68719476736", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES": "1099511627776", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS": "100", "ENVIRONMENT_MAX_CAUSAL_DEPTH": "8", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND": "10", "ENVIRONMENT_ADMISSION_BURST": "20", "ENVIRONMENT_PREPARATION_TIMEOUT_MS": "600000",
+		"ENVIRONMENT_MAX_RESIDENT_COMPUTERS": "10", "ENVIRONMENT_MAX_CPU_MILLIS": "16000", "ENVIRONMENT_MAX_MEMORY_BYTES": "68719476736", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES": "1099511627776", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS": "100", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND": "10", "ENVIRONMENT_ADMISSION_BURST": "20",
 	} {
 		t.Setenv(name, value)
 	}

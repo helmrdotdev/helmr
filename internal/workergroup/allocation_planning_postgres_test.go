@@ -22,7 +22,7 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET primary_pool_id=$2 WHERE id=$1`, f.Group, pool)
 	for _, key := range []string{"first", "second"} {
-		if _, err := command.Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User, UserID: f.User, Human: f.Principal(t)}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
+		if _, err := command.Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User, UserID: f.User, Human: f.Principal(t)}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -37,7 +37,11 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	preparation := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at) VALUES($1,$2,$3,'queued','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, preparation, f.Deployment)
 	q := db.New(f.Pool)
-	rows, err := q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 1})
+	limits := sessiontest.ExecutionLimits()
+	demand := func(region string, rowLimit int32) db.ListAllocationPlanningDemandParams {
+		return db.ListAllocationPlanningDemandParams{MaxCpuMillis: limits.MaxCPUMillis, MaxMemoryBytes: limits.MaxMemoryBytes, MaxResidentComputers: limits.MaxResidentComputers, RegionID: region, WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: rowLimit}
+	}
+	rows, err := q.ListAllocationPlanningDemand(t.Context(), demand("test", 1))
 	if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].OwnerID) != preparation {
 		t.Fatalf("queued demand=%+v err=%v", rows, err)
 	}
@@ -58,29 +62,31 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	assertCharge()
 	// A resident Computer and its Commands never occupy the bounded queued page.
 	for range 2 {
-		rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 1})
+		rows, err = q.ListAllocationPlanningDemand(t.Context(), demand("test", 1))
 		if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].OwnerID) != preparation {
 			t.Fatalf("repeated queued page=%+v %v", rows, err)
 		}
 	}
 	// Even expired, unfenced allocations consume the environment quota.
 	// Keep blocked demand visible so admission can detect incomplete placement.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_cpu_millis=(SELECT sum(reserved_cpu_millis) FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL) WHERE id=$1`, f.Environment)
-	rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
+	if err := f.Pool.QueryRow(t.Context(), `SELECT sum(reserved_cpu_millis) FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL`, f.Environment).Scan(&limits.MaxCPUMillis); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = q.ListAllocationPlanningDemand(t.Context(), demand("test", 10))
 	if err != nil || len(rows) != 1 || rows[0].RemainingCpuMillis != 0 {
 		t.Fatalf("quota-blocked demand=%+v %v", rows, err)
 	}
 	assertCharge()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_cpu_millis=1024000 WHERE id=$1`, f.Environment)
+	limits = sessiontest.ExecutionLimits()
 	secret := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,current_version_id,revoked_at) VALUES($1,$2,'TOKEN',$1,clock_timestamp());
  INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($1,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'))`, pgx.QueryExecModeSimpleProtocol, secret, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secret)
-	rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
+	rows, err = q.ListAllocationPlanningDemand(t.Context(), demand("test", 10))
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("revoked preparation demand=%+v %v", rows, err)
 	}
-	other, err := q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "other", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
+	other, err := q.ListAllocationPlanningDemand(t.Context(), demand("other", 10))
 	if err != nil || len(other) != 0 {
 		t.Fatalf("cross-region demand=%+v %v", other, err)
 	}

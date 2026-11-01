@@ -179,12 +179,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
-	result, err := admitSessionInput(ctx, auditPolicy, pool, trust, caller, req, "enqueue", uuid.Nil())
+func Enqueue(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+	result, err := admitSessionInput(ctx, auditPolicy, limits, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {
@@ -224,8 +224,7 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 				return err
 			}
 		}
-		policy, err := org.LockAdmission(ctx, tx, req.EnvironmentID)
-		if err != nil {
+		if _, err := org.LockAdmission(ctx, tx, req.EnvironmentID); err != nil {
 			return err
 		}
 		if method != "turn_send" {
@@ -318,7 +317,7 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 			if err = tx.QueryRow(ctx, `SELECT t.key FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&templateKey); err != nil {
 				return err
 			}
-			o.computer, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, computerLimits(policy))
+			o.computer, err = computer.CreateForAdmission(ctx, tx, trust, limits, req.EnvironmentID, deployment, templateKey)
 			if err != nil {
 				return err
 			}
@@ -368,7 +367,7 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
 			return err
 		}
-		if err = consumeAdmission(ctx, tx, req.EnvironmentID, policy); err != nil {
+		if err = consumeAdmission(ctx, tx, limits, req.EnvironmentID); err != nil {
 			return err
 		}
 		var runnable bool
@@ -376,7 +375,7 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 			return err
 		}
 		if runnable {
-			if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, req.EnvironmentID, o.computer); err != nil {
+			if err = computer.NoteExecutionDemand(ctx, auditPolicy, limits, tx, req.EnvironmentID, o.computer); err != nil {
 				return err
 			}
 		}

@@ -170,7 +170,7 @@ func (server *Server) workerValidateAgentComputerSourceAbort(w http.ResponseWrit
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
-	if err := session.ValidateComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
+	if err := session.ValidateComputerSourceAbort(r.Context(), server.environmentExecutionLimits, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
@@ -188,7 +188,7 @@ func (server *Server) workerCommitAgentComputerSourceAbort(w http.ResponseWriter
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
-	if err := session.CommitComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
+	if err := session.CommitComputerSourceAbort(r.Context(), server.environmentExecutionLimits, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
@@ -206,7 +206,7 @@ func (server *Server) workerCompleteAgentComputerSourceAbort(w http.ResponseWrit
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
-	if err := session.CompleteComputerSourceAbort(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
+	if err := session.CompleteComputerSourceAbort(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
@@ -278,7 +278,7 @@ func (server *Server) workerAgentComputerControls(w http.ResponseWriter, r *http
 		server.writeAgentComputerError(w, r, err)
 		return
 	}
-	controls, err := session.ReadComputerContinuationControls(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt)
+	controls, err := session.ReadComputerContinuationControls(r.Context(), server.environmentExecutionLimits, server.tx, workerFromContext(r.Context()), env, p, receipt)
 	if err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return
@@ -304,7 +304,7 @@ func (server *Server) workerPrepareAgentComputerSourceAbort(w http.ResponseWrite
 		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
-	p, err := session.PrepareComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, request.LeaseEpoch, request.ChannelCredential, receipt)
+	p, err := session.PrepareComputerSourceAbort(r.Context(), server.environmentExecutionLimits, server.tx, workerFromContext(r.Context()), env, checkpoint, request.LeaseEpoch, request.ChannelCredential, receipt)
 	if err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return

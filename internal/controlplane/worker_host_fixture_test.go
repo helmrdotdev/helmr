@@ -3,6 +3,7 @@ package controlplane
 import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,7 +59,7 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	cfg.DiagnosticDB = pool
 	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, make([]byte, 32), nil)
+	}, sessiontest.ExecutionLimits(), make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

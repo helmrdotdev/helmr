@@ -32,7 +32,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
-		if err = requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
+		if err = requireAllocationCapacity(ctx, tx, a.limits, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
 		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: base, RestoredFrom: save, DiskOnlyRecovery: true}
@@ -92,7 +92,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

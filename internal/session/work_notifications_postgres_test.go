@@ -53,7 +53,7 @@ func TestWorkAdmissionNotificationsFollowOuterTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, tx, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[]`)})
+		_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, tx, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[]`)})
 		if err != nil {
 			_ = tx.Rollback(t.Context())
 			t.Fatal(err)
@@ -119,7 +119,7 @@ func TestClosingChildrenNotifyReadersBeforeTheirWorkDrains(t *testing.T) {
 	child := ownedFixture(t, f)
 	child.enqueue(t, "child")
 	topics := dbtest.ListenChanges(t, f.pool)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -145,10 +145,10 @@ func TestShutdownReceiptReplayRetainsInterruptedTurnWithoutNotifying(t *testing.
 	}
 	interrupt := controlRequest(f, "turn_interrupt", "interrupt-turn")
 	interrupt.TurnID = turn.TurnID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), interrupt); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), interrupt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), sessiontest.SeededAttachment)
@@ -196,7 +196,7 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 				f = ownedFixture(t, parent)
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, f.session)
 				stop = func() error {
-					_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, parent.pool, parent.caller(), controlRequest(parent, "cancel", "cancel-tree"))
+					_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, parent.pool, parent.caller(), controlRequest(parent, "cancel", "cancel-tree"))
 					return err
 				}
 			}

@@ -233,7 +233,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.AuditPolicy, cfg.ComputerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.AuditPolicy, org.ExecutionLimits(cfg.EnvironmentExecutionLimits), cfg.ComputerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}

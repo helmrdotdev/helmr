@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,9 @@ type fixture struct {
 	pool                                                           *pgxpool.Pool
 	mcpScope                                                       uuid.UUID
 	env, session, computer, user, worker, agent, deployment, group uuid.UUID
+	// limits are the Environment's configured execution limits, which every
+	// admission and placement call in a test passes.
+	limits org.ExecutionLimits
 }
 
 func newFixture(t *testing.T) fixture {
@@ -37,7 +41,7 @@ func newFixture(t *testing.T) fixture {
 }
 func fixtureOf(t *testing.T, f sessiontest.Fixture) fixture {
 	t.Helper()
-	result := fixture{human: f.Principal(t), pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
+	result := fixture{human: f.Principal(t), pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group, limits: sessiontest.ExecutionLimits()}
 	result.mcpScope = f.MCPScope
 	return result
 }
@@ -49,7 +53,7 @@ func (f fixture) execution() session.Execution {
 }
 func (f fixture) enqueue(t *testing.T, key string) session.Admission {
 	t.Helper()
-	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +122,7 @@ func TestEnqueueConcurrentRetryAndRevocation(t *testing.T) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
+			a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
 			results <- a
 			errs <- err
 		})
@@ -148,7 +152,7 @@ func TestEnqueueConcurrentRetryAndRevocation(t *testing.T) {
 	if a.TurnID != id {
 		t.Fatal("retry changed after close")
 	}
-	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":2}"}]`)})
+	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":2}"}]`)})
 	if !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
@@ -156,7 +160,7 @@ func TestEnqueueConcurrentRetryAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
+	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "same", Input: json.RawMessage(`[{"type":"text","text":"{\"input\":1}"}]`)})
 	if !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
@@ -268,23 +272,23 @@ func TestRuntimePeerAdmissionRequiresCurrentAuthority(t *testing.T) {
 	peer := f.requestedPeer(t)
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)}
-	first, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+	first, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := caller
 	stale.Execution.LeaseEpoch = 2
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, stale, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, stale, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("stale ownership retry: %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.New(), f.session); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil || receipt.TurnID != first.TurnID {
+	if receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); err != nil || receipt.TurnID != first.TurnID {
 		t.Fatalf("held receipt reconciliation: %+v %v", receipt, err)
 	}
 	req.IdempotencyKey = "fresh-while-held"
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("new held admission: %v", err)
 	}
 }
@@ -298,18 +302,18 @@ func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "after-return"
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("closed direct authority: %v", err)
 	}
 	caller.TurnID = uuid.Nil()
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); err != nil {
 		t.Fatalf("session-bound authority incorrectly borrowed active turn: %v", err)
 	}
 }
@@ -332,7 +336,7 @@ func TestDirectTurnAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "deadline", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "deadline", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		result <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -375,7 +379,7 @@ func TestOldTurnCannotBorrowReplacementProcess(t *testing.T) {
 	execution := f.execution()
 	execution.ProcessEpoch = 2
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: execution, TurnID: a.TurnID}
-	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "stale-turn", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "stale-turn", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("old Turn under replacement process: %v", err)
 	}
@@ -428,7 +432,7 @@ func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "held-target", Input: json.RawMessage(`[{"type":"text","text":"follow-up"}]`)}
-	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +452,7 @@ func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "after-close"
-	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrNotReady) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("closing target admission: %v", err)
 	}
 }
@@ -457,7 +461,7 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	f := newFixture(t)
 	otherEnv, otherSession := uuid.New(), uuid.New()
 	_, err := f.pool.Exec(t.Context(), `
-	INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
+	INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#112233',admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
 	INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,id,bundle_digest FROM deployments WHERE environment_id=$1;
 	INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,id,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1;
 	INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
@@ -471,7 +475,7 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	for _, env := range []uuid.UUID{f.env, otherEnv} {
-		got, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: otherSession, Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+		got, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: otherSession, Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		if !errors.Is(err, session.ErrDenied) || got.TurnID != uuid.Nil() {
 			t.Fatalf("cross-environment admission: %v %v", got, err)
 		}
@@ -495,13 +499,13 @@ func TestRuntimeAdmissionRechecksLeaseAfterLockWait(t *testing.T) {
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "expired-while-waiting", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "expired-while-waiting", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		done <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var blocked bool
-		err = f.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%max_outstanding_admissions%')").Scan(&blocked)
+		err = f.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%SELECT current_deployment_id FROM environments WHERE id=$1 FOR NO KEY UPDATE%')").Scan(&blocked)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -536,13 +540,13 @@ func TestRuntimeBlockedAdmissionDoesNotBlockAuthorityRenewal(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		done <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		var blocked bool
-		if err = f.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%max_outstanding_admissions%')").Scan(&blocked); err != nil {
+		if err = f.pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%SELECT current_deployment_id FROM environments WHERE id=$1 FOR NO KEY UPDATE%')").Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {

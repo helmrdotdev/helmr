@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"sync"
@@ -26,7 +27,7 @@ func (f statusFixture) threadMessage(t *testing.T, key, text string, at time.Tim
 }
 func (f statusFixture) admitThreadMessage(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -49,7 +50,7 @@ func TestSlackThreadInputMuteIsPersistentAndNeverReplays(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
-			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), mute); err != nil {
+			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), mute); err != nil {
 				t.Error(err)
 			}
 		})
@@ -110,7 +111,7 @@ func TestSlackThreadInputControlsDoNotReleaseStopOrChangeCoreWork(t *testing.T) 
 	f := newStatusFixture(t)
 	f.link(t)
 	stop := f.nativeStop(t, "stop")
-	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stop); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, stop); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"!mute", "!unmute", "!aside <@bot> discussion"} {
@@ -140,7 +141,7 @@ func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
 			case "read-only":
 				f.SetPermissions(t, "sessions.read")
 			case "closed":
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			case "unbound":
@@ -204,7 +205,7 @@ func TestSlackThreadInputMuteReceiptFailureRollsBackState(t *testing.T) {
 	f.link(t)
 	id := f.threadMessage(t, "mute", "!mute", time.Now())
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT no_acceptance CHECK(status<>'accepted')`)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err == nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err == nil {
 		t.Fatal("expected receipt constraint failure")
 	}
 	f.assertThreadInput(t, false, 0)

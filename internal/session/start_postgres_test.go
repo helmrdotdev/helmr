@@ -35,13 +35,13 @@ func (f fixture) startRequest(key string) session.StartRequest {
 
 func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$1;
- UPDATE environments SET max_cpu_millis=999 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, computer.ErrInvalidInput) {
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$1`, f.env)
+	f.limits.MaxCPUMillis = 999
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("admitted a whole vCPU below physical bound: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
-	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("physical-cpu"))
+	f.limits.MaxCPUMillis = 2000
+	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("physical-cpu"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 	var wg sync.WaitGroup
 	for range clients {
 		wg.Go(func() {
-			a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("same"))
+			a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("same"))
 			results <- a
 			errs <- err
 		})
@@ -87,12 +87,12 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 	}
 	req := f.startRequest("same")
 	req.Input = json.RawMessage(`[{"type":"text","text":"{\"work\":2}"}]`)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("conflicting retry: %v", err)
 	}
 	// Reconciliation still returns the recorded resolution after defaults disappear.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL,admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
-	if a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("same")); err != nil || !reflect.DeepEqual(a, first) {
+	if a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("same")); err != nil || !reflect.DeepEqual(a, first) {
 		t.Fatalf("retry resolved defaults: %+v %v", a, err)
 	}
 }
@@ -103,7 +103,7 @@ func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 	req := f.startRequest("first")
 	req.SessionKey = &key
 	req.ComputerID = f.computer
-	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,10 +112,10 @@ func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2,close_how=CASE WHEN $2='open' THEN NULL ELSE 'close' END WHERE id=$1`, first.SessionID, state)
 		changed := req
 		changed.IdempotencyKey = state
-		if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), changed); !errors.Is(err, session.ErrConflict) {
+		if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), changed); !errors.Is(err, session.ErrConflict) {
 			t.Fatalf("occupied %s key: %v", state, err)
 		}
-		replay, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+		replay, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 		if err != nil || !reflect.DeepEqual(first, replay) {
 			t.Fatalf("receipt after %s: %+v %v", state, replay, err)
 		}
@@ -137,7 +137,7 @@ func TestRuntimeCreationPinsBothStartAndSpawn(t *testing.T) {
 	for _, method := range []string{"create", "spawn"} {
 		req := f.startRequest(method)
 		req.ComputerID = f.computer
-		a, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, method)
+		a, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, method)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,7 +150,7 @@ func TestRuntimeCreationPinsBothStartAndSpawn(t *testing.T) {
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("late")); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, f.startRequest("late")); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("closed invoking Turn admitted work: %v", err)
 	}
 }
@@ -158,20 +158,21 @@ func TestRuntimeCreationPinsBothStartAndSpawn(t *testing.T) {
 func TestStartBudgetFailureRollsBackPreparationAndComputer(t *testing.T) {
 	f := newAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("limited")); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("limited")); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("rate exhaustion: %v", err)
 	}
 	var clean bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computers WHERE environment_id=$1)=1 AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1) AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1) AND (SELECT count(*) FROM sessions WHERE environment_id=$1)=1`, f.env).Scan(&clean); err != nil || !clean {
 		t.Fatalf("partial admission: %v %v", clean, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=1,max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("disk-limited")); !errors.Is(err, computer.ErrNotReady) {
+	f.limits.MaxReservedStorageBytes = disk.SeedCapacity
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=1 WHERE id=$1`, f.env)
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("disk-limited")); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("disk exhaustion: %v", err)
 	}
 	req := f.startRequest("shared")
 	req.ComputerID = f.computer
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("explicit sharing consumed fresh disk reservation: %v", err)
 	}
 }
@@ -187,7 +188,7 @@ func TestCreateConcurrentDistinctRequestsConflictOnExplicitKey(t *testing.T) {
 		wg.Go(func() {
 			req := f.startRequest(fmt.Sprint(i))
 			req.SessionKey = &key
-			a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+			a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 			results <- a
 			errs <- err
 		})
@@ -223,30 +224,31 @@ func TestCreateConcurrentDistinctRequestsConflictOnExplicitKey(t *testing.T) {
 
 func TestStartAndEnqueueShareOneTokenBudget(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_burst=2,admission_tokens=2,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
+	f.limits.AdmissionBurst = 2
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=2,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
 	req := f.startRequest("first")
 	req.ComputerID = f.computer
-	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	enqueue := session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "second", Input: json.RawMessage(`[]`)}
-	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), enqueue)
+	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), enqueue)
 	if err != nil {
 		t.Fatalf("initial Session consumed more than one token: %v", err)
 	}
-	if retry, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(retry, first) {
+	if retry, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(retry, first) {
 		t.Fatalf("start retry charged: %+v %v", retry, err)
 	}
-	if retry, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), enqueue); err != nil || retry != second {
+	if retry, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), enqueue); err != nil || retry != second {
 		t.Fatalf("enqueue retry charged: %+v %v", retry, err)
 	}
 	req.IdempotencyKey = "third"
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("start bypassed shared budget: %v", err)
 	}
 	enqueue.IdempotencyKey = "fourth"
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), enqueue); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), enqueue); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("enqueue bypassed shared budget: %v", err)
 	}
 	var preserved bool
@@ -276,12 +278,12 @@ func TestRuntimeCreationRechecksTurnAfterLockWait(t *testing.T) {
 	go func() {
 		req := f.startRequest("blocked")
 		req.ComputerID = f.computer
-		_, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+		_, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 		result <- err
 	}()
 	for {
 		var waiting bool
-		if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%current_deployment_id,max_outstanding_admissions%')`).Scan(&waiting); err != nil {
+		if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%SELECT current_deployment_id FROM environments WHERE id=$1 FOR NO KEY UPDATE%')`).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
@@ -316,28 +318,28 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	req := f.startRequest("first")
 	req.SessionKey = &sessionKey
 	req.ComputerID = f.computer
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("view grant created work: %v", err)
 	}
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.create", "computers.execute")
-	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "continue"
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("duplicate creation reused a Session: %v", err)
 	}
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.create", "sessions.send", "computers.execute")
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("send permission bypassed key conflict: %v", err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input}); err != nil {
 		t.Fatalf("explicit send failed: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
 	req.IdempotencyKey = "first"
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked key replayed receipt: %v", err)
 	}
 }
@@ -349,7 +351,7 @@ func TestStartPinsPublishedImageAndPreservesMaximumAge(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("image"))
+	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("image"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,13 +365,13 @@ func TestCreateAllowsOmittedInputAndRejectsFaultedPlacement(t *testing.T) {
 	f := newAdmissionFixture(t)
 	req := f.startRequest("invalid")
 	req.Input = nil
-	if a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil || a.TurnID != uuid.Nil() {
+	if a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); err != nil || a.TurnID != uuid.Nil() {
 		t.Fatalf("empty creation: %+v %v", a, err)
 	}
 	req = f.startRequest("faulted")
 	req.ComputerID = f.computer
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='unrecoverable disk' WHERE environment_id=$1 AND id=$2`, f.env, f.computer)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("faulted explicit placement: %v", err)
 	}
 }
@@ -381,18 +383,17 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
-	// A caller at the configured ancestry bound cannot create a new independent
-	// root to escape that bound. Its causal requester is retained independently of ownership.
+	// A caller at the ancestry bound cannot create a new independent root to
+	// escape that bound. Its causal requester is retained independently of ownership.
 	peer := f.peer(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$3,causal_depth=1 WHERE environment_id=$1 AND id=$2;
- UPDATE environments SET max_causal_depth=1 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$3,causal_depth=$4 WHERE environment_id=$1 AND id=$2`, f.env, f.session, peer.session, session.MaxCausalDepth)
 	req := f.startRequest("too-deep")
 	req.ComputerID = f.computer
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrInvalidInput) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrInvalidInput) {
 		t.Fatalf("independent start reset causal depth: %v", err)
 	}
 	req.EnvironmentID = uuid.NewV7()
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("cross Environment start allowed: %v", err)
 	}
 }
@@ -400,7 +401,7 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	f := newAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET disk_bytes=107374182400 WHERE environment_id=$1`, f.env)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, computer.ErrInvalidInput) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("unsupported disk admitted: %v", err)
 	}
 	var count int
@@ -408,7 +409,7 @@ func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 		t.Fatalf("disk rejection leaked reservation: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET disk_bytes=34359738368 WHERE environment_id=$1`, f.env)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("supported-disk")); err != nil {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("supported-disk")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -421,7 +422,7 @@ func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, method := range []string{"create", "spawn"} {
-		a, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest(method), method)
+		a, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, f.startRequest(method), method)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,10 +445,10 @@ func TestOwnedCallerCannotCreateOrDiscoverNewWork(t *testing.T) {
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
-	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrRootSessionRequired) {
+	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatalf("owned depth admitted: %v", err)
 	}
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrRootSessionRequired) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatal(err)
 	}
 	for _, operation := range []string{"spawn", "start"} {
@@ -461,7 +462,7 @@ func TestStartRejectsNonMember(t *testing.T) {
 	f := newAdmissionFixture(t)
 	user := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'nonmember')`, user)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: user, CredentialID: uuid.NewV7()}, f.startRequest("nonmember")); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, session.Caller{Kind: "user", ID: user, CredentialID: uuid.NewV7()}, f.startRequest("nonmember")); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("nonmember admitted: %v", err)
 	}
 }
@@ -469,12 +470,12 @@ func TestStartRejectsNonMember(t *testing.T) {
 func TestSessionAdmissionUnaffectedByProjectHistoryPolicy(t *testing.T) {
 	f := newAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=3600 WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
-	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("history-first"))
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("history-first"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
-	second, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("history-second"))
+	second, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("history-second"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +483,7 @@ func TestSessionAdmissionUnaffectedByProjectHistoryPolicy(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT a.history_eligible_at IS NULL AND b.history_eligible_at IS NULL FROM sessions a,sessions b WHERE a.environment_id=$1 AND a.id=$2 AND b.environment_id=$1 AND b.id=$3`, f.env, first.SessionID, second.SessionID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("admission history clock: %v %v", valid, err)
 	}
-	replay, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("history-first"))
+	replay, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("history-first"))
 	if err != nil || !reflect.DeepEqual(replay, first) {
 		t.Fatalf("policy update changed retry: %+v %v", replay, err)
 	}
@@ -501,7 +502,7 @@ func TestMCPStartAndSpawnRetainSessionOriginWithoutInventingTurn(t *testing.T) {
 			for _, method := range []string{"create", "spawn"} {
 				req := f.startRequest(method)
 				req.ComputerID = f.computer
-				receipt, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, method)
+				receipt, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, method)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -512,23 +513,23 @@ func TestMCPStartAndSpawnRetainSessionOriginWithoutInventingTurn(t *testing.T) {
                     FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$5`, f.env, receipt.SessionID, f.deployment, f.session, receipt.TurnID, method).Scan(&valid); err != nil || !valid {
 					t.Fatalf("Session origin %v %v", valid, err)
 				}
-				again, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, method)
+				again, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, method)
 				if err != nil || !reflect.DeepEqual(again, receipt) {
 					t.Fatalf("retry %+v %v", again, err)
 				}
-				view, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, receipt.SessionID, receipt.TurnID)
+				view, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, receipt.SessionID, receipt.TurnID)
 				if err != nil || view.Status != "queued" {
 					t.Fatalf("outcome scope %+v %v", view, err)
 				}
 			}
 			req := f.startRequest("")
 			req.ComputerID = f.computer
-			if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrInvalidInput) {
+			if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrInvalidInput) {
 				t.Fatalf("missing key %v", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=2 WHERE id=$1`, f.session)
 			req.IdempotencyKey = "stale-new-admission"
-			if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+			if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 				t.Fatalf("stale caller %v", err)
 			}
 		})

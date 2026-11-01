@@ -3,6 +3,7 @@ package workergroup
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"uuid"
@@ -14,6 +15,7 @@ import (
 type executionPlanStore struct {
 	*db.Queries
 	tx     pgx.Tx
+	limits org.ExecutionLimits
 	claims []db.PendingExecutionClaim
 }
 
@@ -29,7 +31,7 @@ func (s executionPlanStore) ListAllocationPlanningDemand(ctx context.Context, ar
 	budgets := map[uuid.UUID]db.ExecutionBudget{}
 	for _, c := range s.claims {
 		if _, ok := budgets[c.EnvironmentID]; !ok {
-			b, err := db.ReadExecutionBudget(ctx, s.tx, c.EnvironmentID)
+			b, err := db.ReadExecutionBudget(ctx, s.tx, c.EnvironmentID, s.limits.For(c.EnvironmentID).ExecutionBudget())
 			if err != nil {
 				return nil, err
 			}

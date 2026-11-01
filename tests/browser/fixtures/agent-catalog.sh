@@ -24,12 +24,6 @@ psql -X -q -At -v ON_ERROR_STOP=1 -h "${HELMR_DEV_PGSOCKET}" -p "${HELMR_DEV_POS
   -v environment="$1" -v deployment_id="$2" -v agent_id="$3" <<'SQL'
 BEGIN;
 SELECT e.id AS environment_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE p.slug='console-demo' AND e.slug=:'environment' \gset
-UPDATE environments SET max_outstanding_admissions=100,max_causal_depth=8,
-  max_resident_computers=10,max_cpu_millis=10000,max_memory_bytes=10737418240,
-  max_reserved_storage_bytes=1099511627776,preparation_timeout_ms=600000,
-  admission_rate_per_second=100,admission_burst=100,admission_tokens=100,
-  admission_refilled_at=clock_timestamp()
-WHERE id=:'environment_id' AND slug LIKE 'browser-agent-%';
 INSERT INTO deployments(environment_id,id,bundle_digest)
 SELECT id,:'deployment_id','sha256:'||repeat('b',64) FROM environments
 WHERE id=:'environment_id' AND slug LIKE 'browser-agent-%';

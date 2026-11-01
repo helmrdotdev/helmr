@@ -85,11 +85,11 @@ WITH RECURSIVE held AS (
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )
-SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
- (e.max_memory_bytes-usage.memory)::bigint remaining_memory_bytes,
- (e.max_resident_computers-usage.residents)::bigint remaining_residents
+SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, ($1::bigint-usage.cpu)::bigint remaining_cpu_millis,
+ ($2::bigint-usage.memory)::bigint remaining_memory_bytes,
+ ($3::bigint-usage.residents)::bigint remaining_residents
 FROM demand d JOIN environments e ON e.id=d.environment_id
-JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=$1
+JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=$4
 CROSS JOIN LATERAL (
  SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
@@ -110,7 +110,7 @@ WHERE (EXISTS (
   SELECT 1 FROM worker_groups target_group
   JOIN worker_pools pool ON pool.worker_group_id=target_group.id AND pool.status='active'
   JOIN worker_pool_cpu_shapes shape ON shape.worker_pool_id=pool.id
-  WHERE target_group.id=$2 AND target_group.region_id=project_scope.default_region_id
+  WHERE target_group.id=$5 AND target_group.region_id=project_scope.default_region_id
    AND CASE WHEN d.required_vm_platform_id<>'' THEN
     d.required_worker_group_id=target_group.id AND pool.vm_platform_id=d.required_vm_platform_id
     AND shape.vcpu_count=d.required_vm_vcpu_count AND shape.cpu_config_digest=d.required_cpu_config_digest
@@ -122,13 +122,16 @@ WHERE (EXISTS (
     AND pool.per_vm_memory_bytes>=d.memory_bytes
    END
  ) OR (d.kind='computer' AND EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=d.environment_id AND c.id=d.owner_id AND c.execution_deadline_at>statement_timestamp())))
-ORDER BY d.environment_id,d.kind,d.owner_id LIMIT $3
+ORDER BY d.environment_id,d.kind,d.owner_id LIMIT $6
 `
 
 type ListAllocationPlanningDemandParams struct {
-	RegionID      string      `json:"region_id"`
-	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
-	RowLimit      int32       `json:"row_limit"`
+	MaxCpuMillis         int64       `json:"max_cpu_millis"`
+	MaxMemoryBytes       int64       `json:"max_memory_bytes"`
+	MaxResidentComputers int64       `json:"max_resident_computers"`
+	RegionID             string      `json:"region_id"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	RowLimit             int32       `json:"row_limit"`
 }
 
 type ListAllocationPlanningDemandRow struct {
@@ -152,7 +155,14 @@ type ListAllocationPlanningDemandRow struct {
 // Planning counts physical Computer/preparation demand once. Session processes
 // and Commands on a resident Computer consume its existing allocation.
 func (q *Queries) ListAllocationPlanningDemand(ctx context.Context, arg ListAllocationPlanningDemandParams) ([]ListAllocationPlanningDemandRow, error) {
-	rows, err := q.db.Query(ctx, listAllocationPlanningDemand, arg.RegionID, arg.WorkerGroupID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listAllocationPlanningDemand,
+		arg.MaxCpuMillis,
+		arg.MaxMemoryBytes,
+		arg.MaxResidentComputers,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

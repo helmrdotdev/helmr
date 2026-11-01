@@ -59,7 +59,7 @@ type SessionControlReceipt struct {
 
 // ControlSession serializes controls with admission and settlement under the
 // ownership root. Retried acceptance never repeats its lifecycle transition.
-func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
+func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
 	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		caller.ID == uuid.Nil() ||
@@ -335,7 +335,7 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 					return err
 				}
 				if runnable {
-					if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, req.EnvironmentID, id); err != nil {
+					if err = computer.NoteExecutionDemand(ctx, auditPolicy, limits, tx, req.EnvironmentID, id); err != nil {
 						return err
 					}
 				}

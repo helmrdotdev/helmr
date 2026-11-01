@@ -93,9 +93,6 @@ func ListEnvironments(ctx context.Context, q db.Querier, project db.Project) ([]
 // project before the insert.
 func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, input ProjectInput) (db.Project, []db.Environment, error) {
 	orgID := m.OrgID
-	if err := input.ExecutionLimits.Validate(); err != nil {
-		return db.Project{}, nil, err
-	}
 	slug, name, err := normalizeProjectSlugName(input.Slug, input.Name)
 	if err != nil {
 		return db.Project{}, nil, err
@@ -120,23 +117,15 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, inp
 			return err
 		}
 		created, err := q.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-			ID:                       pgvalue.UUID(uuid.NewV7()),
-			OrgID:                    pgvalue.UUID(orgID),
-			DefaultRegionID:          regionID,
-			Slug:                     slug,
-			Name:                     name,
-			IsDefault:                false,
-			EnvironmentID:            pgvalue.UUID(uuid.NewV7()),
-			StagingEnvironmentID:     pgvalue.UUID(uuid.NewV7()),
-			MaxOutstandingAdmissions: input.ExecutionLimits.MaxOutstandingAdmissions,
-			MaxCausalDepth:           int32(input.ExecutionLimits.MaxCausalDepth),
-			MaxResidentComputers:     input.ExecutionLimits.MaxResidentComputers,
-			MaxCpuMillis:             input.ExecutionLimits.MaxCPUMillis,
-			MaxMemoryBytes:           input.ExecutionLimits.MaxMemoryBytes,
-			MaxReservedStorageBytes:  input.ExecutionLimits.MaxReservedStorageBytes,
-			PreparationTimeoutMs:     input.ExecutionLimits.PreparationTimeoutMS,
-			AdmissionRatePerSecond:   input.ExecutionLimits.AdmissionRatePerSecond,
-			AdmissionBurst:           input.ExecutionLimits.AdmissionBurst,
+			ID:                   pgvalue.UUID(uuid.NewV7()),
+			OrgID:                pgvalue.UUID(orgID),
+			DefaultRegionID:      regionID,
+			Slug:                 slug,
+			Name:                 name,
+			IsDefault:            false,
+			EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
+			StagingEnvironmentID: pgvalue.UUID(uuid.NewV7()),
+			AdmissionBurst:       input.ExecutionLimits.AdmissionBurst,
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrProjectSlugInUse
@@ -234,9 +223,6 @@ func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, pro
 // CreateEnvironment adds an environment to an active project.
 func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
 	orgID := m.OrgID
-	if err := limits.Validate(); err != nil {
-		return db.Environment{}, err
-	}
 	slug, name, err := normalizeSlugName(details.Slug, details.Name)
 	if err != nil {
 		return db.Environment{}, err
@@ -255,22 +241,14 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 			return fmt.Errorf("load project: %w", err)
 		}
 		environment, err = q.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-			ID:                       pgvalue.UUID(uuid.NewV7()),
-			OrgID:                    pgvalue.UUID(orgID),
-			ProjectID:                pgvalue.UUID(projectID),
-			Slug:                     slug,
-			Name:                     name,
-			ColorHex:                 details.ColorHex,
-			IsDefault:                false,
-			MaxOutstandingAdmissions: limits.MaxOutstandingAdmissions,
-			MaxCausalDepth:           int32(limits.MaxCausalDepth),
-			MaxResidentComputers:     limits.MaxResidentComputers,
-			MaxCpuMillis:             limits.MaxCPUMillis,
-			MaxMemoryBytes:           limits.MaxMemoryBytes,
-			MaxReservedStorageBytes:  limits.MaxReservedStorageBytes,
-			PreparationTimeoutMs:     limits.PreparationTimeoutMS,
-			AdmissionRatePerSecond:   limits.AdmissionRatePerSecond,
-			AdmissionBurst:           limits.AdmissionBurst,
+			ID:             pgvalue.UUID(uuid.NewV7()),
+			OrgID:          pgvalue.UUID(orgID),
+			ProjectID:      pgvalue.UUID(projectID),
+			Slug:           slug,
+			Name:           name,
+			ColorHex:       details.ColorHex,
+			IsDefault:      false,
+			AdmissionBurst: limits.AdmissionBurst,
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrEnvironmentSlugInUse

@@ -77,7 +77,7 @@ func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
 	}
 	req := controlRequest(f, "interrupt", "early-stop")
 	req.InterruptQueued = true
-	stop, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+	stop, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
 	}
 	resume := controlRequest(f, "resume", "resume-after-stop")
 	resume.HoldID = stop.HoldID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "new-message")

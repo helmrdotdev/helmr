@@ -26,7 +26,7 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "child-agent")
 	turn := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2; INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,request_digest,terminal_at,processing_closed_at) VALUES($1,$4,$2,$3,1,'cancelled','session',$5,'spawn',$2,decode(repeat('00',32),'hex'),clock_timestamp(),clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.env, child, f.computer, turn, f.session)
-	if _, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, child, turn); err != nil {
+	if _, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, child, turn); err != nil {
 		t.Fatalf("runtime historical outcome: %v", err)
 	}
 	if _, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, child); err != nil {
@@ -35,10 +35,10 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	req := f.startRequest("deleted-child")
 	req.Agent = "child-agent"
 	req.ComputerID = f.computer
-	if _, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn"); !errors.Is(err, session.ErrAgentDeleted) {
+	if _, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, "spawn"); !errors.Is(err, session.ErrAgentDeleted) {
 		t.Fatalf("deleted pinned child admitted: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: child, Kind: "cancel", IdempotencyKey: "stop-deleted-child"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: child, Kind: "cancel", IdempotencyKey: "stop-deleted-child"}); err != nil {
 		t.Fatalf("runtime stop of settled deleted child: %v", err)
 	}
 	otherUser := uuid.NewV7()
@@ -49,29 +49,29 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'unrelated')`, otherUser)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), orgID, otherUser)
 	dbtest.GrantMember(t, f.pool, orgID, otherUser, &f.env, "sessions.create")
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: otherUser, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: child, IdempotencyKey: "unrelated", Input: []byte(`[{"type":"text","text":"unrelated"}]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, session.Caller{Kind: "user", ID: otherUser, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: child, IdempotencyKey: "unrelated", Input: []byte(`[{"type":"text","text":"unrelated"}]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unauthorized caller learned deletion state: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, otherUser)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: otherUser, CredentialID: uuid.NewV7()}, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, session.Caller{Kind: "user", ID: otherUser, CredentialID: uuid.NewV7()}, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unauthorized start learned deletion state: %v", err)
 	}
-	held, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	held, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = held.HoldID
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), resume); err != nil {
 		t.Fatalf("deleted settled child blocks parent resume: %v", err)
 	}
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatalf("parent cancellation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agents SET deleted_at=NULL,revision=revision+1 WHERE environment_id=$1 AND id=$2`, f.env, target)
 	// Runtime execution identity changed with the parent controls; use an external
 	// root admission to verify the restored target becomes available again.
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("restored Agent unavailable: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestAgentDeletionCancelsSessionsAndCleanupContinues(t *testing.T) {
 	}
 	// A repeated cancel of the closed Session records nothing.
 	before := countRows(t, f, f.session)
-	if receipt, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "after-delete")); !errors.Is(err, session.ErrAgentDeleted) && (err != nil || receipt.Status != "closed") {
+	if receipt, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "after-delete")); !errors.Is(err, session.ErrAgentDeleted) && (err != nil || receipt.Status != "closed") {
 		t.Fatalf("cancel after delete: %+v %v", receipt, err)
 	}
 	if after := countRows(t, f, f.session); after != before {
@@ -165,13 +165,13 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			go func() {
 				<-start
 				if kind == "schedule" {
-					admitted <- agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, activation)
+					admitted <- agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, activation)
 					return
 				}
 				req := f.startRequest("racing-child")
 				req.Agent = "child-agent"
 				req.ComputerID = f.computer
-				_, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn")
+				_, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, "spawn")
 				admitted <- err
 			}()
 			close(start)
@@ -199,7 +199,7 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 				if _, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "2", true, false); err != nil {
 					t.Fatal(err)
 				}
-				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, activation); err != nil {
+				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, activation); err != nil {
 					t.Fatal(err)
 				}
 				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&sessions); err != nil || sessions != before {

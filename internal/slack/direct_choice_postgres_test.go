@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/http"
 	"strings"
 	"sync"
@@ -76,7 +77,7 @@ func TestDirectChoiceUsesVerifiedActorAndExactQuestion(t *testing.T) {
 			var wg sync.WaitGroup
 			for range 3 {
 				wg.Go(func() {
-					if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, receipt); err != nil {
+					if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, receipt); err != nil {
 						t.Error(err)
 					}
 				})
@@ -115,7 +116,7 @@ func TestDirectChoiceUsesVerifiedActorAndExactQuestion(t *testing.T) {
 			c.Nonce = uuid.NewV7()
 			c.OptionID = "no"
 			later := f.controlReceipt(t, c, nil)
-			if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, later); err != nil {
+			if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, later); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.Pool.QueryRow(t.Context(), `SELECT error FROM slack_requests WHERE id=$1`, later).Scan(&code); err != nil || code != "ask_already_answered" {

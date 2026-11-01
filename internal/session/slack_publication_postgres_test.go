@@ -31,11 +31,11 @@ func TestSlackRevokedSourceDoesNotBlockIndependentWork(t *testing.T) {
 			caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
-			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, nil, caller, req); err != nil {
+			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, nil, caller, req); err != nil {
 				t.Fatal(err)
 			}
 			req.IdempotencyKey = "child"
-			child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+			child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 			if err != nil {
 				t.Fatal(err)
 			}

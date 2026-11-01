@@ -130,16 +130,16 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 				host = *f.host()
 				p, _ = sourceAbort(t, f)
 				e = f.execution()
-				if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return session.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
+					return session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, true, false))
 				}
 				complete = func() error {
 					return session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 						RetentionSeconds: 3600,
-					}, f.pool, host, f.env, p, abortReceipt(p, true, true))
+					}, f.limits, f.pool, host, f.env, p, abortReceipt(p, true, true))
 				}
 			}
 			if err := commit(); err != nil {
@@ -164,7 +164,7 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 			if target {
 				observed = restoreReceipt(p, true, false)
 			}
-			controls, err := session.ReadComputerContinuationControls(t.Context(), f.pool, host, f.env, p, observed)
+			controls, err := session.ReadComputerContinuationControls(t.Context(), f.limits, f.pool, host, f.env, p, observed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -215,20 +215,20 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := abortReceipt(p, false, false)
-	p, err = session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), 1, p.Envelope.ChannelCredential, initial)
+	p, err = session.PrepareComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), 1, p.Envelope.ChannelCredential, initial)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(p.StoppedSessions) != 1 || p.StoppedSessions[0].SessionId != peer.session.String() {
 		t.Fatalf("stop set: %v", p.StoppedSessions)
 	}
-	if err = session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
+	if err = session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err = session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	controls, err := session.ReadComputerContinuationControls(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false))
+	controls, err := session.ReadComputerContinuationControls(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	if err = session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "healthy")

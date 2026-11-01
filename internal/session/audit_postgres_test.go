@@ -22,11 +22,11 @@ func TestAuditStartAtomicReceiptAndCredential(t *testing.T) {
 	caller.CredentialID, caller.CredentialKind = uuid.NewV7(), "login_session"
 	req := f.startRequest("audit-start")
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
-	receipt, err := session.Start(t.Context(), policy, f.pool, nil, caller, req)
+	receipt, err := session.Start(t.Context(), policy, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.Start(t.Context(), policy, f.pool, nil, caller, req); err != nil {
+	if _, err = session.Start(t.Context(), policy, f.limits, f.pool, nil, caller, req); err != nil {
 		t.Fatal(err)
 	}
 	var count, operations int
@@ -38,7 +38,7 @@ func TestAuditStartAtomicReceiptAndCredential(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_session_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_session_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_session_audit()`)
 	req.IdempotencyKey = "audit-failed"
-	if _, err = session.Start(t.Context(), policy, f.pool, nil, caller, req); !errors.Is(err, audit.ErrCapture) {
+	if _, err = session.Start(t.Context(), policy, f.limits, f.pool, nil, caller, req); !errors.Is(err, audit.ErrCapture) {
 		t.Fatalf("capture failure: %v", err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND creation_idempotency_key='audit-failed'`, f.env).Scan(&count); err != nil || count != 0 {
@@ -49,7 +49,7 @@ func TestAuditStartAtomicReceiptAndCredential(t *testing.T) {
 func TestAuditContentCaptureFailureWithholdsData(t *testing.T) {
 	f := newAdmissionFixture(t)
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
-	receipt, err := session.Start(t.Context(), policy, f.pool, nil, f.caller(), f.startRequest("content-audit"))
+	receipt, err := session.Start(t.Context(), policy, f.limits, f.pool, nil, f.caller(), f.startRequest("content-audit"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,14 +74,14 @@ func TestAuditControlRollsBackAndDeduplicates(t *testing.T) {
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	req := f.startRequest("control-audit")
 	req.Input = nil
-	receipt, err := session.Start(t.Context(), policy, f.pool, nil, f.caller(), req)
+	receipt, err := session.Start(t.Context(), policy, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_control_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_control_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_control_audit()`)
 	control := session.SessionControlRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Kind: "close", IdempotencyKey: "close"}
-	if _, err = session.ControlSession(t.Context(), policy, f.pool, f.caller(), control); !errors.Is(err, audit.ErrCapture) {
+	if _, err = session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), control); !errors.Is(err, audit.ErrCapture) {
 		t.Fatalf("capture failure: %v", err)
 	}
 	var status string
@@ -90,7 +90,7 @@ func TestAuditControlRollsBackAndDeduplicates(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_control_audit ON audit_events`)
 	for range 2 {
-		if _, err = session.ControlSession(t.Context(), policy, f.pool, f.caller(), control); err != nil {
+		if _, err = session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), control); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestAuditWorkerStopAttributionAndRollback(t *testing.T) {
 func TestAuditComputerControlSettlementRollback(t *testing.T) {
 	f := newFixture(t)
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
-	accepted, err := session.ControlComputerExecution(t.Context(), policy, f.pool, f.caller(), f.executionRequest("hibernate", "audit-settlement"))
+	accepted, err := session.ControlComputerExecution(t.Context(), policy, f.limits, f.pool, f.caller(), f.executionRequest("hibernate", "audit-settlement"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestAuditComputerControlRejectsRotatedCredentialAfterOwnerWait(t *testing.T
 			policy := auditpolicy.Policy{RetentionSeconds: 3600}
 			req := f.executionRequest("hibernate", "rotation")
 			if replay {
-				if _, err := session.ControlComputerExecution(t.Context(), policy, f.pool, caller, req); err != nil {
+				if _, err := session.ControlComputerExecution(t.Context(), policy, f.limits, f.pool, caller, req); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -243,7 +243,7 @@ func TestAuditComputerControlRejectsRotatedCredentialAfterOwnerWait(t *testing.T
 				t.Fatal(err)
 			}
 			err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
-				_, err := session.ControlComputerExecution(ctx, policy, f.pool, caller, req)
+				_, err := session.ControlComputerExecution(ctx, policy, f.limits, f.pool, caller, req)
 				return err
 			})
 			if !errors.Is(err, session.ErrDenied) {
@@ -333,7 +333,7 @@ func TestAuditControlRequestActionsAndTargets(t *testing.T) {
 				targetKind, targetID, action = "turn", turn.TurnID, "turn.interrupt_requested"
 			}
 			if kind == "resume" {
-				hold, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), controlRequest(f, "interrupt", "prepare"))
+				hold, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "prepare"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -342,7 +342,7 @@ func TestAuditControlRequestActionsAndTargets(t *testing.T) {
 			var receipt session.SessionControlReceipt
 			for range 2 {
 				var err error
-				receipt, err = session.ControlSession(t.Context(), policy, f.pool, f.caller(), req)
+				receipt, err = session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), req)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -361,11 +361,11 @@ func TestAuditComputerRequestsIdentifyOperationAndReplay(t *testing.T) {
 			f := newFixture(t)
 			policy := auditpolicy.Policy{RetentionSeconds: 3600}
 			req := f.executionRequest(kind, "audit-operation")
-			accepted, err := session.ControlComputerExecution(t.Context(), policy, f.pool, f.caller(), req)
+			accepted, err := session.ControlComputerExecution(t.Context(), policy, f.limits, f.pool, f.caller(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.ControlComputerExecution(t.Context(), policy, f.pool, f.caller(), req); err != nil {
+			if _, err := session.ControlComputerExecution(t.Context(), policy, f.limits, f.pool, f.caller(), req); err != nil {
 				t.Fatal(err)
 			}
 			var valid bool

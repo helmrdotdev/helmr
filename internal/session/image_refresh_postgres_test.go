@@ -69,10 +69,10 @@ func TestImageRefreshConcurrentAdmissionAndCadenceCoalescing(t *testing.T) {
 	}
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(p.status='queued' AND p.worker_host_id IS NULL
- AND p.deadline_at>clock_timestamp() AND p.deadline_at<=clock_timestamp()+e.preparation_timeout_ms*interval '1 millisecond'
+ AND p.deadline_at>clock_timestamp() AND p.deadline_at<=clock_timestamp()+$2*interval '1 millisecond'
  AND s.next_refresh_at>clock_timestamp()+interval '55 seconds' AND s.next_refresh_at<=clock_timestamp()+interval '60 seconds')
- FROM image_builds p JOIN environments e ON e.id=p.environment_id JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
- WHERE p.environment_id=$1`, f.env).Scan(&valid); err != nil || !valid {
+ FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
+ WHERE p.environment_id=$1`, f.env, computer.BackgroundImageBuildTimeout.Milliseconds()).Scan(&valid); err != nil || !valid {
 		t.Fatalf("invalid refresh admission: %v %v", valid, err)
 	}
 	// A later due interval shares a usable attempt without stacking another job.

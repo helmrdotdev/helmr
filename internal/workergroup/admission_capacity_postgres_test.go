@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"time"
 
@@ -17,27 +18,27 @@ func TestCapacityEnvelopeFencesInventoryAndObservationAge(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	request := PlanRequest{ExpectedSupplyFingerprint: fingerprint, ObservedAt: now, Pools: []PoolRequest{{PoolID: pgvalue.UUIDString(pool.ID), MaxAdditionalWorkers: 1}}}
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), request, now); err != nil {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), request, now); err != nil {
 		t.Fatal(err)
 	}
 	stale := request
 	stale.ObservedAt = now.Add(-time.Minute)
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), stale, now); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), stale, now); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("stale: %v", err)
 	}
 	future := request
 	future.ObservedAt = now.Add(time.Second)
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), future, now); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), future, now); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("future: %v", err)
 	}
 	older := request
 	older.ObservedAt = now.Add(-time.Second)
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), older, now); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), older, now); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("out of order: %v", err)
 	}
 	mismatch := request
 	mismatch.Pools = []PoolRequest{{PoolID: pgvalue.UUIDString(pool.ID), MaxAdditionalWorkers: 2, ActiveWorkers: 1}}
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), mismatch, now); err != nil {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), mismatch, now); err != nil {
 		t.Fatalf("coverage: %v", err)
 	}
 	f.activeHost(t, pool, "new-host")
@@ -46,7 +47,7 @@ func TestCapacityEnvelopeFencesInventoryAndObservationAge(t *testing.T) {
 		t.Fatalf("topology fingerprint unchanged: %v", err)
 	}
 	request.ObservedAt = time.Now().UTC()
-	if _, err = ObserveCapacityPlan(t.Context(), f.pool, f.groupID(), request, time.Now()); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err = ObserveCapacityPlan(t.Context(), f.pool, sessiontest.ExecutionLimits(), f.groupID(), request, time.Now()); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("stale topology: %v", err)
 	}
 	var retained time.Time

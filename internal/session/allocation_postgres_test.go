@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"testing"
 	"uuid"
 
@@ -27,15 +28,11 @@ func preparationAllocationFixture(t *testing.T) (preparationFixture, computer.Im
 	f := preparationFixtureFor(t, newAdmissionFixture(t))
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1;
- UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3;
  UPDATE template_definitions SET cpu_millis=500 WHERE environment_id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
-	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return f, f.attach(t, f.waiter(t)), a
+	f.limits.MaxResidentComputers = 1
+	f.limits.MaxCPUMillis = 2000
+	f.limits.MaxMemoryBytes = 1073741824
+	return f, f.attach(t, f.waiter(t)), testAllocator(t, f.pool, f.limits, nil)
 }
 
 func TestAllocationPreparationUsesResourcesWithoutComputerCount(t *testing.T) {
@@ -57,8 +54,9 @@ func TestAllocationPreparationUsesResourcesWithoutComputerCount(t *testing.T) {
 }
 
 func TestAllocationPreparationCapacityFailureRollsBack(t *testing.T) {
-	f, p, a := preparationAllocationFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1999 WHERE id=$1`, f.env)
+	f, p, _ := preparationAllocationFixture(t)
+	f.limits.MaxCPUMillis = 1999
+	a := testAllocator(t, f.pool, f.limits, nil)
 	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("overcommitted physical CPU: %v", err)
 	}
@@ -76,7 +74,7 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 	}
 	wrong, _ := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{20}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{20}, 32), nil)
 	if _, err := wrong.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("mismatched key accepted: %v", err)
 	}
@@ -95,7 +93,7 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 	}
 	restarted, _ := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), nil)
 	again, err := restarted.DeliverImageBuild(t.Context(), *f.host(), computer.ImageBuildIdentity{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
 	if err != nil {
 		t.Fatal(err)
@@ -111,14 +109,17 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 
 func freshComputerAllocationFixture(t *testing.T) (fixture, *dispatch.Allocator, uuid.UUID) {
 	t.Helper()
-	f, _, a := preparationAllocationFixture(t)
+	f, _, _ := preparationAllocationFixture(t)
 	p, key := preparationPublicationTestFor(t, f)
 	root := p.captureCapacity(t, key, disk.SeedCapacity)
 	if err := p.publisher.Publish(t.Context(), *f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=8000,max_memory_bytes=8589934592,max_resident_computers=3 WHERE id=$1`, f.env)
-	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("fresh-allocation"))
+	f.limits.MaxCPUMillis = 8000
+	f.limits.MaxMemoryBytes = 8589934592
+	f.limits.MaxResidentComputers = 3
+	a := testAllocator(t, f.pool, f.limits, nil)
+	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("fresh-allocation"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,15 +212,17 @@ func TestAllocationDiscoveryAdvancesPastFullHostPage(t *testing.T) {
 func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	cp := readyCheckpointFixture(t)
 	f := cp.f
+	f.limits.MaxResidentComputers = 1
+	f.limits.MaxCPUMillis = 2000
+	f.limits.MaxMemoryBytes = 1073741824
 	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
- UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1;
- UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
+ UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group)
 	if _, err := a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("source still owns VM: %v", err)
 	}
@@ -401,18 +404,20 @@ func TestAllocationComputerDeliveryDistinguishesPauseFromDrain(t *testing.T) {
 func TestAllocationRestoreDiscoversCompatibleNonPrimaryPool(t *testing.T) {
 	cp := readyCheckpointFixture(t)
 	f := cp.f
+	f.limits.MaxResidentComputers = 1
+	f.limits.MaxCPUMillis = 2000
+	f.limits.MaxMemoryBytes = 1073741824
 	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	target, primary := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$4::text,'name','future-primary'))).* FROM worker_pools p JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$1;
- UPDATE worker_groups SET primary_pool_id=$4 WHERE id=$2;
- INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$5::text,'resource_id',$5::text,'per_vm_guest_ephemeral_disk_bytes',2147483648))).* FROM worker_hosts h WHERE h.id=$1;
- UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id IN ($1,$5);
- UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env, primary, target)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$3::text,'name','future-primary'))).* FROM worker_pools p JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$1;
+ UPDATE worker_groups SET primary_pool_id=$3 WHERE id=$2;
+ INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$4::text,'resource_id',$4::text,'per_vm_guest_ephemeral_disk_bytes',2147483648))).* FROM worker_hosts h WHERE h.id=$1;
+ UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id IN ($1,$4)`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, primary, target)
 	f.enqueue(t, "restore-demand")
 	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
@@ -506,7 +511,7 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	f := newFixture(t)
 	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,12 +694,12 @@ func TestAllocationPreparationRemainsInDrainReadinessUntilFenced(t *testing.T) {
 }
 
 // testAllocator builds an allocator with the fixtures' channel key over the
-// given database and Secret trust issuer.
-func testAllocator(t *testing.T, database db.TxDB, trust dispatch.ImageBuildTrustIssuer) *dispatch.Allocator {
+// given database, execution limits and Secret trust issuer.
+func testAllocator(t *testing.T, database db.TxDB, limits org.ExecutionLimits, trust dispatch.ImageBuildTrustIssuer) *dispatch.Allocator {
 	t.Helper()
 	a, err := dispatch.NewAllocator(database, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), trust)
+	}, limits, bytes.Repeat([]byte{19}, 32), trust)
 	if err != nil {
 		t.Fatal(err)
 	}

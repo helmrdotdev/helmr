@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"sync"
 	"testing"
 	"uuid"
@@ -21,30 +22,33 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope) {
+// computerStorageFixture's Environment has room for exactly the fixture
+// Computer's storage reservation.
+func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope, org.ExecutionLimits) {
 	t.Helper()
 	f := sessiontest.New(t)
 	sessiontest.ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
- UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;
- UPDATE environments SET max_reserved_storage_bytes=$4 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+ UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	scope := computer.Scope{EnvironmentID: f.Environment}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	return f, scope
+	limits := sessiontest.ExecutionLimits()
+	limits.MaxReservedStorageBytes = disk.SeedCapacity
+	return f, scope, limits
 }
 
 func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
-	f, scope := computerStorageFixture(t)
+	f, scope, limits := computerStorageFixture(t)
 	start := func(key string) error {
-		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, limits, f.Pool, nil, session.UserCaller(f.Principal(t)), session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 		return err
 	}
 	assertStatus := func(want computer.Status) {
 		t.Helper()
-		snapshot, err := computer.Read(t.Context(), f.Pool, scope, f.Computer)
+		snapshot, err := computer.Read(t.Context(), f.Pool, limits, scope, f.Computer)
 		if err != nil || snapshot.Status != want {
 			t.Fatalf("Computer status=%s want=%s error=%v", snapshot.Status, want, err)
 		}
@@ -125,10 +129,10 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("failed=%t", failed), func(t *testing.T) {
-			f, scope := computerStorageFixture(t)
+			f, scope, limits := computerStorageFixture(t)
 			// Leave the original live Computer in place and make one free slot.
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.Environment, 2*disk.SeedCapacity)
-			creator := computer.NewCreator(nil, auditpolicy.Policy{RetentionSeconds: 3600})
+			limits.MaxReservedStorageBytes = 2 * disk.SeedCapacity
+			creator := computer.NewCreator(nil, auditpolicy.Policy{RetentionSeconds: 3600}, limits)
 			created, err := creator.Create(t.Context(), f.Pool, computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "first"})
 			if err != nil {
 				t.Fatal(err)
@@ -142,7 +146,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := computer.Read(t.Context(), f.Pool, scope, created.ComputerID)
+			snapshot, err := computer.Read(t.Context(), f.Pool, limits, scope, created.ComputerID)
 			if err != nil || snapshot.Status != computer.StatusDeleted {
 				t.Fatalf("uninitialized deletion: %+v %v", snapshot, err)
 			}

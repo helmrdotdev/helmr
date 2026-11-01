@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -26,11 +27,11 @@ func TestSlackNativeStopWaitsForCessationBeforeNoticeAndNewDispatch(t *testing.T
 				t.Fatal(err)
 			}
 			stopped := f.nativeStop(t, "stop")
-			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stopped); err != nil {
+			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, stopped); err != nil {
 				t.Fatal(err)
 			}
 			again := f.nativeStop(t, "stop-again")
-			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, again); err != nil {
+			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, again); err != nil {
 				t.Fatal(err)
 			}
 			projectAllActivity(t, f)
@@ -45,7 +46,7 @@ func TestSlackNativeStopWaitsForCessationBeforeNoticeAndNewDispatch(t *testing.T
 			incoming := func() {
 				t.Helper()
 				id := f.reply(t, "new-work", false)
-				if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+				if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -99,7 +100,7 @@ func TestSlackProjectionDiscoversLaterPhysicalFenceWithoutNewEvent(t *testing.T)
 	f.link(t)
 	f.outputWriter(t)("Original explanation.")
 	stopped := f.nativeStop(t, "stop")
-	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stopped); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, stopped); err != nil {
 		t.Fatal(err)
 	}
 	// This is the persisted shape of loss followed by later physical fencing:
@@ -161,7 +162,7 @@ func TestSlackProjectionDisposesControlsForInactiveSources(t *testing.T) {
 func TestSlackNativeStopBeforeStartupPostsCessationAndAdmitsNewMessage(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "first", Input: json.RawMessage(`[]`)})
+	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "first", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +170,7 @@ func TestSlackNativeStopBeforeStartupPostsCessationAndAdmitsNewMessage(t *testin
 		t.Fatal(err)
 	}
 	stopped := f.nativeStop(t, "immediate-stop")
-	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stopped); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, stopped); err != nil {
 		t.Fatal(err)
 	}
 	e, host := activityExecution(f), activityHost(f)
@@ -192,7 +193,7 @@ func TestSlackNativeStopBeforeStartupPostsCessationAndAdmitsNewMessage(t *testin
 		t.Fatalf("missing cessation: %d %v", count, err)
 	}
 	incoming := f.reply(t, "after-stop", false)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), incoming); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), incoming); err != nil {
 		t.Fatal(err)
 	}
 	var correct bool

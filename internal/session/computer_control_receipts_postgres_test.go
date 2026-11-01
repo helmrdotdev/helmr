@@ -95,16 +95,16 @@ func TestComputerCompletionRequiresDurableReceipts(t *testing.T) {
 					f = newFixture(t)
 					host = *f.host()
 					p, _ = sourceAbort(t, f)
-					if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
+					if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
 						t.Fatal(err)
 					}
 					commit = func() error {
-						return session.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
+						return session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, true, false))
 					}
 					complete = func() error {
 						return session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 							RetentionSeconds: 3600,
-						}, f.pool, host, f.env, p, abortReceipt(p, true, true))
+						}, f.limits, f.pool, host, f.env, p, abortReceipt(p, true, true))
 					}
 				}
 				if scenario == "pre-activation" {
@@ -156,10 +156,10 @@ func TestSourceContinuationRejectsDelayedPreFreezeReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbort(t, f)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, "", 0); !errors.Is(err, session.ErrConflict) {
@@ -173,12 +173,12 @@ func TestSourceContinuationRejectsDelayedPreFreezeReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An uncertain activation-commit reply retries without invalidating the new receipt.
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -186,24 +186,24 @@ func TestSourceContinuationRejectsDelayedPreFreezeReceipt(t *testing.T) {
 func TestSourceContinuationCompletesAfterStoppedPeerGenerationAdvances(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
-	held, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(peer, "interrupt", "held-peer"))
+	held, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(peer, "interrupt", "held-peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbort(t, f)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(peer, "cancel", "cancel-peer")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(peer, "cancel", "cancel-peer")); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	release := controlRequest(peer, "resume", "release-stopped-peer")
 	release.HoldID = held.HoldID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), release); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), release); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), peer.execution()); !errors.Is(err, session.ErrNotReady) {
@@ -211,7 +211,7 @@ func TestSourceContinuationCompletesAfterStoppedPeerGenerationAdvances(t *testin
 	}
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "healthy-after-stopped-peer")

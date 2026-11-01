@@ -2,6 +2,7 @@ package command
 
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -19,7 +20,7 @@ func TestQueuedCommandRetainsAcceptedAuthority(t *testing.T) {
 				dbtest.SetAPIKeyRole(t, f.Pool, key, "computers.execute")
 				request.Creator = Creator{Kind: "api_key", ID: key}
 			}
-			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, request)
+			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +37,7 @@ func TestQueuedCommandRetainsAcceptedAuthority(t *testing.T) {
 				t.Fatalf("accepted command did not dispatch: %+v, %v", claimed, err)
 			}
 			request.IdempotencyKey = "after-revocation"
-			if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, request); err == nil {
+			if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, request); err == nil {
 				t.Fatal("revoked caller submitted new command")
 			}
 			got := f.get(t, uuid.UUID(c.ID.Bytes))
@@ -62,7 +63,7 @@ func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 
 func TestQueuedCommandSurvivesLogoutAndAccountRevocation(t *testing.T) {
 	f := commandFixture(t)
-	c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("auth-lifetime"))
+	c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("auth-lifetime"))
 	if err != nil {
 		t.Fatal(err)
 	}

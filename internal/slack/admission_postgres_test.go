@@ -43,7 +43,7 @@ func TestSlackBoundReplyCommitsOneCoreTurnAndExactReceipt(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id)
 			if err != nil {
 				t.Errorf("admission: %v", err)
 			}
@@ -63,7 +63,7 @@ func TestSlackBoundReplyCommitsOneCoreTurnAndExactReceipt(t *testing.T) {
 func TestSlackAdmissionKeepsTheVerifiedChannelName(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), f.reply(t, "named", false)); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), f.reply(t, "named", false)); err != nil {
 		t.Fatal(err)
 	}
 	var name string
@@ -92,11 +92,11 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
 			case "closed":
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id)
 			if err != nil {
 				t.Fatalf("admission: %v", err)
 			}
@@ -117,7 +117,7 @@ func TestSlackBoundReplyRollsBackCoreWhenReceiptCannotCommit(t *testing.T) {
 	f.link(t)
 	id := f.reply(t, "reply", false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT reject_acceptance CHECK(status<>'accepted')`)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err == nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err == nil {
 		t.Fatal("receipt failure missing")
 	}
 	var count int
@@ -125,7 +125,7 @@ func TestSlackBoundReplyRollsBackCoreWhenReceiptCannotCommit(t *testing.T) {
 		t.Fatalf("core escaped failed receipt transaction: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests DROP CONSTRAINT reject_acceptance`)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatalf("retry failed: %v", err)
 	}
 }
@@ -149,7 +149,7 @@ func TestSlackBoundReplyExpiresWhileCoreAdmissionWaits(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+		err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id)
 		result <- err
 	}()
 	observed := false
@@ -213,7 +213,7 @@ func TestSlackNewHumanThreadCreatesOneSessionAndBindsLaterReplies(t *testing.T) 
 	var wg sync.WaitGroup
 	for _, id := range []uuid.UUID{first, second, first, second} {
 		wg.Go(func() {
-			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 				t.Errorf("admission: %v", err)
 			}
 		})
@@ -222,7 +222,7 @@ func TestSlackNewHumanThreadCreatesOneSessionAndBindsLaterReplies(t *testing.T) 
 	// A concurrent root lookup can consume the read budget before the winning
 	// admission commits. The next worker pass uses the now-pinned root.
 	for _, id := range []uuid.UUID{first, second} {
-		if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+		if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -242,7 +242,7 @@ func TestSlackNewHumanRootAcceptsText(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	f.link(t)
 	id := f.newMessage(t, "new", "")
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatalf("admission: %v", err)
 	}
 	var accepted bool
@@ -268,7 +268,7 @@ func TestSlackHistoricalRootCannotBindAcrossConnectionGeneration(t *testing.T) {
 	f.installation = nextInstallation
 	f.link(t)
 	id := f.newMessage(t, "old-root", "123.456")
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
@@ -293,7 +293,7 @@ func TestSlackNewHumanRootDoesNotWaitForAgentToReturnToDeployment(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$2,'sha256:'||repeat('2',64) FROM deployments WHERE environment_id=$1 AND id=$3;
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, absent, f.Deployment)
 	id := f.newMessage(t, "missing-agent", "")
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatalf("admission: %v", err)
 	}
 	var rejected bool
@@ -301,7 +301,7 @@ func TestSlackNewHumanRootDoesNotWaitForAgentToReturnToDeployment(t *testing.T) 
 		t.Fatalf("missing Agent parked request: %v %v", rejected, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	var count int
@@ -325,7 +325,7 @@ func TestSlackSelectorTextDoesNotChangeFront(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	f.link(t)
 	id := f.selectedMessage(t, "literal-selector")
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
@@ -339,7 +339,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	f.link(t)
 	ctx := t.Context()
 	first := f.reply(t, "initial-source", false)
-	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), first); err != nil {
+	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), first); err != nil {
 		t.Fatal(err)
 	}
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
@@ -368,7 +368,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), second.ID); err != nil {
+	if err = admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), second.ID); err != nil {
 		t.Fatal(err)
 	}
 	attachment, err := session.AcquireRuntimeAttachment(ctx, f.Pool, host, e)

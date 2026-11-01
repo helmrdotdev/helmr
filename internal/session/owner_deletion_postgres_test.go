@@ -91,15 +91,15 @@ func TestComputerDeletionRacesLeaveNothingLive(t *testing.T) {
 			race(func() error {
 				req := f.startRequest("racing-start")
 				req.ComputerID = f.computer
-				_, err := session.Start(ctx, policy, f.pool, nil, f.caller(), req)
+				_, err := session.Start(ctx, policy, f.limits, f.pool, nil, f.caller(), req)
 				return err
 			})
 			race(func() error {
-				_, err := session.Enqueue(ctx, policy, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "racing-enqueue", Input: json.RawMessage(`[{"type":"text","text":"race"}]`)})
+				_, err := session.Enqueue(ctx, policy, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "racing-enqueue", Input: json.RawMessage(`[{"type":"text","text":"race"}]`)})
 				return err
 			})
 			race(func() error {
-				_, err := command.Create(ctx, policy, f.pool, command.CreateRequest{OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: f.env, ComputerID: f.computer, Creator: command.Creator{Human: principal, Kind: string(auth.PrincipalKindSession), ID: principal.SessionID, UserID: f.user}, Argv: []string{"true"}, IdempotencyKey: "racing-command"})
+				_, err := command.Create(ctx, policy, f.limits, f.pool, command.CreateRequest{OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: f.env, ComputerID: f.computer, Creator: command.Creator{Human: principal, Kind: string(auth.PrincipalKindSession), ID: principal.SessionID, UserID: f.user}, Argv: []string{"true"}, IdempotencyKey: "racing-command"})
 				return err
 			})
 			close(start)

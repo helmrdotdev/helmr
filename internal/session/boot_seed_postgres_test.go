@@ -72,7 +72,7 @@ func TestBootSeedAllocationRetainsCapacityUntilPhysicalStop(t *testing.T) {
 	}
 	other, _ := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{20}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{20}, 32), nil)
 	if _, err := other.DeliverBootSeed(t.Context(), *f.host(), bootSeedReceipt(r)); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("credential authority: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestBootSeedHostRecoveryRetainsUnknownQualificationVM(t *testing.T) {
 func TestBootSeedBacklogDoesNotCreatePlanningDemand(t *testing.T) {
 	p, _, _ := bootSeedFixture(t)
 	f := p.f
-	rows, err := db.New(f.pool).ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.group), RowLimit: 100})
+	rows, err := db.New(f.pool).ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{MaxCpuMillis: f.limits.MaxCPUMillis, MaxMemoryBytes: f.limits.MaxMemoryBytes, MaxResidentComputers: f.limits.MaxResidentComputers, RegionID: "test", WorkerGroupID: pgvalue.UUID(f.group), RowLimit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

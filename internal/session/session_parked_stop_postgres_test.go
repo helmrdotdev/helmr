@@ -33,7 +33,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				if order == "park-before-control" {
 					park()
 				}
-				if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
+				if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
 					t.Fatal(err)
 				}
 				if order == "control-before-park" {
@@ -106,7 +106,7 @@ func TestSessionLifecycleRequiresPhysicalStopForParkedControl(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1 AND epoch=2`, f.computer)
 				}
 			}
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 				t.Fatal(err)
 			}
 			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
@@ -141,7 +141,7 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(ctx)

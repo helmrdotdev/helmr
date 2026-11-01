@@ -404,7 +404,7 @@ variable "controlplane_environment" {
   type        = map(string)
   default     = {}
   validation {
-    condition = alltrue([for name in ["ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_MAX_CPU_MILLIS", "ENVIRONMENT_MAX_MEMORY_BYTES", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "ENVIRONMENT_MAX_CAUSAL_DEPTH", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "ENVIRONMENT_ADMISSION_BURST", "ENVIRONMENT_PREPARATION_TIMEOUT_MS"] :
+    condition = alltrue([for name in ["ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_MAX_CPU_MILLIS", "ENVIRONMENT_MAX_MEMORY_BYTES", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "ENVIRONMENT_ADMISSION_BURST"] :
       can(regex("^[0-9]+$", var.controlplane_environment[name])) &&
       try(tonumber(var.controlplane_environment[name]) > 0 && tonumber(var.controlplane_environment[name]) <= 9223372036854775807, false)
     ])

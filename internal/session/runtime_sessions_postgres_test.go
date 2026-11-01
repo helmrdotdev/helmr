@@ -100,7 +100,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	requestedTurn := independent.enqueue(t, "requested")
 	unrelated.enqueue(t, "unrelated")
 	// Human permissions do not authorize runtime access to an unrelated personal Session.
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal(err)
 	}
 	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, session.ErrDenied) {
@@ -109,7 +109,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, uuid.NewV7()); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unknown Session: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := session.RuntimeGetSession(t.Context(), f.pool, caller, independent.session)

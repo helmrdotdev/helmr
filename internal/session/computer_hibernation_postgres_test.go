@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"testing"
 	"time"
 	"uuid"
@@ -106,7 +107,7 @@ func TestComputerHibernationClockRestartsOnCommandAndWakeButNotSave(t *testing.T
 		t.Fatal("a just-settled Command did not restart the clock")
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE commands SET terminal_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, command)
-	wake, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "awake"))
+	wake, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), f.executionRequest("wake", "awake"))
 	if err != nil || wake.Status != "completed" {
 		t.Fatalf("wake: %+v %v", wake, err)
 	}
@@ -177,7 +178,7 @@ func TestComputerWithoutSessionsHibernatesAfterUnusedPeriod(t *testing.T) {
 	if f.captureAllowed(t) {
 		t.Fatal("hibernated before the unused period after its last Session closed")
 	}
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_events SET created_at=clock_timestamp()-$2*interval '1 millisecond' WHERE session_id=$1 AND kind='session.closed'`, f.session, (session.UnusedComputerHibernateAfter + time.Minute).Milliseconds())
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_events SET created_at=clock_timestamp()-$2*interval '1 millisecond' WHERE session_id=$1 AND kind='session.closed'`, f.session, (computer.UnusedComputerHibernateAfter + time.Minute).Milliseconds())
 	if !f.captureAllowed(t) {
 		t.Fatal("did not hibernate after the unused period")
 	}

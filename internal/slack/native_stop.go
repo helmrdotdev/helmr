@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
@@ -72,7 +73,7 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 	})
 }
 
-func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, id uuid.UUID) error {
+func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, id uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation, env, front, thread, source, channel uuid.UUID
 		var status, actor, team string
@@ -129,7 +130,7 @@ func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, pool d
 			err = core.QueryRow(ctx, `SELECT c.id FROM slack_requests r JOIN session_controls c ON (c.environment_id,c.session_id,c.id)=(r.environment_id,r.session_id,r.control_id) JOIN session_holds h ON (h.environment_id,h.id)=(c.environment_id,c.hold_id) JOIN sessions s ON (s.environment_id,s.id)=(r.environment_id,r.session_id)
  WHERE r.thread_id=$1 AND r.status='accepted' AND r.operation='native_stop' AND h.released_at IS NULL AND s.next_turn_seq=$2 AND r.observed_next_turn_seq=$2 ORDER BY r.finished_at LIMIT 1 FOR SHARE OF h`, thread, observed.NextTurnSequence).Scan(&control)
 			if errors.Is(err, pgx.ErrNoRows) {
-				receipt, controlErr := session.ControlSession(ctx, auditPolicy, core, session.UserCaller(human), session.SessionControlRequest{EnvironmentID: env, SessionID: front, Kind: "interrupt", IdempotencyKey: "slack:" + id.String(), Observed: &observed, InterruptQueued: true})
+				receipt, controlErr := session.ControlSession(ctx, auditPolicy, limits, core, session.UserCaller(human), session.SessionControlRequest{EnvironmentID: env, SessionID: front, Kind: "interrupt", IdempotencyKey: "slack:" + id.String(), Observed: &observed, InterruptQueued: true})
 				if controlErr != nil {
 					return controlErr
 				}
@@ -181,7 +182,7 @@ func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, pool d
 // Slack instruction: this thread's native Stops and the target Session's
 // process failure and recovery holds placed before the mention. Interrupts
 // placed from the CLI, API or Console remain untouched.
-func resumeNativeStops(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, id uuid.UUID, p *messageAdmission) error {
+func resumeNativeStops(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, tx pgx.Tx, id uuid.UUID, p *messageAdmission) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('slack-stop:'||$1::uuid::text,0))`, p.thread); err != nil {
 		return err
 	}
@@ -198,7 +199,7 @@ func resumeNativeStops(ctx context.Context, auditPolicy auditpolicy.Policy, tx p
 		return err
 	}
 	for _, hold := range holds {
-		_, err = session.ControlSession(ctx, auditPolicy, tx, session.UserCaller(p.human), session.SessionControlRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, Kind: "resume", HoldID: hold, IdempotencyKey: "slack:" + id.String() + ":" + hold.String()})
+		_, err = session.ControlSession(ctx, auditPolicy, limits, tx, session.UserCaller(p.human), session.SessionControlRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, Kind: "resume", HoldID: hold, IdempotencyKey: "slack:" + id.String() + ":" + hold.String()})
 		if err != nil {
 			return err
 		}

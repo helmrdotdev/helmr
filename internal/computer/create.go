@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,10 +23,11 @@ import (
 type Creator struct {
 	ca          TrustIssuer
 	auditPolicy auditpolicy.Policy
+	limits      org.ExecutionLimits
 }
 
-func NewCreator(ca TrustIssuer, policy auditpolicy.Policy) Creator {
-	return Creator{ca: ca, auditPolicy: policy}
+func NewCreator(ca TrustIssuer, policy auditpolicy.Policy, limits org.ExecutionLimits) Creator {
+	return Creator{ca: ca, auditPolicy: policy, limits: limits}
 }
 
 type Request struct {
@@ -99,7 +101,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			if deployment == nil {
 				return idempotency.Completion{}, ErrNotDeployed
 			}
-			id, err := CreateStandalone(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
+			id, err := CreateStandalone(ctx, tx, c.ca, c.limits, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
@@ -108,7 +110,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 					return idempotency.Completion{}, err
 				}
 			}
-			snapshot, err := Read(ctx, tx, request.Scope, id)
+			snapshot, err := Read(ctx, tx, c.limits, request.Scope, id)
 			if err != nil {
 				return idempotency.Completion{}, err
 			}

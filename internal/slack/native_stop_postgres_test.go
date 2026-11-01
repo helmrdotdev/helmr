@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestSlackNativeStopCoalescesAndResumesOnlyItsOwnHold(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	turn, ask := f.pendingQuestion(t)
-	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "old-queue", Input: json.RawMessage(`[]`)})
+	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "old-queue", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,26 +44,26 @@ func TestSlackNativeStopCoalescesAndResumesOnlyItsOwnHold(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
-			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, first); err != nil {
+			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, first); err != nil {
 				t.Error(err)
 			}
 		})
 	}
 	wg.Wait()
 	second := f.nativeStop(t, "native-second")
-	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, second); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, second); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT a.status='accepted' AND b.status='accepted' AND a.control_id=b.control_id AND t.status='interrupted' AND q.status='cancelled' FROM slack_requests a JOIN slack_requests b ON b.id=$2 JOIN turns t ON t.id=$3 JOIN turn_asks q ON q.id=$4 WHERE a.id=$1`, first, second, turn, ask).Scan(&exact); err != nil || !exact {
 		t.Fatalf("coalesced stop: %v %v", exact, err)
 	}
-	other, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "admin-hold"})
+	other, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "admin-hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	incoming := f.reply(t, "resume", false)
-	if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), incoming); err != nil {
+	if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), incoming); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.Pool.QueryRow(t.Context(), `SELECT h.released_at IS NOT NULL AND other.released_at IS NULL AND incoming.status='accepted' AND t.status='queued' FROM slack_requests stopped JOIN session_controls c ON c.id=stopped.control_id JOIN session_holds h ON h.id=c.hold_id JOIN session_holds other ON other.id=$2 JOIN slack_requests incoming ON incoming.id=$3 JOIN turns t ON t.id=incoming.turn_id WHERE stopped.id=$1`, first, other.HoldID, incoming).Scan(&exact); err != nil || !exact {
@@ -86,7 +87,7 @@ func TestSlackNativeStopCannotAdmitAgainstNewerExecutionOrChangedAuthority(t *te
 			id := f.nativeStop(t, "delayed")
 			switch change {
 			case "turn":
-				_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "newer", Input: json.RawMessage(`[]`)})
+				_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "newer", Input: json.RawMessage(`[]`)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -97,7 +98,7 @@ func TestSlackNativeStopCannotAdmitAgainstNewerExecutionOrChangedAuthority(t *te
 			case "generation":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.Session)
 			}
-			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id); err != nil {
+			if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id); err != nil {
 				t.Fatal(err)
 			}
 			var exact bool
@@ -135,7 +136,7 @@ func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'recovery_gap','system',$4,1,jsonb_build_object('recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb))`, f.Environment, gap, f.Session, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$2,$3,'interrupt','api_key',gen_random_uuid())`, f.Environment, other, f.Session)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, failure, f.Session)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), stale); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), stale); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -143,7 +144,7 @@ func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T
 		t.Fatalf("old mention acknowledged new loss: %v %v", held, err)
 	}
 	fresh := f.reply(t, "after-recovery", false)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), fresh); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), fresh); err != nil {
 		t.Fatal(err)
 	}
 	// System holds are released; an interrupt placed outside Slack stays.
@@ -160,7 +161,7 @@ func TestSlackMentionWithoutResumeKeepsSystemHolds(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, failure, f.Session)
 	f.SetPermissions(t, "sessions.read", "sessions.send", "sessions.interrupt")
 	incoming := f.reply(t, "without-resume", false)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), incoming); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), incoming); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool

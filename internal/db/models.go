@@ -131,27 +131,18 @@ type DiskObject struct {
 }
 
 type Environment struct {
-	ID                       pgtype.UUID        `json:"id"`
-	OrgID                    pgtype.UUID        `json:"org_id"`
-	ProjectID                pgtype.UUID        `json:"project_id"`
-	Slug                     string             `json:"slug"`
-	Name                     string             `json:"name"`
-	ColorHex                 string             `json:"color_hex"`
-	IsDefault                bool               `json:"is_default"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	CurrentDeploymentID      pgtype.UUID        `json:"current_deployment_id"`
-	MaxOutstandingAdmissions int64              `json:"max_outstanding_admissions"`
-	MaxCausalDepth           int32              `json:"max_causal_depth"`
-	MaxResidentComputers     int64              `json:"max_resident_computers"`
-	MaxCpuMillis             int64              `json:"max_cpu_millis"`
-	MaxMemoryBytes           int64              `json:"max_memory_bytes"`
-	MaxReservedStorageBytes  int64              `json:"max_reserved_storage_bytes"`
-	PreparationTimeoutMs     int64              `json:"preparation_timeout_ms"`
-	AdmissionRatePerSecond   int64              `json:"admission_rate_per_second"`
-	AdmissionBurst           int64              `json:"admission_burst"`
-	AdmissionTokens          pgtype.Numeric     `json:"admission_tokens"`
-	AdmissionRefilledAt      pgtype.Timestamptz `json:"admission_refilled_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	Slug                string             `json:"slug"`
+	Name                string             `json:"name"`
+	ColorHex            string             `json:"color_hex"`
+	IsDefault           bool               `json:"is_default"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
+	AdmissionTokens     pgtype.Numeric     `json:"admission_tokens"`
+	AdmissionRefilledAt pgtype.Timestamptz `json:"admission_refilled_at"`
 }
 
 type IdempotencyReceipt struct {

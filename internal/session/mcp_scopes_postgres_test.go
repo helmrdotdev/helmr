@@ -117,7 +117,7 @@ func TestRuntimeMCPScopeCeilingAndTrustedAssociation(t *testing.T) {
 	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, peer.session); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.RuntimeListComputers(t.Context(), f.pool, caller, computer.ListPage{}); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, _, err := session.RuntimeListComputers(t.Context(), f.limits, f.pool, caller, computer.ListPage{}); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("scope bypass: %v", err)
 	}
 	raw := json.RawMessage(`{"allow":[{"operation":"spawn","agents":["agent"]}]}`)
@@ -145,16 +145,16 @@ func TestRuntimeMCPScopeReceiptPlacementAndControls(t *testing.T) {
 	f := newAdmissionFixture(t)
 	broad := issueScope(t, f, "")
 	req := f.startRequest("scoped-new")
-	created, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, broad, req)
+	created, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, broad, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	callerOnly := issueScope(t, f, `{"allow":[{"operation":"spawn","agents":["agent"],"computer":"caller"}]}`)
-	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.pool, nil, callerOnly, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, nil, callerOnly, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("originally-new receipt laundered to caller placement: %v", err)
 	}
 	newOnly := issueScope(t, f, `{"allow":[{"operation":"spawn","agents":["agent"]}]}`)
-	retry, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.pool, nil, newOnly, req)
+	retry, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, nil, newOnly, req)
 	if err != nil || retry.SessionID != created.SessionID || retry.TurnID != created.TurnID {
 		t.Fatalf("new placement retry %+v %v", retry, err)
 	}
@@ -162,23 +162,23 @@ func TestRuntimeMCPScopeReceiptPlacementAndControls(t *testing.T) {
 		t.Fatalf("creation gave observation implicitly: %v", err)
 	}
 	empty := issueScope(t, f, `{"allow":[]}`)
-	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.pool, nil, empty, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, nil, empty, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("empty descriptor recovered broader receipt: %v", err)
 	}
 	interrupt := issueScope(t, f, `{"allow":[{"operation":"interrupt_session","agents":["agent"]}]}`)
 	controlReq := session.SessionControlRequest{EnvironmentID: f.env, SessionID: created.SessionID, Kind: "interrupt", IdempotencyKey: "interrupt-scoped"}
-	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, interrupt, controlReq)
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, interrupt, controlReq)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{}, f.pool, empty, controlReq); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, empty, controlReq); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("control receipt laundered: %v", err)
 	}
 	resume := issueScope(t, f, `{"allow":[{"operation":"resume_session","agents":["agent"]}]}`)
 	controlReq.Kind = "resume"
 	controlReq.HoldID = hold.HoldID
 	controlReq.IdempotencyKey = "resume-scoped"
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, resume, controlReq); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, resume, controlReq); err != nil {
 		t.Fatal("explicit scoped resume of exact caller hold", err)
 	}
 }
@@ -187,7 +187,7 @@ func TestRuntimeMCPScopeHeldDescriptorContinuity(t *testing.T) {
 	f := newFixture(t)
 	caller := issueScope(t, f, "")
 	peer := f.requestedPeer(t)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "interrupt", IdempotencyKey: "hold-source"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "interrupt", IdempotencyKey: "hold-source"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.session).Scan(&caller.Execution.AuthorityGeneration); err != nil {
@@ -207,7 +207,7 @@ func TestRuntimeMCPScopeReconstructionKeepsAdmittedWorkAndReceipts(t *testing.T)
 	caller := issueScope(t, f, "")
 	peer := f.requestedPeer(t)
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "before-reconstruction", Input: json.RawMessage(`[]`)}
-	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestRuntimeMCPScopeReconstructionKeepsAdmittedWorkAndReceipts(t *testing.T)
 	fresh := caller
 	fresh.Execution.ProcessEpoch = 2
 	fresh.Execution.AuthorityGeneration = 2
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{}, f.pool, nil, fresh, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, nil, fresh, req); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("old reference authorized new process request: %v", err)
 	}
 	scope, err := session.IssueMCPScope(t.Context(), f.pool, fresh, nil)
@@ -225,7 +225,7 @@ func TestRuntimeMCPScopeReconstructionKeepsAdmittedWorkAndReceipts(t *testing.T)
 		t.Fatalf("new process scope %+v %v", scope, err)
 	}
 	fresh.MCPScopeID = scope.ID
-	recovered, err := session.Enqueue(t.Context(), auditpolicy.Policy{}, f.pool, nil, fresh, req)
+	recovered, err := session.Enqueue(t.Context(), auditpolicy.Policy{}, f.limits, f.pool, nil, fresh, req)
 	if err != nil || recovered.TurnID != admitted.TurnID {
 		t.Fatalf("fresh descriptor failed to recover original receipt %+v %v", recovered, err)
 	}

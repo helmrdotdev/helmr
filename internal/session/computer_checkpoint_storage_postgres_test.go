@@ -280,7 +280,7 @@ func TestCheckpointRuntimeForeignReceiptsAndAbortRace(t *testing.T) {
 				// The source-abort transaction and readiness contend on the checkpoint.
 				// Use the retained request to exercise the real abort arbitration.
 				p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
-				if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := session.ValidateComputerSourceAbort(ctx, sessiontest.ExecutionLimits(), f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, session.ErrNotReady) {
@@ -342,15 +342,15 @@ func TestCheckpointRuntimeReadyCannotReplayAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
-	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
+	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(ctx, sessiontest.ExecutionLimits(), f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"aborting", "consumed"} {
 		if state == "consumed" {
-			if err := session.CommitComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, true, false)); err != nil {
+			if err := session.CommitComputerSourceAbort(ctx, sessiontest.ExecutionLimits(), f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, true, false)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -387,7 +387,7 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- blocked.CompleteCheckpoint(ctx, f.ref, f.manifest) }()
 	<-entered
-	if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(ctx, sessiontest.ExecutionLimits(), f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
 		close(release)
 		<-done
 		t.Fatal(err)
@@ -483,26 +483,26 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	if err := f.checkpoints.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, base.pool, base.caller(), base.executionRequest("wake", "standalone-wake")); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), base.pool, base.caller(), base.executionRequest("wake", "standalone-wake")); err != nil {
 		t.Fatal(err)
 	}
 	observed := &agentv1.ComputerSessionReceipt{CheckpointId: f.manifest.CheckpointID.String(), DesiredVersion: f.manifest.ControlVersion, Frozen: true}
-	p, err := session.PrepareComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, f.manifest.CheckpointID, 1, sessiontest.ChannelCredential, observed)
+	p, err := session.PrepareComputerSourceAbort(t.Context(), sessiontest.ExecutionLimits(), base.pool, *base.host(), base.env, f.manifest.CheckpointID, 1, sessiontest.ChannelCredential, observed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(p.Grants) != 0 {
 		t.Fatal("standalone continuation acquired Session grants")
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, observed); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), sessiontest.ExecutionLimits(), base.pool, *base.host(), base.env, p, observed); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, base.computer)
-	if err := session.CommitComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); !errors.Is(err, computer.ErrNotReady) {
+	if err := session.CommitComputerSourceAbort(t.Context(), sessiontest.ExecutionLimits(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("expired continuation committed: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), base.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, base.computer)
-	if err := session.CommitComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), sessiontest.ExecutionLimits(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	var pending bool
@@ -511,7 +511,7 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	}
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {
+	}, sessiontest.ExecutionLimits(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 }

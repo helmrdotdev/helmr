@@ -185,7 +185,13 @@ locals {
   controlplane_environment           = merge(var.controlplane_environment, local.controlplane_environment_defaults)
   controlplane_secrets               = local.controlplane_secret_defaults
 
-  dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, {
+  # The dispatcher admits scheduled and Slack Sessions, so it applies the same
+  # Environment execution limits as the control plane.
+  environment_execution_limits = {
+    for name in ["ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_MAX_CPU_MILLIS", "ENVIRONMENT_MAX_MEMORY_BYTES", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "ENVIRONMENT_ADMISSION_BURST"] :
+    name => var.controlplane_environment[name]
+  }
+  dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, local.environment_execution_limits, {
     AUDIT_RETENTION_SECONDS = tostring(var.audit_retention_seconds)
     CONTROL_PLANE_URL       = local.controlplane_url
     APP_ORIGIN              = local.controlplane_url

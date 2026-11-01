@@ -30,7 +30,7 @@ func TestSlackRequestWorkersClaimAndCommitEachReceiptOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if _, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil {
+			if _, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil {
 				t.Error(err)
 			}
 		})
@@ -40,7 +40,7 @@ func TestSlackRequestWorkersClaimAndCommitEachReceiptOnce(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM slack_requests WHERE status='accepted'),(SELECT count(*) FROM turns WHERE environment_id=$1)`, f.Environment).Scan(&accepted, &turns); err != nil || accepted != 8 || turns != 8 {
 		t.Fatalf("worker outcomes: accepted=%d turns=%d %v", accepted, turns, err)
 	}
-	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 0 {
+	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 0 {
 		t.Fatalf("terminal rows scanned again: %d %v", count, err)
 	}
 }
@@ -57,10 +57,10 @@ func TestSlackRequestScanReservationCanRecoverAfterCrash(t *testing.T) {
 		t.Fatalf("reserved row reclaimed early: %v %v", next, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
-	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 1 {
+	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 1 {
 		t.Fatalf("claim not recovered: %d %v", count, err)
 	}
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -75,7 +75,7 @@ func TestSlackRequestWorkerRoutesControlAndRejectsInvalidStoredPayload(t *testin
 	stop := f.nativeStop(t, "native-stop")
 	invalid := f.reply(t, "invalid", false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET payload=convert_to('{"unexpected":true}','UTF8') WHERE id=$1`, invalid)
-	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 2 {
+	if count, err := ReconcileRequests(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), 4); err != nil || count != 2 {
 		t.Fatalf("batch: %d %v", count, err)
 	}
 	var correct bool
@@ -92,7 +92,7 @@ func TestSlackRequestRunnerConsumesReceiptAndJoinsOnCancellation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
+		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
 	}()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -156,7 +156,7 @@ func TestSlackRequestRunnerDeliversPrivateRejectionAfterReceiptCommit(t *testing
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
+		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
 	}()
 	select {
 	case <-sent:
@@ -183,7 +183,7 @@ func TestSlackRequestRetriesUnavailableCapacityWithinReceiptExpiry(t *testing.T)
 			client := f.admissionClient(t)
 			policy := auditpolicy.Policy{RetentionSeconds: 3600}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Group)
-			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+			if count, err := ReconcileRequests(t.Context(), policy, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || !errors.Is(err, workergroup.ErrCapacityUnavailable) {
 				t.Fatalf("unavailable observation: count=%d err=%v", count, err)
 			}
 			var unchanged bool
@@ -194,7 +194,7 @@ func TestSlackRequestRetriesUnavailableCapacityWithinReceiptExpiry(t *testing.T)
     FROM slack_requests WHERE id=$1`, id, f.Environment).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("retry committed work or terminal receipt: %v %v", unchanged, err)
 			}
-			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 0 || err != nil {
+			if count, err := ReconcileRequests(t.Context(), policy, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), client, 4); count != 0 || err != nil {
 				t.Fatalf("retry ignored scan reservation: count=%d err=%v", count, err)
 			}
 			switch outcome {
@@ -205,11 +205,11 @@ func TestSlackRequestRetriesUnavailableCapacityWithinReceiptExpiry(t *testing.T)
 			}
 			sessiontest.ObserveProvisioning(t, f.Fixture)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET next_attempt_at=clock_timestamp() WHERE id=$1`, id)
-			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || err != nil {
+			if count, err := ReconcileRequests(t.Context(), policy, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || err != nil {
 				t.Fatalf("retry: count=%d err=%v", count, err)
 			}
 			for range 2 {
-				if err := ReconcileRequest(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, id); err != nil {
+				if err := ReconcileRequest(t.Context(), policy, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), client, id); err != nil {
 					t.Fatal(err)
 				}
 			}
