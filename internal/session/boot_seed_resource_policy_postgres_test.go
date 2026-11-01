@@ -131,15 +131,16 @@ func TestBootSeedPolicyChangeStopsAuthorityAndFencesRetry(t *testing.T) {
 }
 
 func TestBootSeedRealGrantReclaimsWithoutConsumingEnvironmentQuota(t *testing.T) {
-	p, a, id := bootSeedFixture(t)
+	p, _, id := bootSeedFixture(t)
 	f := p.f
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET epoch_cpu_millis=2000,max_vm_slots=2 WHERE id=$1`, f.worker)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_resident_computers=2 WHERE id=$1`, f.env)
+	f.limits.MaxResidentComputers = 2
+	a := testAllocator(t, f.pool, f.limits, nil)
 	r, err := a.AllocateBootSeed(t.Context(), f.env, id, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("real-work"))
+	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("real-work"))
 	if err != nil {
 		t.Fatal(err)
 	}

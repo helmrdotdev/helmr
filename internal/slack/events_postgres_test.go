@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -351,7 +352,7 @@ func TestSlackEventReceiptDoesNotWaitForCoreAdmission(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+		done <- admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id)
 	}()
 	defer func() {
 		_ = blocker.Rollback(t.Context())

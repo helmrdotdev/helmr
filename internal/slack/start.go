@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
@@ -81,11 +82,11 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 // Start admits a Session as session.Start does, routing the new root through
 // Slack only when the request names a channel. The opening post is prepared outside the transaction; the
 // thread, its membership and the opening post commit with the Session.
-func Start(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, preflight slackroute.StartPreflight, caller session.Caller, req session.StartRequest) (session.Admission, error) {
+func Start(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, preflight slackroute.StartPreflight, caller session.Caller, req session.StartRequest) (session.Admission, error) {
 	if req.SlackChannelID == nil {
-		return session.Start(ctx, auditPolicy, pool, trust, caller, req)
+		return session.Start(ctx, auditPolicy, limits, pool, trust, caller, req)
 	}
-	plan, err := session.PlanStart(auditPolicy, caller, req, "create")
+	plan, err := session.PlanStart(auditPolicy, limits, caller, req, "create")
 	if err != nil {
 		return session.Admission{}, err
 	}

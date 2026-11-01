@@ -45,7 +45,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 	response := api.ListComputersResponse{Computers: []api.ComputerListItem{}}
 	addressed := computerScope(principal.OrgID, projectID, environmentID)
 	if exactKey != nil {
-		item, err := computer.FindByKey(r.Context(), s.tx, addressed, *exactKey)
+		item, err := computer.FindByKey(r.Context(), s.tx, s.environmentExecutionLimits, addressed, *exactKey)
 		if errors.Is(err, computer.ErrNotFound) {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -66,7 +66,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 	if cursor != nil {
 		page.After = &computer.ListPosition{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	listing, err := computer.List(r.Context(), s.tx, addressed, page)
+	listing, err := computer.List(r.Context(), s.tx, s.environmentExecutionLimits, addressed, page)
 	if err != nil {
 		writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
 		return

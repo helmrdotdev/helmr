@@ -2,6 +2,7 @@ package org_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strconv"
 	"testing"
 	"uuid"
@@ -27,7 +28,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	}
 	_ = checkHumanTarget
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('typed','Typed')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "typed", Name: "Typed", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "typed", Name: "Typed", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 	}
 	_ = checkHumanTarget
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('catalog','Catalog')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "catalog", Name: "Catalog", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "catalog", Name: "Catalog", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}

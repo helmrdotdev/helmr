@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
@@ -49,7 +50,11 @@ func RequestExecutionControl(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, 
 	if pending {
 		return r, ErrBusy
 	}
-	err := tx.QueryRow(ctx, `INSERT INTO computer_controls(environment_id,computer_id,id,caller_kind,caller_id,kind,idempotency_key,status,deadline_at,settled_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond',CASE WHEN $8='completed' THEN clock_timestamp() END) RETURNING accepted_at,settled_at`, env, id, r.ID, callerKind, caller, kind, key, r.Status).Scan(&r.AcceptedAt, &r.SettledAt)
+	timeout := HibernateStartTimeout
+	if kind == "wake" {
+		timeout = ExecutionStartTimeout
+	}
+	err := tx.QueryRow(ctx, `INSERT INTO computer_controls(environment_id,computer_id,id,caller_kind,caller_id,kind,idempotency_key,status,deadline_at,settled_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+$9::bigint*interval '1 millisecond',CASE WHEN $8='completed' THEN clock_timestamp() END) RETURNING accepted_at,settled_at`, env, id, r.ID, callerKind, caller, kind, key, r.Status, timeout.Milliseconds()).Scan(&r.AcceptedAt, &r.SettledAt)
 	if err != nil {
 		return ExecutionControl{}, err
 	}
@@ -73,8 +78,8 @@ func settleHibernateCapture(ctx context.Context, auditPolicy auditpolicy.Policy,
 
 // NoteExecutionDemand cancels an uncompleted explicit sleep intent. This joins
 // the admission transaction, so rejected or duplicate input cannot wake a VM.
-func NoteExecutionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, id uuid.UUID) error {
-	if err := RequireExecutionCapacity(ctx, tx, env, id); err != nil {
+func NoteExecutionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, env, id uuid.UUID) error {
+	if err := RequireExecutionCapacity(ctx, tx, limits, env, id); err != nil {
 		return err
 	}
 	rows, err := tx.Query(ctx, `UPDATE computer_controls SET status='failed',error_code='new_execution_requested',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted' RETURNING environment_id,computer_id,id,kind,status,caller_kind,caller_id`, env, id)
@@ -91,7 +96,7 @@ var ErrExecutionLimit = errors.New("environment execution limit reached; raise t
 // RequireExecutionCapacity checks new execution under the Environment admission
 // lock. An existing allocation already owns its entitlement, so follow-up input
 // does not need room for another VM.
-func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env, id uuid.UUID) error {
 	var allocated bool
 	var cpu, memory int64
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready')),
@@ -124,21 +129,21 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID)
 	if pending {
 		return nil
 	}
-	budget, err := db.ReadExecutionBudgetForComputer(ctx, tx, env, id)
+	budget, err := db.ReadExecutionBudgetForComputer(ctx, tx, env, id, limits.For(env).ExecutionBudget())
 	if err != nil {
 		return err
 	}
 	if !budget.Fits(cpu, memory, true) {
 		return ErrExecutionLimit
 	}
-	before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+	before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env)
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id, ExecutionStartTimeout.Milliseconds()); err != nil {
 		return err
 	}
-	return workergroup.RequireExecutionPlacement(ctx, tx, env, id, before)
+	return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, id, before)
 }
 
 // RequireRetainedHostCapacity runs under the Host lock before a paused source

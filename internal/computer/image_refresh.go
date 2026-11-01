@@ -22,8 +22,8 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
 		}
-		var timeout int64
-		if err := tx.QueryRow(ctx, `SELECT preparation_timeout_ms FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&timeout); err != nil {
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
 		}
 		if err := LockImageSpecSecrets(ctx, tx, env, spec); err != nil {
@@ -64,7 +64,7 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 			}
 			attempt = uuid.NewV7()
 			if _, err := tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)
- VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "refresh:"+due.UTC().Format(time.RFC3339Nano), now.Add(time.Duration(timeout)*time.Millisecond)); err != nil {
+ VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "refresh:"+due.UTC().Format(time.RFC3339Nano), now.Add(BackgroundImageBuildTimeout)); err != nil {
 				return err
 			}
 			if err := notifyImageBuildChanged(ctx, tx, env, attempt); err != nil {

@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 	"io"
@@ -46,7 +47,7 @@ func TestExplicitSlackStartChecksDestination(t *testing.T) {
 			f.SetPermissions(t, "sessions.create")
 			caller := session.UserCaller(f.Principal(t))
 			channel := "C1"
-			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", SlackChannelID: &channel, IdempotencyKey: "explicit-target", Input: json.RawMessage(`[{"type":"text","text":"private input"}]`)})
+			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", SlackChannelID: &channel, IdempotencyKey: "explicit-target", Input: json.RawMessage(`[{"type":"text","text":"private input"}]`)})
 			if mode == "target-denied" || mode == "target-unpublished" {
 				want := slackroute.ErrChannelUnavailable
 				if mode == "target-unpublished" {

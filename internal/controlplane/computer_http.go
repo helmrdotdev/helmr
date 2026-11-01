@@ -90,7 +90,7 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	snapshot, err := computer.Read(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), computerID)
+	snapshot, err := computer.Read(r.Context(), s.tx, s.environmentExecutionLimits, computerScope(principal.OrgID, projectID, environmentID), computerID)
 	if err != nil {
 		s.writeComputerError(w, r, err, computerReadOperation, "read Computer failed")
 		return

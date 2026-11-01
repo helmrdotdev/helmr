@@ -32,15 +32,15 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			}
 			ctx := t.Context()
 			initial := restoreReceipt(p, false, false)
-			if _, err := session.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, initial); !errors.Is(err, session.ErrNotReady) && !errors.Is(err, session.ErrConflict) {
+			if _, err := session.ReadComputerContinuationControls(ctx, f.limits, f.pool, host, f.env, p, initial); !errors.Is(err, session.ErrNotReady) && !errors.Is(err, session.ErrConflict) {
 				t.Fatalf("uncommitted controls: %v", err)
 			}
 			installed := restoreReceipt(p, true, false)
 			if p.SourceAbort {
-				if err := session.ValidateComputerSourceAbort(ctx, f.pool, host, f.env, p, initial); err != nil {
+				if err := session.ValidateComputerSourceAbort(ctx, f.limits, f.pool, host, f.env, p, initial); err != nil {
 					t.Fatal(err)
 				}
-				if err := session.CommitComputerSourceAbort(ctx, f.pool, host, f.env, p, installed); err != nil {
+				if err := session.CommitComputerSourceAbort(ctx, f.limits, f.pool, host, f.env, p, installed); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -57,7 +57,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			}
 			dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.NewV7(), f.session)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1; UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, peer)
-			controls, err := session.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed)
+			controls, err := session.ReadComputerContinuationControls(ctx, f.limits, f.pool, host, f.env, p, installed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +82,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 			installed.ActivationStarted = true
 			installed.Activated = true
 			installed.Frozen = false
-			if _, err := session.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed); !errors.Is(err, session.ErrNotReady) {
+			if _, err := session.ReadComputerContinuationControls(ctx, f.limits, f.pool, host, f.env, p, installed); !errors.Is(err, session.ErrNotReady) {
 				t.Fatalf("activated guest used pre-activation controls: %v", err)
 			}
 		})

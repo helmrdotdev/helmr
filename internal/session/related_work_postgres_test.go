@@ -64,7 +64,7 @@ func TestRelatedWorkIncludesRetainedAnswers(t *testing.T) {
 func TestRelatedWorkOutlivesAdmissionAuditAndCredentialRecords(t *testing.T) {
 	f := newFixture(t)
 	caller := f.caller()
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 1}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retained-attribution", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 1}, f.limits, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retained-attribution", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Wait for the admission event's actual expiry, not an assumed scheduler delay.

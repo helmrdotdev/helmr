@@ -77,18 +77,19 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
-	AuditPolicy        auditpolicy.Policy
-	SlackTransport     string
-	OutboundProxyURL   string
-	AppOrigin          string
-	DiagnosticExporter DiagnosticExporter
-	ControlPlaneURL    string
-	EncryptionKey      []byte
-	DatabaseURL        string
-	ClickHouseURL      string
-	ClickHouseUser     string
-	ClickHousePassword string
-	ComputerFencingKey []byte
+	AuditPolicy                auditpolicy.Policy
+	EnvironmentExecutionLimits EnvironmentExecutionLimits
+	SlackTransport             string
+	OutboundProxyURL           string
+	AppOrigin                  string
+	DiagnosticExporter         DiagnosticExporter
+	ControlPlaneURL            string
+	EncryptionKey              []byte
+	DatabaseURL                string
+	ClickHouseURL              string
+	ClickHouseUser             string
+	ClickHousePassword         string
+	ComputerFencingKey         []byte
 }
 
 type Database struct {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"time"
 	"uuid"
@@ -114,7 +115,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.f.mcpScope, ID: f.f.session, Execution: e, Host: &f.host}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("control authority admitted business mutation: %v", err)
 	}
 	attachment, err := session.AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e)

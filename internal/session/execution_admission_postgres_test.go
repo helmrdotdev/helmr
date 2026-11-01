@@ -38,12 +38,13 @@ func admitCapacityComputer(ctx context.Context, f fixture, env, id uuid.UUID) er
 		if err := tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, id).Scan(&locked); err != nil {
 			return err
 		}
-		return computer.RequireExecutionCapacity(ctx, tx, env, id)
+		return computer.RequireExecutionCapacity(ctx, tx, f.limits, env, id)
 	})
 }
 func TestExecutionAdmissionReservesPendingEnvironmentQuotaOnce(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000,max_resident_computers=2 WHERE id=$1`, f.env)
+	f.limits.MaxCPUMillis = 2000
+	f.limits.MaxResidentComputers = 2
 	first, second := pendingCapacityComputer(t, f, f.env), pendingCapacityComputer(t, f, f.env)
 	if err := admitCapacityComputer(t.Context(), f, f.env, first); err != nil {
 		t.Fatal(err)
@@ -55,8 +56,7 @@ func TestExecutionAdmissionReservesPendingEnvironmentQuotaOnce(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at FROM computers WHERE id=$1`, first).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	// Joining an accepted episode keeps its bound even if the default changes.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET preparation_timeout_ms=preparation_timeout_ms+1000 WHERE id=$1`, f.env)
+	// Joining an accepted episode keeps its deadline instead of starting a new one.
 	if err := admitCapacityComputer(t.Context(), f, f.env, first); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestExecutionAdmissionReservesPendingEnvironmentQuotaOnce(t *testing.T) {
 	if err := admitCapacityComputer(t.Context(), f, f.env, second); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("second claim: %v", err)
 	}
-	budget, err := db.ReadExecutionBudget(t.Context(), f.pool, f.env)
+	budget, err := db.ReadExecutionBudget(t.Context(), f.pool, f.env, f.limits.ExecutionBudget())
 	if err != nil || budget.CPU != 0 || budget.Residents != 0 {
 		t.Fatalf("budget=%+v %v", budget, err)
 	}
@@ -111,7 +111,7 @@ func TestExecutionAdmissionSerializesLastHostSlotAcrossEnvironments(t *testing.T
 }
 func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 	f := newAdmissionFixture(t)
-	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("bounded"))
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("bounded"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,21 +135,24 @@ func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 		t.Fatalf("events=%d %v", events, err)
 	}
 	// Only new explicit input can start a new episode after settlement.
-	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "new-episode", Input: f.startRequest("").Input})
+	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "new-episode", Input: f.startRequest("").Input})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var current bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at>clock_timestamp() AND execution_deadline_at<=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=computers.environment_id)*interval '1 millisecond' FROM computers WHERE id=$1`, id).Scan(&current); err != nil || !current {
+	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at>clock_timestamp() AND execution_deadline_at<=clock_timestamp()+$2*interval '1 millisecond' FROM computers WHERE id=$1`, id, computer.ExecutionStartTimeout.Milliseconds()).Scan(&current); err != nil || !current {
 		t.Fatalf("new episode=%v %v", current, err)
 	}
 }
 
 func TestExecutionAllocationPreservesEarlierPendingShapePlacement(t *testing.T) {
-	f, allocator, a := freshComputerAllocationFixture(t)
+	f, _, a := freshComputerAllocationFixture(t)
 	b, secondHost := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=20000,max_memory_bytes=34359738368,max_resident_computers=10 WHERE id=$1;
- UPDATE worker_pools SET per_vm_cpu_millis=8000,per_vm_memory_bytes=8589934592,capacity_cpu_millis=16000,capacity_memory_bytes=17179869184,capacity_guest_ephemeral_disk_bytes=17179869184,max_vm_slots=16 WHERE worker_group_id=$2;
+	f.limits.MaxCPUMillis = 20000
+	f.limits.MaxMemoryBytes = 34359738368
+	f.limits.MaxResidentComputers = 10
+	allocator := testAllocator(t, f.pool, f.limits, nil)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET per_vm_cpu_millis=8000,per_vm_memory_bytes=8589934592,capacity_cpu_millis=16000,capacity_memory_bytes=17179869184,capacity_guest_ephemeral_disk_bytes=17179869184,max_vm_slots=16 WHERE worker_group_id=$2;
  INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT worker_pool_id,4,cpu_config_digest FROM worker_pool_cpu_shapes WHERE vcpu_count=1;
  INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT worker_pool_id,8,cpu_config_digest FROM worker_pool_cpu_shapes WHERE vcpu_count=1;
  UPDATE worker_hosts SET epoch_cpu_millis=10000,epoch_memory_bytes=5368709120,epoch_guest_ephemeral_disk_bytes=17179869184,per_vm_cpu_millis=8000,per_vm_memory_bytes=8589934592,max_vm_slots=16,max_vm_starts=16,disk_slots_for_real_work=16 WHERE id=$3;
@@ -180,7 +183,7 @@ func TestExecutionAllocationPreservesEarlierPendingShapePlacement(t *testing.T) 
 
 func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	f := newAdmissionFixture(t)
-	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("held-claim"))
+	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("held-claim"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +191,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE id=$1`, started.SessionID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,17 +199,17 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || pending {
 		t.Fatalf("held claim retained: %v %v", pending, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
+	f.limits.MaxCPUMillis = 1000
 	resume := session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); !errors.Is(err, computer.ErrExecutionLimit) {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), resume); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("resume without quota: %v", err)
 	}
 	var held bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT released_at IS NULL FROM session_holds WHERE id=$1`, hold.HoldID).Scan(&held); err != nil || !held {
 		t.Fatalf("failed resume released hold: %v %v", held, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
+	f.limits.MaxCPUMillis = 2000
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || !pending {
@@ -242,19 +245,20 @@ func TestExecutionFailedBootPreservesOriginalDeadline(t *testing.T) {
 }
 
 func TestExecutionImageBuildSharesOnlyOnePendingClaim(t *testing.T) {
-	f, p, a := preparationAllocationFixture(t)
+	f, p, _ := preparationAllocationFixture(t)
 	var id uuid.UUID
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE image_build_id=$1`, p.ID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_resident_computers=2 WHERE id=$1`, f.env)
+	f.limits.MaxResidentComputers = 2
+	a := testAllocator(t, f.pool, f.limits, nil)
 	if err := admitCapacityComputer(t.Context(), f.fixture, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); err != nil {
 		t.Fatalf("build deadlocked on its Computer claim: %v", err)
 	}
-	budget, err := db.ReadExecutionBudget(t.Context(), f.pool, f.env)
+	budget, err := db.ReadExecutionBudget(t.Context(), f.pool, f.env, f.limits.ExecutionBudget())
 	if err != nil || budget.CPU != 0 || budget.Residents != 0 {
 		t.Fatalf("shared budget: %+v %v", budget, err)
 	}
@@ -290,24 +294,24 @@ func TestExecutionExpiredBootCannotRenewOrReportReady(t *testing.T) {
 
 func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 	f := newAdmissionFixture(t)
-	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("held-input"))
+	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("held-input"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
-	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: started.SessionID, IdempotencyKey: "held-followup", Input: f.startRequest("").Input}); err != nil {
+	f.limits.MaxCPUMillis = 1000
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: started.SessionID, IdempotencyKey: "held-followup", Input: f.startRequest("").Input}); err != nil {
 		t.Fatal(err)
 	}
 	var reserved bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT c.execution_deadline_at IS NOT NULL FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE s.id=$1`, started.SessionID).Scan(&reserved); err != nil || reserved {
 		t.Fatalf("held input reserved execution: %v %v", reserved, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}); err != nil {
+	f.limits.MaxCPUMillis = 2000
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -335,7 +339,7 @@ func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE computer_id=$1`, id).Scan(&target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "explicit-retry", Input: f.startRequest("").Input}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "explicit-retry", Input: f.startRequest("").Input}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err != nil {
@@ -381,7 +385,7 @@ func TestSessionCloseDoesNotWaitForRegionalPlacement(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if _, err = session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "independent-close"}); err != nil {
+	if _, err = session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "independent-close"}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"time"
 	"uuid"
@@ -46,7 +47,7 @@ func (f statusFixture) controlReceipt(t *testing.T, c controlEnvelope, answer js
 }
 func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask-turn", Input: json.RawMessage(`[]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask-turn", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	c.Target.Turn, c.Target.Ask = turn, ask
 	first := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
 	for range 2 {
-		if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, first); err != nil {
+		if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, first); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +84,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	}
 	c.Nonce = uuid.NewV7()
 	second := f.controlReceipt(t, c, json.RawMessage(`"no"`))
-	if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, second); err != nil {
+	if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, second); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='ask_already_answered' FROM slack_requests WHERE id=$1`, second).Scan(&exact); err != nil || !exact {
@@ -91,7 +92,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	}
 	f.SetPermissions(t, "sessions.read")
 	stop := f.nativeStop(t, "viewer-stop")
-	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stop); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, stop); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='permission_denied' FROM slack_requests WHERE id=$1`, stop).Scan(&exact); err != nil || !exact {
@@ -123,7 +124,7 @@ func TestSlackControlRejectsStaleBindingActorAndToken(t *testing.T) {
 				want = "binding_unavailable"
 			}
 			id := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
-			if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id); err != nil {
+			if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id); err != nil {
 				t.Fatal(err)
 			}
 			var rejected bool
@@ -152,9 +153,9 @@ func TestSlackControlRollsBackOperationWhenReceiptCannotCommit(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT fail_control_receipt CHECK(status<>'accepted')`)
 			var err error
 			if action == "stop" {
-				err = admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id)
+				err = admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id)
 			} else {
-				err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id)
+				err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id)
 			}
 			if err == nil {
 				t.Fatal("receipt failure missing")
@@ -194,7 +195,9 @@ func TestSlackStopExpiresDuringCoreLockWaitWithoutLeavingHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := make(chan error, 1)
-	go func() { result <- admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id) }()
+	go func() {
+		result <- admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id)
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	var blocked bool
 	for !blocked && time.Now().Before(deadline) {
@@ -239,7 +242,7 @@ func TestSlackAnswerRejectsReceiptWithChangedOpeningSource(t *testing.T) {
 	c.Target.Turn, c.Target.Ask = f.pendingQuestion(t)
 	id := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET source_occurred_at=source_occurred_at+interval '1 microsecond' WHERE id=$1`, id)
-	if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id); err != nil {
+	if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool

@@ -71,7 +71,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
-	created, err := command.Create(r.Context(), s.auditPolicy, s.tx, command.CreateRequest{
+	created, err := command.Create(r.Context(), s.auditPolicy, s.environmentExecutionLimits, s.tx, command.CreateRequest{
 		OrgID:          principal.OrgID,
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),

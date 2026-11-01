@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -101,7 +102,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	}
 	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, input.Key, secrets)
+	}, sessiontest.ExecutionLimits(), input.Key, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}

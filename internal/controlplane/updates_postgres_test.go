@@ -93,7 +93,7 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 			// Rotation changes the bearer, not this connected stream's admitted session/source.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET token_hash=sha256(uuid_send(id)) WHERE user_id=$1`, f.User)
 			// A connected stream refreshes from a real operation's committed notification.
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stream-control"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stream-control"}); err != nil {
 				t.Fatal(err)
 			}
 			refreshed := false
@@ -209,7 +209,7 @@ func TestCapacityUpdateStreamUsesDedicatedAuthorityAndCommittedDemand(t *testing
 			t.Fatalf("missing change: %v", scanner.Err())
 		}
 		readChange()
-		if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "capacity-stream-control"}); err != nil {
+		if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "capacity-stream-control"}); err != nil {
 			t.Fatal(err)
 		}
 		readChange()

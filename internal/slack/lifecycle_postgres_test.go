@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
@@ -99,7 +100,7 @@ func TestSlackCloseConfirmationShowsCountAndRequiresItsActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, wrongActor.ID); err != nil {
+	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, wrongActor.ID); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, wrongActor.ID, "rejected")
@@ -108,7 +109,7 @@ func TestSlackCloseConfirmationShowsCountAndRequiresItsActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, receipt.ID); err != nil {
+	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, receipt.ID); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, receipt.ID, "accepted")
@@ -212,7 +213,7 @@ func TestSlackUnboundLifecycleCommandsHaveExplicitRejection(t *testing.T) {
 			f := newStatusFixture(t)
 			id := f.threadMessage(t, "unbound-"+command, "!"+command, time.Now())
 			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-				return admitLifecycleMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, tx, id, &messageAdmission{}, command)
+				return admitLifecycleMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), tx, id, &messageAdmission{}, command)
 			}); err != nil {
 				t.Fatal(err)
 			}

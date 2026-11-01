@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 	ctx := t.Context()
 	m := f.owner
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('permissions','Permissions')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "permission-project", Name: "Permissions", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "permission-project", Name: "Permissions", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('race','Race')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "race", Name: "Race", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "race", Name: "Race", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestGrantAuditAtMaximumSelectedAgentSize(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('max-agent','Maximum')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "max-agent", Name: "Maximum", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "max-agent", Name: "Maximum", ExecutionLimits: executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}})
 	if err != nil {
 		t.Fatal(err)
 	}

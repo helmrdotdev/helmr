@@ -45,7 +45,7 @@ func omitScheduledAgent(t *testing.T, f fixture) {
 func TestScheduledSessionQueuedWorkSurvivesPromotion(t *testing.T) {
 	f := newAdmissionFixture(t)
 	trigger := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
-	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, trigger); err != nil {
 		t.Fatal(err)
 	}
 	var id uuid.UUID
@@ -70,10 +70,10 @@ func TestScheduledSessionQueuedWorkSurvivesPromotion(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT s.deployment_id=$3 AND t.status='queued' AND t.error_code IS NULL FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2`, f.env, id, f.deployment).Scan(&queued); err != nil || !queued {
 		t.Fatalf("promotion changed accepted work: queued=%v err=%v", queued, err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: id, Input: json.RawMessage(`[{"type":"text","text":"continue"}]`), IdempotencyKey: "after-promotion"}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: id, Input: json.RawMessage(`[{"type":"text","text":"continue"}]`), IdempotencyKey: "after-promotion"}); err != nil {
 		t.Fatalf("existing Session could not accept another Turn: %v", err)
 	}
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("new-root")); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("new-root")); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("absent Agent accepted an independent root: %v", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestScheduledSessionCanSpawnAfterPromotion(t *testing.T) {
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("scheduled-child")
 	req.ComputerID = f.computer
-	child, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn")
+	child, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req, "spawn")
 	if err != nil {
 		t.Fatalf("promotion revoked scheduled parent's child admission: %v", err)
 	}

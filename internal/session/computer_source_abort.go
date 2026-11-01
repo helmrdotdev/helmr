@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"slices"
 	"time"
 	"uuid"
@@ -67,7 +68,7 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 
 // validateSourceAbort runs with supply and captured ownership locks held. No
 // public caller can supply this installation: worker authentication owns it.
-func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
+func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
 	if r.State == "ready" {
 		var runnable bool
 		if err := tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, env, r.Computer).Scan(&runnable); err != nil {
@@ -76,7 +77,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 		if !runnable {
 			return ErrNotReady
 		}
-		if err := computer.RequireExecutionCapacity(ctx, tx, env, r.Computer); err != nil {
+		if err := computer.RequireExecutionCapacity(ctx, tx, limits, env, r.Computer); err != nil {
 			if errors.Is(err, computer.ErrExecutionSettling) {
 				return ErrNotReady
 			}
@@ -179,7 +180,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 // exact same-machine continuation before any guest mutation. Its version is the successor to the capture version.
 // Disk saves keep their independent reconciliation owner, including missing
 // acknowledgements. No physical thaw or business dispatch is authorized.
-func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func ValidateComputerSourceAbort(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
 		return err
@@ -209,7 +210,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if r.State != "capturing" && r.State != "sealed" && r.State != "ready" && r.State != "aborting" && r.State != "consumed" {
 			return ErrNotReady
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env)
 		if err != nil {
 			return err
 		}
@@ -220,7 +221,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if fresh && observed.GetInstalled() {
 			return ErrConflict
 		}
-		if err = validateSourceAbort(ctx, tx, host, env, checkpoint, r, p, !observed.GetInstalled(), !observed.GetInstalled()); err != nil {
+		if err = validateSourceAbort(ctx, tx, limits, host, env, checkpoint, r, p, !observed.GetInstalled(), !observed.GetInstalled()); err != nil {
 			return err
 		}
 		if !fresh {
@@ -235,7 +236,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if err := computer.BeginSourceAbort(ctx, tx, env, r.Computer, checkpoint, p.GetDesiredVersion(), identity); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, uuid.Nil(), before)
 	}))
 }
 
@@ -252,7 +253,7 @@ func matchSourceAbort(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID,
 
 // CommitComputerSourceAbort consumes checkpoint eligibility before physical
 // activation. Dispatch remains sealed until current controls are reconciled.
-func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CommitComputerSourceAbort(ctx context.Context, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
@@ -283,7 +284,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 		if r.State != "aborting" && r.State != "consumed" {
 			return ErrNotReady
 		}
-		if err = validateSourceAbort(ctx, tx, host, env, checkpoint, r, p, false, false); err != nil {
+		if err = validateSourceAbort(ctx, tx, limits, host, env, checkpoint, r, p, false, false); err != nil {
 			return err
 		}
 		if err = matchSourceAbort(ctx, tx, env, checkpoint, identity); err != nil {
@@ -319,7 +320,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 // CompleteComputerSourceAbort opens dispatch only after physical activation and
 // reconciliation of every member's current durable control generation. A control
 // changed while the worker was reconciling forces another reconciliation pass.
-func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
 		return err
@@ -343,7 +344,7 @@ func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Po
 		if r.State != "consumed" {
 			return ErrNotReady
 		}
-		if err = validateSourceAbort(ctx, tx, host, env, checkpoint, r, p, false, false); err != nil {
+		if err = validateSourceAbort(ctx, tx, limits, host, env, checkpoint, r, p, false, false); err != nil {
 			return err
 		}
 		if err = matchSourceAbort(ctx, tx, env, checkpoint, identity); err != nil {

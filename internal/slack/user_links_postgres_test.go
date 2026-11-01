@@ -18,7 +18,7 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted := f.reply(t, "already-admitted", false)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), accepted); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), accepted); err != nil {
 		t.Fatal(err)
 	}
 	links, err := ListUserLinks(t.Context(), f.Pool, org, f.User, "", 50)
@@ -42,7 +42,7 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 	if err = linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(f.Principal(t)), org, f.User, f.installation, first); err != nil {
 		t.Fatal(err)
 	}
-	if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), delayed); err != nil {
+	if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), delayed); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool

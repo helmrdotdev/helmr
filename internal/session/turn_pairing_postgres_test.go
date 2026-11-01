@@ -42,7 +42,7 @@ func TestTurnAndAskOperationsRequireTheirParents(t *testing.T) {
 	}
 	// The peer Turn accepts messages, so a rejected mismatched send below
 	// comes from the pairing check rather than the peer's state.
-	if _, err := session.SendTurn(t.Context(), policy, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, peerTurn); err != nil {
+	if _, err := session.SendTurn(t.Context(), policy, f.limits, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, peerTurn); err != nil {
 		t.Fatalf("send to peer Turn: %v", err)
 	}
 
@@ -78,11 +78,11 @@ func TestTurnAndAskOperationsRequireTheirParents(t *testing.T) {
 		{"answer Ask under another Turn of its Session", func() error { return answer(f.session, queued) }, session.ErrDenied},
 		{"answer Ask under another Session's Turn", func() error { return answer(peer.session, peerTurn) }, session.ErrDenied},
 		{"interrupt Turn under another Session", func() error {
-			_, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: peer.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "mismatch"})
+			_, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: peer.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "mismatch"})
 			return err
 		}, session.ErrDenied},
 		{"send message to Turn under another Session", func() error {
-			_, err := session.SendTurn(t.Context(), policy, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "mismatch", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, owned)
+			_, err := session.SendTurn(t.Context(), policy, f.limits, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "mismatch", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, owned)
 			return err
 		}, session.ErrMessageClosed},
 	} {
@@ -116,13 +116,13 @@ func TestTurnAndAskOperationsRequireTheirParents(t *testing.T) {
 	if err := getAsk(f.session, owned); err != nil {
 		t.Fatalf("get owned Ask: %v", err)
 	}
-	if _, err := session.SendTurn(t.Context(), policy, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "owned", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, owned); err != nil {
+	if _, err := session.SendTurn(t.Context(), policy, f.limits, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "owned", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, owned); err != nil {
 		t.Fatalf("send to owned Turn: %v", err)
 	}
 	if err := answer(f.session, owned); err != nil {
 		t.Fatalf("answer owned Ask: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "owned"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), policy, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: owned, Kind: "turn_interrupt", IdempotencyKey: "owned"}); err != nil {
 		t.Fatalf("interrupt owned Turn: %v", err)
 	}
 }

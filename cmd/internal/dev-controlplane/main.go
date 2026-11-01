@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"net"
 	"net/http"
@@ -45,7 +46,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -192,7 +192,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.auditPolicy, cfg.computerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.auditPolicy, cfg.environmentExecutionLimits, cfg.computerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
@@ -352,7 +352,7 @@ func serveDev(
 
 type devConfig struct {
 	auditPolicy                     auditpolicy.Policy
-	environmentExecutionLimits      org.ExecutionLimits
+	environmentExecutionLimits      executionlimit.Limits
 	addr                            string
 	deploymentMode                  string
 	databaseURL                     string
@@ -444,7 +444,7 @@ func loadConfig() (devConfig, error) {
 		return cfg, err
 	}
 
-	cfg.environmentExecutionLimits = org.ExecutionLimits(limits)
+	cfg.environmentExecutionLimits = executionlimit.Limits(limits)
 	return cfg, nil
 }
 

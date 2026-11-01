@@ -26,7 +26,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			if _, err := session.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, uuid.NewV7(), json.RawMessage(`"retained source"`)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 				t.Fatal(err)
 			}
 			fenceHistoryProcess(t, f)
@@ -125,7 +125,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
-	child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
+	child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	if _, err = dispatchTurnForTest(t.Context(), f.pool, c.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)

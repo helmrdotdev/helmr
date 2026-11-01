@@ -53,33 +53,34 @@ func ReadPendingExecutionClaims(ctx context.Context, q DBTX, group uuid.UUID) ([
 
 // ExecutionBudget excludes optional preparation from real-work entitlement.
 // Allocation callers hold the Environment admission lock; read projections are
-// advisory snapshots and never reserve this budget.
+// advisory snapshots and never reserve this budget. Reads take the
+// Environment's limit and return what remains of it.
 type ExecutionBudget struct{ CPU, Memory, Residents int64 }
 
 func (b ExecutionBudget) Fits(cpu, memory int64, computer bool) bool {
 	return cpu > 0 && memory > 0 && cpu <= b.CPU && memory <= b.Memory && (!computer || b.Residents >= 1)
 }
-func ReadExecutionBudget(ctx context.Context, q DBTX, env uuid.UUID) (ExecutionBudget, error) {
-	return ReadExecutionBudgetForComputer(ctx, q, env, uuid.Nil())
+func ReadExecutionBudget(ctx context.Context, q DBTX, env uuid.UUID, limit ExecutionBudget) (ExecutionBudget, error) {
+	return ReadExecutionBudgetForComputer(ctx, q, env, uuid.Nil(), limit)
 }
-func ReadExecutionBudgetForComputer(ctx context.Context, q DBTX, env, self uuid.UUID) (ExecutionBudget, error) {
+func ReadExecutionBudgetForComputer(ctx context.Context, q DBTX, env, self uuid.UUID, limit ExecutionBudget) (ExecutionBudget, error) {
 	var b ExecutionBudget
 	err := q.QueryRow(ctx, `WITH usage AS (
  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,CASE WHEN kind='computer' THEN 1 ELSE 0 END residents
  FROM (`+AllocationUsageSQL+`) a WHERE a.environment_id=$1 AND a.kind NOT IN ('seed','retained')
  UNION ALL
  SELECT claim_cpu-credit_cpu,claim_memory-credit_memory,1 FROM (`+PendingExecutionClaimsSQL+`) c WHERE c.environment_id=$1 AND c.computer_id<>$2
- ) SELECT e.max_cpu_millis-COALESCE((SELECT sum(cpu) FROM usage),0)::bigint,
- e.max_memory_bytes-COALESCE((SELECT sum(memory) FROM usage),0)::bigint,
- e.max_resident_computers-COALESCE((SELECT sum(residents) FROM usage),0)::bigint
- FROM environments e WHERE e.id=$1`, env, self).Scan(&b.CPU, &b.Memory, &b.Residents)
+ ) SELECT $3::bigint-COALESCE((SELECT sum(cpu) FROM usage),0)::bigint,
+ $4::bigint-COALESCE((SELECT sum(memory) FROM usage),0)::bigint,
+ $5::bigint-COALESCE((SELECT sum(residents) FROM usage),0)::bigint
+ FROM environments e WHERE e.id=$1`, env, self, limit.CPU, limit.Memory, limit.Residents).Scan(&b.CPU, &b.Memory, &b.Residents)
 	return b, err
 }
 
 // ReadImageBuildExecutionBudget permits the one sequential build to use its
 // linked claim. The same derived sharing persists while that build owns a lease.
-func ReadImageBuildExecutionBudget(ctx context.Context, q DBTX, env, build uuid.UUID) (ExecutionBudget, error) {
-	b, err := ReadExecutionBudget(ctx, q, env)
+func ReadImageBuildExecutionBudget(ctx context.Context, q DBTX, env, build uuid.UUID, limit ExecutionBudget) (ExecutionBudget, error) {
+	b, err := ReadExecutionBudget(ctx, q, env, limit)
 	if err != nil {
 		return b, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/org"
 )
 
 func TestLoadConfigAcceptsEmptyBootstrap(t *testing.T) {
@@ -40,10 +40,8 @@ func setDevRegionConfig(t *testing.T) {
 	t.Setenv("ENVIRONMENT_MAX_MEMORY_BYTES", "68719476736")
 	t.Setenv("ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "1099511627776")
 	t.Setenv("ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "100")
-	t.Setenv("ENVIRONMENT_MAX_CAUSAL_DEPTH", "8")
 	t.Setenv("ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "10")
 	t.Setenv("ENVIRONMENT_ADMISSION_BURST", "20")
-	t.Setenv("ENVIRONMENT_PREPARATION_TIMEOUT_MS", "600000")
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("DATABASE_MIGRATION_URL", "postgres://migration")
 	t.Setenv("DATABASE_AUDIT_MAINTENANCE_URL", "postgres://maintenance")
@@ -102,8 +100,8 @@ func TestMigrationPathsFindsSourceRootWhenCwdDiffers(t *testing.T) {
 	}
 }
 
-func devTestExecutionLimits() org.ExecutionLimits {
-	return org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}
+func devTestExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
 }
 
 func TestDevEmailWritesInvitationLinksToTheLog(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
@@ -300,7 +301,7 @@ func TestSlackDeliveryWorkerRefreshesChangedStatusWithoutReplayingContent(t *tes
 		t.Fatal("initial assertion", methods)
 	}
 	// Change authoritative core state while retaining FinishStatus's refresh_at.
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
@@ -345,7 +346,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	}
 	// Observe a new core status while sending is deferred. Its old service age
 	// preceded this publication; successful service must move it behind content.
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
@@ -437,7 +438,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, initial, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Discover the core change while the previous call still owns the budget.

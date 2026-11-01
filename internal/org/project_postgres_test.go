@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"math/big"
 	"os"
 	"slices"
@@ -355,8 +356,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 				fmt.Sprintf("environment-%02d", environmentIndex+1),
 				fmt.Sprintf("Environment %02d", environmentIndex+1),
 				"#315FCE", environmentIndex == 0,
-				limits.MaxOutstandingAdmissions, int32(limits.MaxCausalDepth), limits.MaxResidentComputers, limits.MaxCPUMillis, limits.MaxMemoryBytes, limits.MaxReservedStorageBytes,
-				limits.PreparationTimeoutMS, limits.AdmissionRatePerSecond, limits.AdmissionBurst, pgtype.Numeric{Int: big.NewInt(limits.AdmissionBurst), Valid: true}, time.Now(),
+				pgtype.Numeric{Int: big.NewInt(limits.AdmissionBurst), Valid: true}, time.Now(),
 			})
 		}
 	}
@@ -366,9 +366,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default",
-			"max_outstanding_admissions", "max_causal_depth", "max_resident_computers", "max_cpu_millis", "max_memory_bytes", "max_reserved_storage_bytes",
-			"preparation_timeout_ms", "admission_rate_per_second", "admission_burst", "admission_tokens", "admission_refilled_at"},
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "admission_tokens", "admission_refilled_at"},
 		pgx.CopyFromRows(environmentRows)); err != nil {
 		t.Fatal(err)
 	}
@@ -475,29 +473,21 @@ func compactJSON(value []byte) string {
 
 var _ db.Querier = (*countingQuerier)(nil)
 
-func testExecutionLimits() ExecutionLimits {
-	return ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}
+func testExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20}
 }
 
-func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
+func TestProjectCreationStartsAdmissionBucketsFull(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	input := ProjectInput{Slug: "configured", Name: "Configured"}
-	if _, _, err := CreateProject(t.Context(), f.pool, f.manager, input); err == nil {
-		t.Fatal("missing operating limits accepted")
-	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM projects WHERE org_id=$1`, f.orgID).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("failed configuration leaked Project: %d %v", count, err)
-	}
-	input.ExecutionLimits = testExecutionLimits()
+	input := ProjectInput{Slug: "configured", Name: "Configured", ExecutionLimits: testExecutionLimits()}
 	_, environments, err := CreateProject(t.Context(), f.pool, f.manager, input)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(environments) != 2 {
+		t.Fatalf("create project: %d %v", len(environments), err)
 	}
 	for _, env := range environments {
-		var configured bool
-		if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens=admission_burst AND admission_burst=$2 AND max_reserved_storage_bytes=$3 AND max_causal_depth=$4 AND preparation_timeout_ms=$5 FROM environments WHERE id=$1`, env.ID, input.ExecutionLimits.AdmissionBurst, input.ExecutionLimits.MaxReservedStorageBytes, input.ExecutionLimits.MaxCausalDepth, input.ExecutionLimits.PreparationTimeoutMS).Scan(&configured); err != nil || !configured {
-			t.Fatalf("Environment limits not committed: %v %v", configured, err)
+		var full bool
+		if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens=$2 FROM environments WHERE id=$1`, env.ID, input.ExecutionLimits.AdmissionBurst).Scan(&full); err != nil || !full {
+			t.Fatalf("Environment admission bucket not full: %v %v", full, err)
 		}
 	}
 	if _, _, err := CreateProject(t.Context(), f.pool, f.manager, input); !errors.Is(err, ErrProjectSlugInUse) {
@@ -505,20 +495,21 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 	}
 }
 
-func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
+func TestEnvironmentCreationStartsAdmissionBucketFull(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
 	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{Slug: "limits", Name: "Limits", ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 {
 		t.Fatalf("create project: %d %v", len(envs), err)
 	}
-	partial := testExecutionLimits()
-	partial.AdmissionBurst = 0
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.manager, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456"}, partial); err == nil {
-		t.Fatal("Environment created without a complete limit set")
+	limits := testExecutionLimits()
+	limits.AdmissionBurst = 7
+	env, err := CreateEnvironment(t.Context(), f.pool, f.manager, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "added", Name: "Added", ColorHex: "#123456"}, limits)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM environments WHERE project_id=$1`, project.ID).Scan(&count); err != nil || count != 2 {
-		t.Fatalf("environments after rejected creation: %d %v", count, err)
+	var full bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens=7 FROM environments WHERE id=$1`, env.ID).Scan(&full); err != nil || !full {
+		t.Fatalf("Environment admission bucket not full: %v %v", full, err)
 	}
 }
 

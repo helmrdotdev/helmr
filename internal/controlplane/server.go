@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"io"
 	"log/slog"
@@ -34,7 +35,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -72,7 +72,7 @@ type Server struct {
 	diagnosticDB               db.TxDB
 	diagnosticBounds           diagnostic.Bounds
 	allocator                  *dispatch.Allocator
-	environmentExecutionLimits org.ExecutionLimits
+	environmentExecutionLimits executionlimit.Limits
 	allocationKeys             *computer.KeyBroker
 	preparationKeys            *computer.ImageBuildKeyBroker
 	preparationPublisher       *computer.ImageBuildPublisher
@@ -122,7 +122,7 @@ type ServerConfig struct {
 	DiagnosticDB               db.TxDB
 	DiagnosticBounds           diagnostic.Bounds
 	Allocator                  *dispatch.Allocator
-	EnvironmentExecutionLimits org.ExecutionLimits
+	EnvironmentExecutionLimits executionlimit.Limits
 	ComputerKeys               computer.DataKeyWrapper
 	Log                        *slog.Logger
 	DeploymentMode             string
@@ -288,7 +288,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:                    cfg.Secrets,
 		secretDelivery:             cfg.SecretDelivery,
 		secretProxy:                cfg.SecretProxy,
-		computers:                  computer.NewCreator(cfg.SecretProxy, cfg.AuditPolicy),
+		computers:                  computer.NewCreator(cfg.SecretProxy, cfg.AuditPolicy, cfg.EnvironmentExecutionLimits),
 		telemetryReader:            telemetryReader,
 		diagnosticBounds:           cfg.DiagnosticBounds,
 		diagnosticDB:               cfg.DiagnosticDB,

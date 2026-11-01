@@ -33,7 +33,7 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			}
 			// A public interrupt is independent of the failed process's report.
 			if alreadyInterrupted {
-				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -217,11 +217,11 @@ func TestSessionRuntimeFailureSurvivesContinuationCommit(t *testing.T) {
 				f = newFixture(t)
 				host = *f.host()
 				p, _ = sourceAbort(t, f)
-				if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 				commit = func() error {
-					return session.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
+					return session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, host, f.env, p, abortReceipt(p, true, false))
 				}
 			}
 			e := f.execution()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"log/slog"
 	"net/http"
@@ -169,7 +170,7 @@ func TestSocketAdmissionRecordsExactHumanLinkWithoutInventingSignature(t *testin
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests WHERE status='received'`).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), receipt); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), receipt); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool

@@ -39,7 +39,7 @@ func TestSecretInventoryListsDirectAndImageHolders(t *testing.T) {
 	}
 	list := func(secret string, limit int32, after *computer.ListPosition) computer.Listing {
 		t.Helper()
-		listing, err := computer.List(t.Context(), f.pool, scope, computer.ListPage{Limit: limit, After: after, Secret: secret})
+		listing, err := computer.List(t.Context(), f.pool, f.limits, scope, computer.ListPage{Limit: limit, After: after, Secret: secret})
 		if err != nil {
 			t.Fatal(err)
 		}

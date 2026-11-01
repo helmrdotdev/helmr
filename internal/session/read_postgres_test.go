@@ -16,7 +16,7 @@ func TestRetainedWorkReads(t *testing.T) {
 	p := preparationResidentImage(t)
 	f := p.f.fixture
 	first := f.enqueue(t, "first")
-	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
+	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestRetainedWorkReads(t *testing.T) {
 			t.Fatalf("hold identity or timestamp lost: %+v", hold)
 		}
 	}
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	retained, err = session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, second.TurnID)

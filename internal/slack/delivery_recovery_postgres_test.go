@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
@@ -548,7 +549,7 @@ func TestSlackTerminalStreamExpirySettlesCleanupWithoutClaimingRemoteClosure(t *
 					}
 				}
 			}
-			if _, err := session.ControlSession(t.Context(), policy, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "expire"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), policy, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "expire"}); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1;

@@ -58,7 +58,7 @@ func TestQueuedHumanInputSurvivesAccessRevocation(t *testing.T) {
 func TestCurrentParticipantCanContinueAfterOriginalSourceRetires(t *testing.T) {
 	f := newFixture(t)
 	original := f.caller()
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, original, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "original-source", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, original, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "original-source", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	source := original.Human.IdentityID
@@ -68,7 +68,7 @@ func TestCurrentParticipantCanContinueAfterOriginalSourceRetires(t *testing.T) {
 	if _, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session); err != nil {
 		t.Fatal("lost retained history", err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retired-origin", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retired-origin", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal("current participant could not continue", err)
 	}
 }

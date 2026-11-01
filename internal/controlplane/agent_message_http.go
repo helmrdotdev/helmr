@@ -32,7 +32,7 @@ func (s *Server) sendTurnMessageHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := session.EnqueueRequest{EnvironmentID: environment, SessionID: sessionID, IdempotencyKey: request.IdempotencyKey, Input: request.Message}
-	receipt, err := session.SendTurn(r.Context(), s.auditPolicy, s.tx, caller, req, turn)
+	receipt, err := session.SendTurn(r.Context(), s.auditPolicy, s.environmentExecutionLimits, s.tx, caller, req, turn)
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return

@@ -86,10 +86,8 @@ variables {
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
     ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
     ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-    ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
     ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
     ENVIRONMENT_ADMISSION_BURST            = "20"
-    ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     DIAGNOSTIC_CHUNK_BYTES                 = "65536"
     DIAGNOSTIC_SOURCE_BYTES                = "4194304"
     DIAGNOSTIC_SOURCE_RECORDS              = "1024"
@@ -147,6 +145,13 @@ run "controlplane_uses_execution_only_runtime_authority" {
   assert {
     condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.APP_ORIGIN == output.controlplane_url
     error_message = "Slack publications must link to this installation's Console origin."
+  }
+
+  assert {
+    condition = alltrue([for name in ["ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_MAX_CPU_MILLIS", "ENVIRONMENT_MAX_MEMORY_BYTES", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "ENVIRONMENT_ADMISSION_BURST"] :
+      { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }[name] == var.controlplane_environment[name]
+    ])
+    error_message = "Scheduled and Slack admission must apply the control plane's Environment execution limits."
   }
 
   assert {
@@ -266,10 +271,8 @@ run "capacity_api_credential_rejects_plaintext_environment" {
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
       ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
       ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
-      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
       CAPACITY_TOKEN                         = "plaintext-must-not-enter-task-definition"
     }
   }
@@ -453,10 +456,8 @@ run "reject_computer_root_override" {
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
     ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
     ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-    ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
     ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
     ENVIRONMENT_ADMISSION_BURST            = "20"
-    ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     COMPUTER_KMS_KEY_ARN                   = "other"
   } }
   expect_failures = [terraform_data.bootstrap_preconditions]
@@ -603,10 +604,8 @@ run "live_controlplane_requires_diagnostic_limits" {
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
       ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
       ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
-      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     }
   }
   expect_failures = [var.controlplane_environment]
@@ -638,10 +637,8 @@ run "zero_count_services_allow_missing_diagnostic_limits" {
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
       ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
       ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
-      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     }
   }
 }
@@ -661,10 +658,8 @@ run "bootstrap_only_allows_missing_diagnostic_limits" {
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
       ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
       ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
-      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     }
   }
 }
@@ -712,10 +707,8 @@ run "live_controlplane_diagnostic_limits_require_positive_integers" {
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
       ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
       ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
-      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
-      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
     }
   }
   expect_failures = [var.controlplane_environment]

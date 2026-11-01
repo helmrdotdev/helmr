@@ -75,28 +75,32 @@ operation first. Coordinate upload inactivity limits with ingress timeouts;
 HTTP keepalive is a separate setting. Runtime examples are starting points for
 measurement, not production capacity recommendations.
 
-Execution policy for newly created Environments must also be configured explicitly.
-These values are copied into each Environment when it is created; changing process
-configuration does not reset existing Environment limits or rate tokens. They have
-no implicit defaults. Set positive integer values appropriate for your deployment.
+Environment execution limits must also be configured explicitly, on both the control
+plane and the dispatcher, with the same values. They have no implicit defaults. Set
+positive integer values appropriate for your deployment. The values apply to every
+Environment and take effect when the processes restart; a lowered admission burst
+applies at the next admission.
 
 | Variable | Purpose |
 | --- | --- |
-| `ENVIRONMENT_MAX_RESIDENT_COMPUTERS` | Reserved policy for the Computer allocator; not yet enforced. |
-| `ENVIRONMENT_MAX_CPU_MILLIS` | Bound on physical whole-vCPU reservations, in millicores. A fractional request rounds up: `cpu: 0.5` reserves 1000 millicores. A non-multiple of 1000 leaves its remainder unusable. Rejects fresh Computers that cannot fit; aggregate allocation enforcement is pending. |
-| `ENVIRONMENT_MAX_MEMORY_BYTES` | Rejects a Computer larger than this memory bound; aggregate allocation enforcement is pending. |
+| `ENVIRONMENT_MAX_RESIDENT_COMPUTERS` | Maximum Computers holding an execution allocation at once. |
+| `ENVIRONMENT_MAX_CPU_MILLIS` | Bound on physical whole-vCPU reservations across the Environment, in millicores. A fractional request rounds up: `cpu: 0.5` reserves 1000 millicores. A non-multiple of 1000 leaves its remainder unusable. A Computer that cannot fit on its own is rejected at creation. |
+| `ENVIRONMENT_MAX_MEMORY_BYTES` | Bound on memory reservations across the Environment. A Computer larger than this bound is rejected at creation. |
 | `ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES` | Bound on reserved logical Computer storage. Each Computer reserves 32 GiB; a lower bound rejects fresh Computer creation. |
 | `ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS` | Maximum queued and running Turns. |
-| `ENVIRONMENT_MAX_CAUSAL_DEPTH` | Maximum immutable requester ancestry for created Sessions. |
 | `ENVIRONMENT_ADMISSION_RATE_PER_SECOND` | Refill rate for new Turn admission tokens. |
 | `ENVIRONMENT_ADMISSION_BURST` | Maximum admission tokens; one new Turn consumes one token. |
-| `ENVIRONMENT_PREPARATION_TIMEOUT_MS` | Initial Computer preparation deadline in milliseconds. |
 
-Retrying an accepted request does not consume another token. Disk reservations
-are distinct from physical CPU/memory allocation and from measured stored bytes.
-Deleted or failed-preparation Computers currently retain their logical storage reservation;
-reclamation must be implemented before repeated creation can reuse that capacity.
-These resource and admission bounds do not promise a monetary spend ceiling.
+Starting execution beyond the aggregate CPU, memory or resident Computer bound is
+refused; queued work that cannot fit waits and reports the Environment limit as its
+reason. Retrying an accepted request does not consume another token. Disk
+reservations are distinct from physical CPU/memory allocation and from measured
+stored bytes. These resource and admission bounds do not promise a monetary spend
+ceiling.
+
+Requester ancestry for created Sessions is limited to a depth of 8. Computer
+preparation, image builds and the start of execution each have a fixed 10-minute
+deadline.
 
 Diagnostic ingestion requires explicit positive integer limits. The dispatcher also uses
 these limits for diagnostic export and requires the export batch settings below:

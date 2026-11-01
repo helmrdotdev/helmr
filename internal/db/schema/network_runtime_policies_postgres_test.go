@@ -25,16 +25,11 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 		        '00000000-0000-0000-0000-000000000001', 'test', 'project', 'Project');
 		INSERT INTO environments (
 			id, org_id, project_id, slug, name, color_hex,
-			max_outstanding_admissions, max_causal_depth, max_resident_computers,
-			max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes,
-			preparation_timeout_ms, admission_rate_per_second, admission_burst,
 			admission_tokens, admission_refilled_at
 		) VALUES (
 			'00000000-0000-0000-0000-000000000003',
 			'00000000-0000-0000-0000-000000000001',
-			'00000000-0000-0000-0000-000000000002', 'environment', 'Environment', '#3366ff',
-			1024, 32, 1024, 1024000, 1099511627776, 1099511627776,
-			600000, 1000000, 1000000, 1000000, clock_timestamp()
+			'00000000-0000-0000-0000-000000000002', 'environment', 'Environment', '#3366ff', 1000000, clock_timestamp()
 		);
 		INSERT INTO deployments (environment_id, id, bundle_digest)
 		SELECT id, '00000000-0000-0000-0000-000000000004', 'sha256:' || repeat('1', 64)

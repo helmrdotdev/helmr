@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"testing"
 )
 
@@ -9,7 +10,7 @@ func TestPlanObservesPlacementsWithoutCreatingReserveDemand(t *testing.T) {
 	id := plannerTestUUID(1)
 	pool := plannerTestPool(id, "primary")
 	store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{pool}}
-	empty, err := Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
+	empty, err := Plan(t.Context(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +24,7 @@ func TestPlanObservesPlacementsWithoutCreatingReserveDemand(t *testing.T) {
 	host.ImmediateMemoryBytes = 0
 	host.ImmediateVmSlots = 0
 	store.bins = []db.ListWorkerCapacityBinsRow{host}
-	result, err := Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
+	result, err := Plan(t.Context(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestPlanObservesPlacementsWithoutCreatingReserveDemand(t *testing.T) {
 		t.Fatalf("reclaimable observation: %+v", p)
 	}
 	store.demand = []db.ListAllocationPlanningDemandRow{plannerFreshComputer(20)}
-	result, err = Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
+	result, err = Plan(t.Context(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 2}}}, plannerTestNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestPlanImmediateUnknownDoesNotMeanEmpty(t *testing.T) {
 	pool := plannerTestPool(id, "primary")
 	store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{pool}, bins: []db.ListWorkerCapacityBinsRow{plannerBin(pool, id)}}
 	store.bins[0].ResourceObservationCurrent = false
-	response, err := Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 1}}}, plannerTestNow)
+	response, err := Plan(t.Context(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{{PoolID: plannerUUIDString(id), MaxAdditionalWorkers: 1}}}, plannerTestNow)
 	if err != nil {
 		t.Fatal(err)
 	}

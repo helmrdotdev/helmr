@@ -61,7 +61,7 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,14 +74,14 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "release")
 	req.HoldID = hold.HoldID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || resumed.Kind != "resume" || resumed.Generation != 3 {
 		t.Fatalf("resume: %+v %v", resumed, err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	stop, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)

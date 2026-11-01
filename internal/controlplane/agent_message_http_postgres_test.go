@@ -37,7 +37,7 @@ func TestTurnMessageHTTPBody(t *testing.T) {
 	}
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	token := httpFixture.session(t, f.User, orgID)
-	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "queued", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "queued", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

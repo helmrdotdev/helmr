@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"net/url"
 	"os"
@@ -112,12 +113,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure diagnostic exporter: %w", err)
 	}
 
+	limits := executionlimit.Limits(cfg.EnvironmentExecutionLimits)
 	changes := dbnotify.New()
 	runners := []dispatcherRunner{
 		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Agent triggers", run: func(ctx context.Context) error {
-			return agent.RunTriggers(ctx, cfg.AuditPolicy, pool, secretStore, log)
+			return agent.RunTriggers(ctx, cfg.AuditPolicy, limits, pool, secretStore, log)
 		}},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
@@ -146,7 +148,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		projection := slack.ProjectionConfig{AppOrigin: appOrigin, ControlKey: controlKey}
 		runners = append(runners,
 			dispatcherRunner{name: "Slack requests", run: func(ctx context.Context) error {
-				return slack.RunRequests(ctx, cfg.AuditPolicy, pool, secretStore, projection, client, log, changes)
+				return slack.RunRequests(ctx, cfg.AuditPolicy, limits, pool, secretStore, projection, client, log, changes)
 			}},
 			dispatcherRunner{name: "Slack projection", run: func(ctx context.Context) error { return slack.RunProjection(ctx, pool, projection, log, changes) }},
 			dispatcherRunner{name: "Slack credentials", run: func(ctx context.Context) error { return credentials.RunCredentials(ctx, external, log) }},

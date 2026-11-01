@@ -142,7 +142,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		return key.Raw
 	}
 	otherEnvironment := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironment, orgID, projectID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,'other','Other','#112233',1000000,clock_timestamp())`, otherEnvironment, orgID, projectID)
 	otherScope := scope
 	otherScope.EnvironmentID = otherEnvironment.String()
 	dbtest.GrantMember(t, f.Pool, orgID, f.User, &otherEnvironment, "api_keys.create")
@@ -338,7 +338,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -32,7 +32,7 @@ func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 // attentionFailedTurn admits a Turn in the Session and records it failed hoursAgo.
 func attentionFailedTurn(t *testing.T, f sessiontest.Fixture, sessionID uuid.UUID, key string, hoursAgo int) uuid.UUID {
 	t.Helper()
-	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	caller := session.UserCaller(f.Principal(t))
 
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-	asked, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	asked, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	failed := attentionFailedTurn(t, f, failing, "failed", 2)
 	superseded := attentionSession(t, f)
 	attentionFailedTurn(t, f, superseded, "superseded", 2)
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: superseded, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"again"}]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: superseded, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"again"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	attentionFailedTurn(t, f, attentionSession(t, f), "old", 25)
@@ -225,7 +225,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	// organization lists only its own items, and the first keeps its counts.
 	second, secondDeployment, secondAgent, secondSession, secondHold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	secondRegistration, secondInstallation, secondConnection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,'second','Second','#445566',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,'second','Second','#445566',1000000,clock_timestamp());
  INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$4,$5);
  INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$4,$5,'{}','{}');
  INSERT INTO templates(environment_id,id,key) VALUES($1,$4,'fixture-computer');
@@ -264,7 +264,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	otherOrg, otherOwner := h.organizationOwner(t, "elsewhere-same-ids")
 	otherEnv := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($2,$1,'test','project','Project');
- INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, otherOrg, uuid.NewV7(), otherEnv)
+ INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'test','Test','#112233',1000000,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, otherOrg, uuid.NewV7(), otherEnv)
 	var otherUser uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1`, otherOrg).Scan(&otherUser); err != nil {
 		t.Fatal(err)

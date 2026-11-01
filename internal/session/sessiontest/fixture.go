@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
@@ -21,6 +22,13 @@ import (
 )
 
 const ChannelCredential = "test-computer-channel"
+
+// ExecutionLimits are the fixture Environment's limits: generous enough that
+// tests which do not exercise a limit never reach one. The fixture's admission
+// bucket starts full at this burst.
+func ExecutionLimits() executionlimit.Limits {
+	return executionlimit.Limits{MaxResidentComputers: 1024, MaxCPUMillis: 1024000, MaxMemoryBytes: 1 << 40, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 1024, AdmissionRatePerSecond: 1000000, AdmissionBurst: 1000000}
+}
 
 type Fixture struct {
 	Pool                                                                             *pgxpool.Pool
@@ -50,7 +58,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO users(id,display_name) VALUES($2,'Developer');
       INSERT INTO org_members(id,org_id,user_id) VALUES($23,$1,$2);
       INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'test','project','Project');
-      INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
+      INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'test','Test','#112233',1000000,clock_timestamp());
       INSERT INTO permission_groups(id,org_id,name) VALUES($1,$1,'Fixture operators');
       INSERT INTO permission_group_members(org_id,group_id,member_id) VALUES($1,$1,$23);
       INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$1,'Fixture operator',ARRAY['agents.read','sessions.create','agents.delete','agents.restore','agent_connections.read','agent_connections.configure','agent_connections.delete','sessions.read','sessions.send','sessions.answer','sessions.resume','sessions.interrupt','sessions.cancel','sessions.close','deployments.read','deployments.publish','deployments.promote','templates.read','templates.refresh','triggers.read','computers.read','commands.read_output','computers.execute','commands.cancel','computers.create','computers.wake','computers.hibernate','computers.delete','secrets.read','secrets.create','secrets.rotate','secrets.revoke','api_keys.read','api_keys.create','api_keys.update','api_keys.rotate','api_keys.revoke']);

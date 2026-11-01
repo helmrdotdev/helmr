@@ -33,7 +33,7 @@ func TestMutationOwnersWakeDiscovery(t *testing.T) {
 			var err error
 			switch kind {
 			case "control":
-				_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt"))
+				_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt"))
 			case "save":
 				err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 					return computer.FailSave(t.Context(), tx, f.env, save.ID, "test publication absence")

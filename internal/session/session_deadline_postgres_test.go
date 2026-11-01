@@ -148,7 +148,7 @@ func TestSessionLifecycleClosesAfterRecordedResultSettles(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	active, save := f.finalize(t, "result")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)
@@ -302,7 +302,7 @@ func TestSessionLifecycleDoesNotLockParkedClosingTree(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(t.Context())
@@ -360,7 +360,7 @@ func TestSessionLifecycleDeadlineDrainsClosingTree(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
@@ -380,7 +380,7 @@ func TestSessionLifecycleClosesLargeOwnedTree(t *testing.T) {
 	active, save := f.finalize(t, "parent")
 	const children = 5000
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT $1,gen_random_uuid(),$2,$3,$4,$5,$5,$5,1,s.origin_user_id,s.origin_api_key_id,s.origin_activation_id FROM generate_series(1,$6) CROSS JOIN sessions s WHERE s.environment_id=$1 AND s.id=$5`, f.env, f.agent, f.deployment, f.computer, f.session, children)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "large-close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "close", "large-close")); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)

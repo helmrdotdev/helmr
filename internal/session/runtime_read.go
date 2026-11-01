@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -20,7 +21,7 @@ type RuntimeTurnObservation struct {
 
 // RuntimeObserveTurn reads one attributable outcome under the current caller's
 // execution authority. It does not grant the caller the target's unrelated history.
-func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
+func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
 	var result RuntimeTurnObservation
 	if caller.Kind != "session" || session == uuid.Nil() || turn == uuid.Nil() {
 		return result, ErrDenied
@@ -52,7 +53,7 @@ func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, poo
 			return err
 		}
 		if result.Status == "queued" {
-			blocked, err := runtimeWaitRetainsCapacity(ctx, tx, caller.Execution, session, turn)
+			blocked, err := runtimeWaitRetainsCapacity(ctx, tx, limits, caller.Execution, session, turn)
 			if err != nil {
 				return err
 			}
@@ -74,21 +75,19 @@ func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, poo
 // Diagnose only an Environment limit that the caller's own retained allocation
 // already makes impossible for this distinct target. Other workloads ending,
 // another Host arriving or a transient full pool are not assumed to be dependencies.
-func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, session, turn uuid.UUID) (bool, error) {
+func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, e Execution, session, turn uuid.UUID) (bool, error) {
 	var targetCPU, targetMemory int64
 	var ownCPU, ownMemory int64
-	var maxResident, maxCPU, maxMemory int64
-	err := tx.QueryRow(ctx, `SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
+	err := tx.QueryRow(ctx, `SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes
       FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
       JOIN computers target ON (target.environment_id,target.id)=(s.environment_id,s.computer_id)
-      JOIN environments env ON env.id=s.environment_id
       JOIN session_processes p ON p.environment_id=$1 AND p.session_id=$4 AND p.epoch=$5
       JOIN computer_leases own ON (own.environment_id,own.computer_id,own.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
       WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3 AND t.status='queued' AND s.status IN ('open','closing')
         AND target.id<>own.computer_id
         AND target.preparation_failed_at IS NULL AND target.integrity_fault_at IS NULL AND target.deleted_at IS NULL
         AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=target.id AND l.fenced_at IS NULL)
-        AND `+db.NoSessionHoldsSQL, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
+        AND `+db.NoSessionHoldsSQL, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -102,5 +101,6 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
 	exceeds := func(own, added, limit int64) bool {
 		return added > 0 && added <= limit && own > limit-added
 	}
-	return exceeds(1, 1, maxResident) || exceeds(ownCPU, cpu, maxCPU) || exceeds(ownMemory, targetMemory, maxMemory), nil
+	l := limits.For(e.EnvironmentID)
+	return exceeds(1, 1, l.MaxResidentComputers) || exceeds(ownCPU, cpu, l.MaxCPUMillis) || exceeds(ownMemory, targetMemory, l.MaxMemoryBytes), nil
 }

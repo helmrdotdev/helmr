@@ -27,10 +27,8 @@ def config():
             'ENVIRONMENT_MAX_MEMORY_BYTES': '68719476736',
             'ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES': '1099511627776',
             'ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS': '100',
-            'ENVIRONMENT_MAX_CAUSAL_DEPTH': '8',
             'ENVIRONMENT_ADMISSION_RATE_PER_SECOND': '10',
             'ENVIRONMENT_ADMISSION_BURST': '20',
-            'ENVIRONMENT_PREPARATION_TIMEOUT_MS': '600000',
             'CAS_URI': 's3://scope-cas', 'PLATFORM_STORE_URI': 's3://scope-platform',
             'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH': '/opt/runtime.json',
             'GITHUB_OAUTH_CLIENT_ID': 'test-id', 'GITHUB_OAUTH_CLIENT_SECRET': 'test-secret',
@@ -145,6 +143,8 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn('Delegate=', files['worker-override.conf'])
         self.assertEqual(cfg['worker']['CAS_URI'], cfg['control_plane']['CAS_URI'])
         self.assertEqual(cfg['dispatcher']['COMPUTER_FENCING_KEY'], cfg['control_plane']['COMPUTER_FENCING_KEY'])
+        for key in ['ENVIRONMENT_MAX_RESIDENT_COMPUTERS', 'ENVIRONMENT_ADMISSION_BURST']:
+            self.assertEqual(cfg['dispatcher'][key], cfg['control_plane'][key])
         self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], cfg['worker']['CONTROL_PLANE_URL'])
         self.assertNotEqual(cfg['dispatcher']['CLICKHOUSE_USER'], cfg['control_plane']['CLICKHOUSE_USER'])
 

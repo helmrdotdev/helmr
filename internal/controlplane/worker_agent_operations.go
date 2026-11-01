@@ -86,7 +86,7 @@ func (server *Server) workerAgentObserveTurn(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid Turn target"))
 		return
 	}
-	view, err := session.RuntimeObserveTurn(r.Context(), server.auditPolicy, server.tx, caller, target, turn)
+	view, err := session.RuntimeObserveTurn(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, caller, target, turn)
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
@@ -263,7 +263,7 @@ func (server *Server) workerAgentStartSession(w http.ResponseWriter, r *http.Req
 	if server.slackConfig != nil {
 		preflight = server.slackConfig.Client
 	}
-	receipt, err := slack.Start(r.Context(), server.auditPolicy, server.tx, server.secretProxy, preflight, caller, admission)
+	receipt, err := slack.Start(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, server.secretProxy, preflight, caller, admission)
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
@@ -278,7 +278,7 @@ func (server *Server) workerAgentSpawn(w http.ResponseWriter, r *http.Request, r
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", err.Error()))
 		return
 	}
-	receipt, err := session.Spawn(r.Context(), server.auditPolicy, server.tx, server.secretProxy, caller, admission)
+	receipt, err := session.Spawn(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, server.secretProxy, caller, admission)
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
@@ -308,7 +308,7 @@ func (server *Server) workerAgentSendTurn(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 		return
 	}
-	receipt, err := session.SendTurn(r.Context(), server.auditPolicy, server.tx, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
+	receipt, err := session.SendTurn(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
@@ -354,7 +354,7 @@ func (server *Server) workerAgentControlSession(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 		return
 	}
-	receipt, err := session.ControlSession(r.Context(), server.auditPolicy, server.tx, caller, session.SessionControlRequest{
+	receipt, err := session.ControlSession(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, caller, session.SessionControlRequest{
 		EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, IdempotencyKey: input.IdempotencyKey,
 	})
 	if err != nil {
@@ -395,7 +395,7 @@ func (server *Server) workerAgentEnqueue(w http.ResponseWriter, r *http.Request,
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 		return
 	}
-	receipt, err := session.Enqueue(r.Context(), server.auditPolicy, server.tx, server.secretProxy, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
+	receipt, err := session.Enqueue(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, server.secretProxy, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return

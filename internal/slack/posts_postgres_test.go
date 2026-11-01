@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"time"
 	"uuid"
@@ -24,7 +25,7 @@ func (f statusFixture) post(t *testing.T, seq int64, key, role string, turn *uui
 }
 func (f statusFixture) opening(t *testing.T) uuid.UUID {
 	t.Helper()
-	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
+	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -127,7 +127,7 @@ func TestGroupDrainRechecksDependenciesAfterAllocationLock(t *testing.T) {
 		}
 	}
 	// Use the allocator inside the transaction holding the admission lock.
-	owned := testAllocator(t, hold, nil)
+	owned := testAllocator(t, hold, f.limits, nil)
 	if _, err = owned.AllocateImageBuild(ctx, f.env, p.ID, f.worker); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	f := cp.f
 	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), nil)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
 		t.Fatalf("incompatible input admitted: %v", err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
@@ -181,7 +181,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	// must now be discoverable and allocatable; other eligibility cannot hide a
 	// missing Group predicate. Production never rewrites this historical owner.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET worker_host_id=$3 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer, host)
-	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
@@ -201,7 +201,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	f := newFixture(t)
 	setGroupPrimary(t, f)
 	// Closing logical work is not evidence that its Computer has stopped.
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 hour' WHERE environment_id=$1`, f.env)

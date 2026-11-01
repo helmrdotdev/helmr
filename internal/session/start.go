@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -41,12 +42,16 @@ type StartRequest struct {
 // StartPlan is a validated start request and the identity of its receipt.
 type StartPlan struct {
 	AuditPolicy auditpolicy.Policy
+	Limits      executionlimit.Limits
 	Caller      Caller
 	Request     StartRequest
 	Method      string
 	Digest      [32]byte
 	HasInput    bool
 }
+
+// MaxCausalDepth bounds the requester ancestry of a created Session.
+const MaxCausalDepth = 8
 
 // StartPin is what a start resolved: the Agent and the Deployment its Session
 // is pinned to. Fresh is false when the start returned a retained receipt.
@@ -55,20 +60,20 @@ type StartPin struct {
 	Fresh                 bool
 }
 
-func Start(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
-	return admitSession(ctx, auditPolicy, pool, trust, caller, req, "create")
+func Start(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+	return admitSession(ctx, auditPolicy, limits, pool, trust, caller, req, "create")
 }
-func Spawn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
-	return admitSession(ctx, auditPolicy, pool, trust, caller, req, "spawn")
+func Spawn(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+	return admitSession(ctx, auditPolicy, limits, pool, trust, caller, req, "spawn")
 }
 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
-func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
+func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
 	if req.SlackChannelID != nil {
 		return Admission{}, ErrInvalidInput
 	}
-	plan, err := PlanStart(auditPolicy, caller, req, method)
+	plan, err := PlanStart(auditPolicy, limits, caller, req, method)
 	if err != nil {
 		return Admission{}, err
 	}
@@ -88,7 +93,7 @@ func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 }
 
 // PlanStart validates a start request and computes its idempotency digest.
-func PlanStart(auditPolicy auditpolicy.Policy, caller Caller, req StartRequest, method string) (StartPlan, error) {
+func PlanStart(auditPolicy auditpolicy.Policy, limits executionlimit.Limits, caller Caller, req StartRequest, method string) (StartPlan, error) {
 	if req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return StartPlan{}, ErrInvalidInput
 	}
@@ -126,7 +131,7 @@ func PlanStart(auditPolicy auditpolicy.Policy, caller Caller, req StartRequest, 
 	if err != nil {
 		return StartPlan{}, ErrInvalidInput
 	}
-	return StartPlan{AuditPolicy: auditPolicy, Caller: caller, Request: req, Method: method, Digest: digest, HasInput: hasInput}, nil
+	return StartPlan{AuditPolicy: auditPolicy, Limits: limits, Caller: caller, Request: req, Method: method, Digest: digest, HasInput: hasInput}, nil
 }
 
 // StartError reports a start failure the way transports expect: storage
@@ -179,7 +184,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				return err
 			}
 		}
-		policy, err := org.LockAdmission(ctx, tx, req.EnvironmentID)
+		current, err := org.LockAdmission(ctx, tx, req.EnvironmentID)
 		if err != nil {
 			return err
 		}
@@ -227,10 +232,10 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				return err
 			}
 		} else {
-			if policy.Deployment == nil {
+			if current == nil {
 				return ErrNotReady
 			}
-			deployment = *policy.Deployment
+			deployment = *current
 		}
 		var templateKey, inputKind string
 		if err = tx.QueryRow(ctx, `SELECT t.key,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &inputKind); err != nil {
@@ -254,7 +259,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		pin.DeploymentID, pin.Fresh = deployment, true
 		computerID := req.ComputerID
 		if computerID == uuid.Nil() && hasInput {
-			computerID, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, computerLimits(policy))
+			computerID, err = computer.CreateForAdmission(ctx, tx, trust, p.Limits, req.EnvironmentID, deployment, templateKey)
 			if err != nil {
 				return err
 			}
@@ -297,15 +302,15 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 		}
 		if hasInput {
-			err = consumeAdmission(ctx, tx, req.EnvironmentID, policy)
+			err = consumeAdmission(ctx, tx, p.Limits, req.EnvironmentID)
 		} else {
-			err = consumeAdmissionToken(ctx, tx, req.EnvironmentID)
+			err = consumeAdmissionToken(ctx, tx, p.Limits, req.EnvironmentID)
 		}
 		if err != nil {
 			return err
 		}
 		if computerID != uuid.Nil() {
-			if err = computer.NoteExecutionDemand(ctx, p.AuditPolicy, tx, req.EnvironmentID, computerID); err != nil {
+			if err = computer.NoteExecutionDemand(ctx, p.AuditPolicy, p.Limits, tx, req.EnvironmentID, computerID); err != nil {
 				return err
 			}
 		}
@@ -325,7 +330,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			if method == "spawn" {
 				parent, root = caller.ID, locked[caller.ID].root
 			}
-			if causal > policy.MaxCausal {
+			if causal > MaxCausalDepth {
 				return ErrInvalidInput
 			}
 		}

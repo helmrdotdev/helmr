@@ -72,7 +72,7 @@ func TestSessionIdleClosesChildHeldByParentInterrupt(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$1,requester_session_id=$1,root_session_id=$1,causal_depth=1 WHERE id=$2;
  UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$2`, pgx.QueryExecModeSimpleProtocol, f.session, child.session)
 	queued := child.enqueue(t, "child-work")
-	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "parent-stop")); err != nil {
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "parent-stop")); err != nil {
 		t.Fatal(err)
 	}
 	// The child's idle process has acknowledged its suspension.
@@ -132,17 +132,17 @@ func TestStartRejectsKeyedMismatch(t *testing.T) {
 	key := "retained"
 	req := f.startRequest("first")
 	req.SessionKey = &key
-	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
+	b, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req)
 	if err != nil || b.SessionID != a.SessionID {
 		t.Fatalf("replay: %+v %v", b, err)
 	}
 	req.IdempotencyKey = "mismatch"
 	req.Input = json.RawMessage(`[{"type":"text","text":"different"}]`)
-	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("keyed mismatch: %v", err)
 	}
 }
@@ -273,7 +273,7 @@ func TestSessionReadsIdlePeriodFromPinnedDeployment(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE agent_definitions SET close_after_idle_ms=60000 WHERE environment_id=$1`, f.env)
-	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("first"))
+	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestSessionReadsIdlePeriodFromPinnedDeployment(t *testing.T) {
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,close_after_idle_ms,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,NULL,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
-	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("second"))
+	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("second"))
 	if err != nil {
 		t.Fatal(err)
 	}

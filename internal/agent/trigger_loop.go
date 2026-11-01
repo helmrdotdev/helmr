@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"log/slog"
 	"time"
 	"uuid"
@@ -16,7 +17,7 @@ import (
 
 type TriggerPosition struct{ environment, id uuid.UUID }
 
-func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, trust computer.TrustIssuer, log *slog.Logger) error {
+func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, database db.TxDB, trust computer.TrustIssuer, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return ErrInvalidInput
 	}
@@ -24,7 +25,7 @@ func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, database d
 	defer ticker.Stop()
 	var after TriggerPosition
 	for {
-		next, more, err := ReconcileTriggers(ctx, auditPolicy, database, trust, after)
+		next, more, err := ReconcileTriggers(ctx, auditPolicy, limits, database, trust, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -42,7 +43,7 @@ func RunTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, database d
 		}
 	}
 }
-func ReconcileTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, trust computer.TrustIssuer, after TriggerPosition) (TriggerPosition, bool, error) {
+func ReconcileTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, database db.TxDB, trust computer.TrustIssuer, after TriggerPosition) (TriggerPosition, bool, error) {
 	scan, stop := context.WithTimeout(ctx, 10*time.Second)
 	rows, err := database.Query(scan, `SELECT s.environment_id,s.id FROM trigger_activations s JOIN environments e ON e.id=s.environment_id
  WHERE s.next_fire_at<=statement_timestamp() AND (s.active_until IS NULL OR s.next_fire_at<s.active_until)
@@ -66,7 +67,7 @@ func ReconcileTriggers(ctx context.Context, auditPolicy auditpolicy.Policy, data
 			return after, false, ctx.Err()
 		}
 		attempt, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := EvaluateTrigger(attempt, auditPolicy, database, trust, p.environment, p.id)
+		err := EvaluateTrigger(attempt, auditPolicy, limits, database, trust, p.environment, p.id)
 		cancel()
 		if err != nil {
 			failures = append(failures, err)

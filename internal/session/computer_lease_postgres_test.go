@@ -530,7 +530,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: r.f.pool, Worker: r.f.worker, Group: r.f.group})
 				resume := controlRequest(r.f, "resume", "after-checkpoint-loss")
 				resume.HoldID = independent
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, r.f.pool, r.f.caller(), resume); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), r.f.pool, r.f.caller(), resume); err != nil {
 					t.Fatal(err)
 				}
 				if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{

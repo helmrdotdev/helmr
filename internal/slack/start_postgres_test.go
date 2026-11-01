@@ -31,7 +31,7 @@ func TestRuntimeStartDoesNotDependOnIngressDelivery(t *testing.T) {
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	caller := session.Caller{Kind: "session", ID: f.Session, Execution: e, Host: &host, MCPScopeID: f.MCPScope}
-	result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "independent", Input: json.RawMessage(`[{"type":"text","text":"independent work"}]`)})
+	result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "independent", Input: json.RawMessage(`[{"type":"text","text":"independent work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestRuntimeStartDoesNotDependOnIngressDelivery(t *testing.T) {
 		t.Fatal(correct, err)
 	}
 	channel := "C1"
-	_, err = Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "unsupported-delivery", SlackChannelID: &channel, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	_, err = Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "unsupported-delivery", SlackChannelID: &channel, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if !errors.Is(err, session.ErrInvalidInput) {
 		t.Fatalf("runtime channel creation: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestSlackStartWaitsForFirstChannelBindingBeforeEnvironment(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		channel := "C2"
-		_, err := Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, admission, nil, startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
+		_, err := Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), admission, nil, startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 			return json.RawMessage(`{"text":"Started agent.","mrkdwn":false}`), nil
 		}), session.UserCaller(f.Principal(t)), session.StartRequest{
 			EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "first-channel", SlackChannelID: &channel,

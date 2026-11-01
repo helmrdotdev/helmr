@@ -50,18 +50,18 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.env)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=ARRAY['sessions.send','sessions.read','sessions.close'] WHERE id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
 	input := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "management-input", Input: json.RawMessage(`[]`)}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, input); err != nil {
 		t.Fatal("send-only action required creation", err)
 	}
 	otherInput := input
 	otherInput.SessionID, otherInput.IdempotencyKey = peer.session, "other-agent-input"
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, otherInput); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, otherInput); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("send escaped selected Agent", err)
 	}
 	// Current matching permissions allow continuing after the original owner loses access.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=array_remove(permissions,'sessions.create') WHERE id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
 	input.IdempotencyKey = "revoked-origin"
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, caller, input); err != nil {
 		t.Fatal("current participant could not continue", err)
 	}
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); err != nil {
@@ -76,7 +76,7 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	if !errors.Is(err, session.ErrDenied) {
 		t.Fatal("hidden close preview exposed", err)
 	}
-	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "cross-agent-close"}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "cross-agent-close"}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("cross-Agent cascade accepted", err)
 	}
 	// Metadata must not reveal hidden ancestors, even when their holds affect a
@@ -155,7 +155,7 @@ func TestSessionClosePreviewAuthorizesTheSessionsCloseActsOn(t *testing.T) {
 	if _, err := preview(); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("preview with an open hidden child: %v", err)
 	}
-	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, closeRequest); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, closeRequest); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("close with an open hidden child: %v", err)
 	}
 	// A closed child is not acted on, so neither checks it.
@@ -163,7 +163,7 @@ func TestSessionClosePreviewAuthorizesTheSessionsCloseActsOn(t *testing.T) {
 	if count, err := preview(); err != nil || count != 1 {
 		t.Fatalf("preview with a closed hidden child: %d %v", count, err)
 	}
-	if r, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, closeRequest); err != nil || r.Status != "closed" {
+	if r, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, closeRequest); err != nil || r.Status != "closed" {
 		t.Fatalf("close with a closed hidden child: %+v %v", r, err)
 	}
 }

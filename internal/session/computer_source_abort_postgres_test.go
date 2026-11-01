@@ -56,7 +56,7 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 	peer := f.peer(t)
 	p, save := sourceAbort(t, f)
 	for range 2 {
-		if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+		if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,19 +65,19 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 		t.Fatalf("save %s %v", state, err)
 	}
 	initial := abortReceipt(p, false, false)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("uninstalled commit: %v", err)
 	}
 	installed := abortReceipt(p, true, false)
 	for range 2 {
-		if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, installed); err != nil {
+		if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, installed); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("obsolete RAM accepted: %v", err)
 	}
 	f.enqueue(t, "queued")
@@ -88,14 +88,14 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale controls accepted: %v", err)
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	for range 2 {
 		if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 			RetentionSeconds: 3600,
-		}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,7 +131,7 @@ func TestSourceAbortRejectsChangedPhysicalInstallation(t *testing.T) {
 			case "version":
 				p.DesiredVersion++
 			}
-			if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err == nil {
+			if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err == nil {
 				t.Fatal("changed installation accepted")
 			}
 			var state string
@@ -153,13 +153,13 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 			p.StoppedSessions = append(p.StoppedSessions, proto.Clone(g.Identity).(*agentv1.SessionIdentity))
 		}
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "independent")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "interrupt", "independent")); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -195,10 +195,10 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "coherent frozen cut"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
@@ -206,7 +206,7 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	if err := storage.publish(t, save, cut); err != nil {
@@ -223,16 +223,16 @@ func TestSourceAbortPublishesRetainedCutRecordedAfterContinuation(t *testing.T) 
 	storage := newSaveStorageFixture(t, f)
 	p, save := sourceAbort(t, f)
 	cut, root := storage.cut(t, 4)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "retained frozen cut recorded after source continuation"}); err != nil {
@@ -257,34 +257,34 @@ func TestSourceAbortPublishesRetainedCutRecordedAfterContinuation(t *testing.T) 
 func TestSourceAbortRequiresRetainedGuestAndBoundsUninstalledRetries(t *testing.T) {
 	f := newFixture(t)
 	p, _ := sourceAbort(t, f)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, nil); !errors.Is(err, session.ErrConflict) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, nil); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("missing guest receipt: %v", err)
 	}
 	initial := abortReceipt(p, false, false)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); err != nil {
 		t.Fatal(err)
 	}
 	p.Envelope.OperationExpiresAtUnixNano = time.Now().Add(-time.Minute).UnixNano()
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("expired retry: %v", err)
 	}
 	p.Envelope.OperationExpiresAtUnixNano = time.Now().Add(time.Hour).UnixNano()
 	p.Grants[0].ExpiresAtUnixNano = p.Envelope.OperationExpiresAtUnixNano
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unbounded retry: %v", err)
 	}
 	p.Envelope.OperationExpiresAtUnixNano = time.Now().Add(20 * time.Second).UnixNano()
 	p.Grants[0].ExpiresAtUnixNano = p.Envelope.OperationExpiresAtUnixNano
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale generation retry: %v", err)
 	}
 	p.Grants[0].AuthorityGeneration++
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, initial); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, initial); err != nil {
 		t.Fatalf("bounded fresh uninstalled grants: %v", err)
 	}
 	impossible := abortReceipt(p, true, true)
-	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, impossible); !errors.Is(err, session.ErrConflict) {
+	if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, impossible); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("activation before commit accepted: %v", err)
 	}
 }
@@ -295,7 +295,7 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	for range 2 {
 		p, _ := sourceAbort(t, f)
 		id := uuid.MustParse(p.Capture.CheckpointId)
-		if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+		if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 			t.Fatal(err)
 		}
 		for range 2 {
@@ -303,20 +303,20 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
+		if err := session.CommitComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 			t.Fatal(err)
 		}
 		acknowledgeComputerMembers(t, f, *f.host(), p)
 		if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 			RetentionSeconds: 3600,
-		}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		}, f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
 		var scrubbed bool
 		if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM checkpoints WHERE id=$1`, id).Scan(&scrubbed); err != nil || !scrubbed {
 			t.Fatalf("completed secret retained: %v", err)
 		}
-		if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatalf("scrubbed retry: %v", err)
 		}
 		var snapshot string
@@ -357,7 +357,7 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 func TestSourceAbortSaveAbsenceRacesCapture(t *testing.T) {
 	f := newFixture(t)
 	p, save := sourceAbort(t, f)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
@@ -387,15 +387,15 @@ func TestSourceAbortSealedCaptureAndForeignOwner(t *testing.T) {
 	}
 	wrong := *f.host()
 	wrong.Epoch++
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, wrong, f.env, p, captured); err == nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, wrong, f.env, p, captured); err == nil {
 		t.Fatal("foreign worker epoch accepted")
 	}
 	extra := proto.Clone(p).(*agentv1.ComputerSessionInstallation)
 	extra.StoppedSessions = append(extra.StoppedSessions, proto.Clone(extra.Grants[0].Identity).(*agentv1.SessionIdentity))
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, extra, captured); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, extra, captured); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("healthy member marked stopped: %v", err)
 	}
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, captured); err != nil {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, captured); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -407,7 +407,7 @@ func TestSourceAbortArbitratesUnsealedCancellation(t *testing.T) {
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		results <- session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false))
+		results <- session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false))
 	}()
 	go func() {
 		<-start
@@ -426,7 +426,7 @@ func TestSourceAbortRejectsAddedResident(t *testing.T) {
 	f := newFixture(t)
 	p, _ := sourceAbort(t, f)
 	f.peer(t)
-	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); !errors.Is(err, session.ErrNotReady) {
+	if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("added resident accepted: %v", err)
 	}
 }
@@ -437,7 +437,7 @@ func TestCheckpointSaveAbsenceRequiresCurrentAbortOwner(t *testing.T) {
 			f := newFixture(t)
 			p, save := sourceAbort(t, f)
 			if state != "capturing" {
-				if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
+				if err := session.ValidateComputerSourceAbort(t.Context(), f.limits, f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 					t.Fatal(err)
 				}
 			}

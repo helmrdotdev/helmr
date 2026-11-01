@@ -52,7 +52,7 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	if key == "" {
 		key = uuid.NewV7().String()
 	}
-	result, err := session.ControlComputerExecution(r.Context(), s.auditPolicy, s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key})
+	result, err := session.ControlComputerExecution(r.Context(), s.auditPolicy, s.environmentExecutionLimits, s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key})
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady):

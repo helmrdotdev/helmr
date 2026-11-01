@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -24,8 +24,8 @@ type ScheduledStart struct {
 
 // AdmitScheduled creates the Session, Computer and first Turn of a trigger
 // occurrence in the caller's transaction. The caller holds the Environment
-// admission lock and passes its policy.
-func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, trust computer.TrustIssuer, start ScheduledStart, policy org.AdmissionPolicy) (Admission, error) {
+// admission lock.
+func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, trust computer.TrustIssuer, start ScheduledStart) (Admission, error) {
 	if err := requireAgentAvailable(ctx, tx, start.EnvironmentID, start.AgentID); err != nil {
 		return Admission{}, err
 	}
@@ -43,17 +43,17 @@ func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 		return Admission{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	s.input = input
-	if err := consumeAdmission(ctx, tx, s.environment, policy); err != nil {
+	if err := consumeAdmission(ctx, tx, limits, s.environment); err != nil {
 		return Admission{}, err
 	}
-	computerID, err := computer.CreateForAdmission(ctx, tx, trust, s.environment, s.deployment, key, computerLimits(policy))
+	computerID, err := computer.CreateForAdmission(ctx, tx, trust, limits, s.environment, s.deployment, key)
 	if err != nil {
 		return Admission{}, err
 	}
 	if err = computerAcceptsAdmission(ctx, tx, s.environment, computerID, true); err != nil {
 		return Admission{}, err
 	}
-	if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, s.environment, computerID); err != nil {
+	if err = computer.NoteExecutionDemand(ctx, auditPolicy, limits, tx, s.environment, computerID); err != nil {
 		return Admission{}, err
 	}
 	receipt := Admission{SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
@@ -67,7 +67,7 @@ func AdmitScheduled(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computerID, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
 		return Admission{}, err
 	}
-	if err = auditStart(ctx, tx, StartPlan{AuditPolicy: auditPolicy, Caller: Caller{Kind: "schedule", ID: start.ActivationID}, Request: StartRequest{EnvironmentID: start.EnvironmentID}}, receipt, start.AgentID, start.DeploymentID, computerID); err != nil {
+	if err = auditStart(ctx, tx, StartPlan{AuditPolicy: auditPolicy, Limits: limits, Caller: Caller{Kind: "schedule", ID: start.ActivationID}, Request: StartRequest{EnvironmentID: start.EnvironmentID}}, receipt, start.AgentID, start.DeploymentID, computerID); err != nil {
 		return Admission{}, err
 	}
 	if err = event(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, "turn.queued"); err != nil {

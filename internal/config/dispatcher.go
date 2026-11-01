@@ -49,5 +49,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	if err != nil {
 		return cfg, err
 	}
+	cfg.EnvironmentExecutionLimits, err = LoadEnvironmentExecutionLimits()
+	if err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }

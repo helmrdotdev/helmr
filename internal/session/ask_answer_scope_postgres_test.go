@@ -12,7 +12,7 @@ import (
 func TestAskAnswerAPIKeyMustBelongToEnvironment(t *testing.T) {
 	f, _, ask, _ := askFixture(t)
 	other := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other-answer','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other-answer','Other','#123456',admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, other)
 	ownKey, otherKey := uuid.NewV7(), uuid.NewV7()
 	for _, pair := range []struct{ env, key uuid.UUID }{{f.env, ownKey}, {other, otherKey}} {
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,'answer','answer',$3 FROM environments WHERE id=$1`, pair.env, pair.key, []byte(pair.key.String()))

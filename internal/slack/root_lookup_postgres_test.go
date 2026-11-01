@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"net/http"
 	"strings"
@@ -44,7 +45,7 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 	first := f.newMessage(t, "first", "234.567")
 	second := f.newMessage(t, "second", "345.678")
 	for _, id := range []uuid.UUID{first, second} {
-		if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, id); err != nil {
+		if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -57,7 +58,7 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 		t.Fatal("internal app gesture unnecessarily delayed", delay, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET history_next_at=clock_timestamp() WHERE id=$1`, f.installation)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, second); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, second); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT bool_and(status='accepted') FROM slack_requests WHERE id=ANY($1::uuid[])`, []uuid.UUID{first, second}).Scan(&accepted); err != nil || !accepted || reads.Load() != 2 {
@@ -66,13 +67,13 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 	limited.Store(true)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET history_next_at=clock_timestamp() WHERE id=$1`, f.installation)
 	third := f.newMessage(t, "third", "456.789")
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, third); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, third); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT extract(epoch FROM history_next_at-clock_timestamp()) FROM slack_installations WHERE id=$1`, f.installation).Scan(&delay); err != nil || delay < 115 {
 		t.Fatal("Retry-After lost", delay, err)
 	}
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, third); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, third); err != nil {
 		t.Fatal(err)
 	}
 	if reads.Load() != 3 {
@@ -80,7 +81,7 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 	}
 	limitedJSON.Store(true)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET history_next_at=clock_timestamp() WHERE id=$1`, f.installation)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, third); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, client, third); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT extract(epoch FROM history_next_at-clock_timestamp()) FROM slack_installations WHERE id=$1`, f.installation).Scan(&delay); err != nil || delay < 115 {

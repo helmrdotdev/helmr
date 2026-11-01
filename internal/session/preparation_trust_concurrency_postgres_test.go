@@ -38,7 +38,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND image_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	issuer := &countingPreparationTrustIssuer{ImageBuildTrustIssuer: f.secrets}
-	a = testAllocator(t, f.pool, issuer)
+	a = testAllocator(t, f.pool, f.limits, issuer)
 	const callers = 8
 	start := make(chan struct{})
 	results := make(chan computer.Allocation, callers)
@@ -79,7 +79,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	}
 	restarted, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, bytes.Repeat([]byte{19}, 32), issuer)
+	}, f.limits, bytes.Repeat([]byte{19}, 32), issuer)
 	if err != nil {
 		t.Fatal(err)
 	}

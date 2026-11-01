@@ -3,6 +3,7 @@ package workergroup
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"reflect"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestPlanFreshComputerUsesExactPrimaryPool(t *testing.T) {
 		demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(11)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
@@ -70,7 +71,7 @@ func TestPlanComputerAccountedSupplyBlocksExactRequestedPools(t *testing.T) {
 		charged: charged,
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 1), plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -97,7 +98,7 @@ func TestPlanComputerAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing.T) {
 		charged: charged, demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(64)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -119,7 +120,7 @@ func TestPlanComputerUsesExistingCompatibleBin(t *testing.T) {
 		demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(45)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -143,7 +144,7 @@ func TestPlanComputerCannotUseSecondaryOnlyRequest(t *testing.T) {
 		demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(55)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -199,7 +200,7 @@ func TestPlanComputerRequiresAdmissionCapacity(t *testing.T) {
 				demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(57)},
 			}
 
-			plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+			plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 				plannerPoolRequest(primaryID, 1),
 			}}, plannerTestNow)
 			if err != nil {
@@ -260,7 +261,7 @@ func TestPlanWorkerBoundarySuppressesScaleRecommendationOnOverflow(t *testing.T)
 				store.bins[index] = full
 			}
 
-			plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+			plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 				plannerPoolRequest(primaryID, 1),
 			}}, plannerTestNow)
 			if err != nil {
@@ -304,7 +305,7 @@ func TestPlanRestoreUsesCompatibleSecondaryPool(t *testing.T) {
 		demand: []db.ListAllocationPlanningDemandRow{plannerRestoreComputer(13, requirements)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
@@ -344,7 +345,7 @@ func TestPlanRestoreScalesBoundSecondaryWhenCompatiblePrimaryIsUnboundAndFull(t 
 		demand: []db.ListAllocationPlanningDemandRow{plannerRestoreComputer(14, requirements)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(secondaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -376,7 +377,7 @@ func TestPlanRestorePrefersPrimaryForNewWorker(t *testing.T) {
 
 	forward, err := Plan(context.Background(), plannerStore{
 		group: group, pools: []db.ListCapacityWorkerPoolsRow{first, second}, demand: []db.ListAllocationPlanningDemandRow{run},
-	}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	}, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(firstID, 1), plannerPoolRequest(secondID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -384,7 +385,7 @@ func TestPlanRestorePrefersPrimaryForNewWorker(t *testing.T) {
 	}
 	reverse, err := Plan(context.Background(), plannerStore{
 		group: group, pools: []db.ListCapacityWorkerPoolsRow{second, first}, demand: []db.ListAllocationPlanningDemandRow{run},
-	}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	}, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(secondID, 1), plannerPoolRequest(firstID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -429,7 +430,7 @@ func TestPlanRestorePrimaryFallback(t *testing.T) {
 				store.demand = append(store.demand, plannerFreshComputer(10))
 			}
 			store.pools = []db.ListCapacityWorkerPoolsRow{secondary, primary}
-			plan, err := Plan(context.Background(), store, plannerTestGroupID, request, plannerTestNow)
+			plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, request, plannerTestNow)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -473,7 +474,7 @@ func TestPlanRestoreReusesSecondaryCapacityBeforeNewPrimary(t *testing.T) {
 				wantWorkers, wantItems = 1, 2
 			}
 			store.pools = []db.ListCapacityWorkerPoolsRow{secondary, primary}
-			plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+			plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 				plannerPoolRequest(secondaryID, 1), plannerPoolRequest(primaryID, 1),
 			}}, plannerTestNow)
 			if err != nil {
@@ -501,7 +502,7 @@ func TestPlanReportsPerPoolSaturationAndUnmatchedDemand(t *testing.T) {
 		},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 1),
 	}}, plannerTestNow)
 	if err != nil {
@@ -525,7 +526,7 @@ func TestPlanAcceptsZeroAdditionalWorkerBudget(t *testing.T) {
 		demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(24)},
 	}
 
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
 		plannerPoolRequest(primaryID, 0),
 	}}, plannerTestNow)
 	if err != nil {
@@ -731,7 +732,7 @@ func TestDiscoverItemsBoundsUnifiedDemand(t *testing.T) {
 			rows[i] = plannerFreshComputer(byte(i))
 		}
 		store := &countingPlannerStore{demand: rows}
-		items, _, complete, err := discoverItems(context.Background(), store, plannerTestGroup(plannerTestUUID(2)))
+		items, _, complete, err := discoverItems(context.Background(), store, executionlimit.Limits{}, plannerTestGroup(plannerTestUUID(2)))
 		if err != nil || len(items) != int(maximumPlanningCandidates) || complete != (size == int(maximumPlanningCandidates)) || store.demandRowLimit != maximumPlanningCandidates+1 {
 			t.Fatalf("size=%d items=%d complete=%v err=%v", size, len(items), complete, err)
 		}
@@ -742,7 +743,7 @@ func TestPlanFreshComputerRequiresQualifiedCPUShape(t *testing.T) {
 	pool := plannerTestPool(id, "primary")
 	pool.CPUShapeVCPUCounts = []int32{2}
 	store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{pool}, demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(3)}}
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 1)}}, plannerTestNow)
+	plan, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 1)}}, plannerTestNow)
 	if err != nil || requirePoolPlan(t, plan, id).RecommendedAdditionalWorkers != 0 || len(plan.UnmatchedDemand) != 1 {
 		t.Fatalf("plan=%+v err=%v", plan, err)
 	}
@@ -764,7 +765,7 @@ func TestPlanRespectsAggregateEnvironmentCapacity(t *testing.T) {
 				}
 			}
 			store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(id, "primary")}, demand: []db.ListAllocationPlanningDemandRow{first, second}}
-			result, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 2)}}, plannerTestNow)
+			result, err := Plan(context.Background(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 2)}}, plannerTestNow)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -782,7 +783,7 @@ func TestPlanBootSeedScalesFromZeroWithoutResidentBudget(t *testing.T) {
 	seed.Kind = "seed"
 	seed.RemainingResidents = 0
 	store := plannerStore{group: plannerTestGroup(id), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(id, "primary")}, demand: []db.ListAllocationPlanningDemandRow{seed}}
-	plan, err := Plan(t.Context(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 1)}}, plannerTestNow)
+	plan, err := Plan(t.Context(), store, executionlimit.Limits{}, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(id, 1)}}, plannerTestNow)
 	if err != nil {
 		t.Fatal(err)
 	}

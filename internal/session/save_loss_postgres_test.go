@@ -104,7 +104,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 func TestComputerSaveLossPreservesCancellation(t *testing.T) {
 	f := newFixture(t)
 	turn, save := f.finalize(t, "cancelled-save")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
 		t.Fatal(err)
 	}
 	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{

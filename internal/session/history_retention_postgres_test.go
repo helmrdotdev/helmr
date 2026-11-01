@@ -49,7 +49,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if historyClock(t, f) != nil {
 		t.Fatal("open Session started clock")
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='lost' WHERE session_id=$1`, f.session)
@@ -107,7 +107,7 @@ func TestHistoryRetentionPendingSaveAndNever(t *testing.T) {
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
 	_, save := f.finalize(t, "save")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -170,7 +170,7 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 	f := newFixture(t)
 	f.enqueue(t, "max-duration")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -189,7 +189,7 @@ func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 func TestHistoryRetentionRollsBackWhenSlackPurgeFails(t *testing.T) {
 	f := newFixture(t)
 	turn := f.enqueue(t, "retention-rollback")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -218,7 +218,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 	f := newFixture(t)
 	turn := f.enqueue(t, "current-policy")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -265,7 +265,7 @@ func TestHistoryRetentionWaitsForProtectivePolicyUpdate(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			f := newFixture(t)
 			turn := f.enqueue(t, "policy-race")
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 				t.Fatal(err)
 			}
 			fenceHistoryProcess(t, f)

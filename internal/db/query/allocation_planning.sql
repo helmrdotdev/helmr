@@ -35,9 +35,9 @@ WITH RECURSIVE held AS (
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )
-SELECT d.*, (e.max_cpu_millis-usage.cpu)::bigint remaining_cpu_millis,
- (e.max_memory_bytes-usage.memory)::bigint remaining_memory_bytes,
- (e.max_resident_computers-usage.residents)::bigint remaining_residents
+SELECT d.*, (sqlc.arg(max_cpu_millis)::bigint-usage.cpu)::bigint remaining_cpu_millis,
+ (sqlc.arg(max_memory_bytes)::bigint-usage.memory)::bigint remaining_memory_bytes,
+ (sqlc.arg(max_resident_computers)::bigint-usage.residents)::bigint remaining_residents
 FROM demand d JOIN environments e ON e.id=d.environment_id
 JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=sqlc.arg(region_id)
 CROSS JOIN LATERAL (

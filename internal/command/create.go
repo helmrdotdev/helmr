@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"path"
 	"regexp"
 	"strings"
@@ -206,7 +207,7 @@ type createReceipt struct {
 // then locks the Computer's Secrets and the Computer, records the admission,
 // the Command, and completes the receipt. Secret versions are selected only
 // at the first possible delivery to this Command.
-func Create(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
+func Create(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
 	switch request.Creator.Kind {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
@@ -240,7 +241,7 @@ func Create(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginn
 			return err
 		}
 		var err error
-		created, err = create(ctx, auditPolicy, tx, request, normalized, claimRequest)
+		created, err = create(ctx, auditPolicy, limits, tx, request, normalized, claimRequest)
 		return err
 	})
 	if err != nil {
@@ -249,7 +250,7 @@ func Create(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginn
 	return created, nil
 }
 
-func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
+func create(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
 	var scoped bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
@@ -362,7 +363,7 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 		if err = computer.MarkUsed(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
-		if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, request.EnvironmentID, request.ComputerID); err != nil {
+		if err = computer.NoteExecutionDemand(ctx, auditPolicy, limits, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
 		created, err := q.CreateCommand(ctx, db.CreateCommandParams{

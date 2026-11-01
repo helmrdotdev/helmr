@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ import (
 
 func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	t.Helper()
-	receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
+	receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

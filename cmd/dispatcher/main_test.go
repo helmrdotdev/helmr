@@ -46,6 +46,12 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	for key, value := range map[string]string{
+		"ENVIRONMENT_MAX_RESIDENT_COMPUTERS": "10", "ENVIRONMENT_MAX_CPU_MILLIS": "16000", "ENVIRONMENT_MAX_MEMORY_BYTES": "68719476736", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES": "1099511627776",
+		"ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS": "100", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND": "10", "ENVIRONMENT_ADMISSION_BURST": "20",
+	} {
+		t.Setenv(key, value)
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)

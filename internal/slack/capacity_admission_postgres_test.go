@@ -35,9 +35,9 @@ func TestSlackWakeRetriesUnavailableCapacityWithoutCommittingControls(t *testing
 			}
 			admit := func() error {
 				if transport == "button" {
-					return admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id)
+					return admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, id)
 				}
-				return admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+				return admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id)
 			}
 			if err := admit(); !errors.Is(err, workergroup.ErrCapacityUnavailable) {
 				t.Fatalf("unavailable capacity: %v", err)

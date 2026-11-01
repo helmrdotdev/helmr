@@ -87,7 +87,7 @@ Helmr does not backfill missed occurrences:
   than queued without a bound.
 
 The five-minute window governs admission. Once accepted, execution can wait
-for a Worker within the Environment's configured preparation timeout; acceptance
+for a Worker within a fixed 10-minute deadline for execution to start; acceptance
 does not mean the scheduled work has started.
 
 ## Slack delivery

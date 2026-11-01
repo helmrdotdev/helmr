@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"time"
 	"uuid"
 
@@ -20,35 +21,27 @@ type TrustIssuer interface {
 	GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error)
 }
 
-// Limits are the Environment bounds a new Computer must fit, read under the
-// caller's Environment lock (step 4 of the global order).
-type Limits struct {
-	MaxCPU, MaxMemory, MaxStorage, PreparationTimeout int64
-}
-
 // CreateForAdmission creates the Computer of an admitted Session from the
-// Agent's template, copying the definition's Secret bindings.
-func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, limits Limits) (uuid.UUID, error) {
-	return createComputer(ctx, tx, trust, env, deployment, key, limits, nil)
+// Agent's template, copying the definition's Secret bindings. The caller holds
+// the Environment lock (step 4 of the global order).
+func CreateForAdmission(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits executionlimit.Limits, env, deployment uuid.UUID, key string) (uuid.UUID, error) {
+	return createComputer(ctx, tx, trust, limits, env, deployment, key, nil)
 }
 
 // CreateStandalone joins the external owner's transaction. Explicit
 // runtime bindings are actual-Computer declarations; Agent-created Computers
 // instead copy their immutable definition bindings. Both share preparation,
-// trust, resource validation and reservation admission.
-func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
-	var limits Limits
-	if err := tx.QueryRow(ctx, `SELECT max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms
- FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&limits.MaxCPU, &limits.MaxMemory, &limits.MaxStorage, &limits.PreparationTimeout); err != nil {
-		return uuid.Nil(), err
-	}
+// trust, resource validation and reservation admission. The caller holds the
+// Environment lock.
+func CreateStandalone(ctx context.Context, tx pgx.Tx, trust TrustIssuer, limits executionlimit.Limits, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
 	if bindings == nil {
 		bindings = []secretbinding.Reference{}
 	}
-	return createComputer(ctx, tx, trust, env, deployment, key, limits, &bindings)
+	return createComputer(ctx, tx, trust, limits, env, deployment, key, &bindings)
 }
 
-func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, deployment uuid.UUID, key string, limits Limits, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
+func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, configured executionlimit.Limits, env, deployment uuid.UUID, key string, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
+	limits := configured.For(env)
 	var spec, template uuid.UUID
 	var cpuMillis, memoryBytes int64
 	var diskBytes *int64
@@ -62,18 +55,18 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, depl
 		return uuid.Nil(), ErrInvalidInput
 	}
 	physicalCPU, err := vm.ReservedCPUMillis(cpuMillis)
-	if err != nil || (diskBytes != nil && *diskBytes != disk.SeedCapacity) || physicalCPU > limits.MaxCPU || memoryBytes > limits.MaxMemory || disk.SeedCapacity > limits.MaxStorage {
+	if err != nil || (diskBytes != nil && *diskBytes != disk.SeedCapacity) || physicalCPU > limits.MaxCPUMillis || memoryBytes > limits.MaxMemoryBytes || disk.SeedCapacity > limits.MaxReservedStorageBytes {
 		return uuid.Nil(), ErrInvalidInput
 	}
 	var reserved int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(storage_reservation_bytes),0) FROM computers WHERE environment_id=$1`, env).Scan(&reserved); err != nil {
 		return uuid.Nil(), err
 	}
-	if reserved > limits.MaxStorage-disk.SeedCapacity {
+	if reserved > limits.MaxReservedStorageBytes-disk.SeedCapacity {
 		return uuid.Nil(), ErrNotReady
 	}
 	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',$11)`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, limits.PreparationTimeout, maxAge); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',$11)`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, ComputerPreparationTimeout.Milliseconds(), maxAge); err != nil {
 		return uuid.Nil(), err
 	}
 	if explicit == nil {

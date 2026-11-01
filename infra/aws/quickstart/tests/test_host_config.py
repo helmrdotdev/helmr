@@ -42,6 +42,8 @@ class HostConfigTests(unittest.TestCase):
         self.assertNotIn("CAPACITY_TOKEN", services["dispatcher"]["environment"])
         self.assertEqual(services["controlplane"]["environment"]["CLICKHOUSE_USER"], "helmr_reader")
         self.assertEqual(services["dispatcher"]["environment"]["CLICKHOUSE_USER"], "helmr_ingester")
+        for key in ("ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_ADMISSION_BURST"):
+            self.assertEqual(services["dispatcher"]["environment"][key], services["controlplane"]["environment"][key])
         self.assertIn("DATABASE_AUDIT_MAINTENANCE_URL", services["audit-purge"]["environment"])
 
     def test_stateful_services_and_control_bind_only_to_loopback(self):

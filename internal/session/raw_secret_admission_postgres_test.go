@@ -21,11 +21,11 @@ func TestRevokedRawBindingRefusesNewAdmission(t *testing.T) {
 	}
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	start := session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"new"}]`)}
-	if _, err := session.Start(t.Context(), policy, f.pool, nil, f.caller(), start); !errors.Is(err, computer.ErrSecretUnavailable) {
+	if _, err := session.Start(t.Context(), policy, f.limits, f.pool, nil, f.caller(), start); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("new Session on a Computer with a revoked raw binding: %v", err)
 	}
 	enqueue := func(key string) error {
-		_, err := session.Enqueue(t.Context(), policy, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: e.SessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"more"}]`)})
+		_, err := session.Enqueue(t.Context(), policy, f.limits, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: e.SessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"more"}]`)})
 		return err
 	}
 	if err := enqueue("live-process"); err != nil {

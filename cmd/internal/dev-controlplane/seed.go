@@ -25,7 +25,7 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	if err := limits.Validate(); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, devSeedEnvironmentsSQL, limits.MaxOutstandingAdmissions, limits.MaxCausalDepth, limits.MaxResidentComputers, limits.MaxCPUMillis, limits.MaxMemoryBytes, limits.MaxReservedStorageBytes, limits.PreparationTimeoutMS, limits.AdmissionRatePerSecond, limits.AdmissionBurst); err != nil {
+	if _, err := tx.Exec(ctx, devSeedEnvironmentsSQL, limits.AdmissionBurst); err != nil {
 		return err
 	}
 	if err := seedDemoEnvironmentData(ctx, tx); err != nil {
@@ -51,13 +51,12 @@ INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
 VALUES ('00000000-0000-7000-8000-000000000301', '00000000-0000-7000-8000-000000000201', current_setting('helmr.seed_region_id'), 'console-demo', 'Console Demo', true);
 `
 
-// devSeedEnvironmentsSQL writes the demo Environments with the configured
-// execution limits; the token bucket starts full.
+// devSeedEnvironmentsSQL writes the demo Environments with their token bucket
+// full at the configured admission burst.
 const devSeedEnvironmentsSQL = `
-INSERT INTO environments ( id, org_id, project_id, slug, name, color_hex, is_default,
-    max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at)
+INSERT INTO environments ( id, org_id, project_id, slug, name, color_hex, is_default, admission_tokens, admission_refilled_at)
 SELECT  seed.id, '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', seed.slug, seed.name, seed.color_hex, seed.is_default,
-    $1, $2, $3, $4, $5, $6, $7, $8, $9::bigint, $9::bigint::numeric, clock_timestamp()
+    $1::bigint::numeric, clock_timestamp()
 FROM (VALUES
     ('00000000-0000-7000-8000-000000000401'::uuid, 'production', 'Production', '#315FCE', true),
     ('00000000-0000-7000-8000-000000000402'::uuid, 'staging', 'Staging', '#F59E0B', false),

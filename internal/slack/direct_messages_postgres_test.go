@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strings"
@@ -42,7 +43,7 @@ func (f statusFixture) directEvent(t *testing.T, key, ts, thread string) uuid.UU
 }
 func (f statusFixture) reconcileDirect(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -66,7 +67,7 @@ func TestSlackDirectRootReplyRaceAndSeparateSessions(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), first); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), first); err != nil {
 				t.Error(err)
 			}
 		})
@@ -141,7 +142,7 @@ func TestSlackDirectRequiresGrantsAndChannelKeepsWorking(t *testing.T) {
 	f.reconcileDirect(t, old)
 	f.receiptStatus(t, old, "rejected")
 	channel := f.reply(t, "channel", false)
-	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), channel); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), channel); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, channel, "accepted")
@@ -182,7 +183,7 @@ func TestSlackDirectReplyRejectsAuthorityChanges(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT session_id FROM slack_requests WHERE id=$1`, first).Scan(&sid); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
 					t.Fatal(err)
 				}
 			case "grants":
@@ -285,7 +286,7 @@ func TestSlackDirectAnswersAndNativeStopVerifyPeer(t *testing.T) {
 				peer = "other"
 				want = "rejected"
 			}
-			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, peer, nil), id); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), directClient(t, peer, nil), id); err != nil {
 				t.Fatal(err)
 			}
 			f.receiptStatus(t, id, want)
@@ -367,7 +368,7 @@ func TestSlackDirectControlsExpireWithoutRemoteAccess(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
 			// No client proves that expiry/known route loss precedes token or API access.
-			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), nil, id); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, testProjectionConfig(), nil, id); err != nil {
 				t.Fatal(err)
 			}
 			f.receiptStatus(t, id, "rejected")

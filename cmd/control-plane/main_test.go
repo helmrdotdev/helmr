@@ -6,6 +6,8 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/helmrdotdev/helmr/internal/executionlimit"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"log/slog"
 	"net"
@@ -31,7 +33,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
@@ -53,7 +54,7 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 	}
 	allocator, err := dispatch.NewAllocator(panicDatabase{}, auditpolicy.Policy{
 		RetentionSeconds: 3600,
-	}, make([]byte, 32), nil)
+	}, sessiontest.ExecutionLimits(), make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 		Changes:                        dbnotify.New(),
 		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
 		Allocator:                      allocator,
-		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
+		EnvironmentExecutionLimits:     executionlimit.Limits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, AdmissionRatePerSecond: 10, AdmissionBurst: 20},
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DB:                             store,
@@ -290,10 +291,8 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("ENVIRONMENT_MAX_MEMORY_BYTES", "68719476736")
 	t.Setenv("ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "1099511627776")
 	t.Setenv("ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "100")
-	t.Setenv("ENVIRONMENT_MAX_CAUSAL_DEPTH", "8")
 	t.Setenv("ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "10")
 	t.Setenv("ENVIRONMENT_ADMISSION_BURST", "20")
-	t.Setenv("ENVIRONMENT_PREPARATION_TIMEOUT_MS", "600000")
 	t.Setenv("CONTROL_PLANE_ADDR", addr)
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")

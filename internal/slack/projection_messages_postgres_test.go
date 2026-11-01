@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -26,7 +27,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				t.Fatal(err)
 			}
 			request := f.reply(t, "steer", false)
-			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
+			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
 			var message uuid.UUID
@@ -44,7 +45,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				}
 			}
 			if kind == "not-started" || kind == "started-then-stopped" {
-				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -87,7 +88,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 			if err = f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE request_id=$1 AND role='request_feedback'`, request).Scan(&payload); err != nil || !bytes.Contains(payload, []byte(text)) {
 				t.Fatal(string(payload), err)
 			}
-			if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
+			if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM turns WHERE session_id=$1)=1 AND message_id=$3 AND status='accepted' AND operation='slack_route' FROM slack_requests WHERE id=$2`, f.Session, request, message).Scan(&exact); err != nil || !exact {

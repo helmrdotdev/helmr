@@ -171,7 +171,7 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 		t.Run(first+" first", func(t *testing.T) {
 			f := newFixture(t)
 			req := f.captureRequest()
-			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
 				t.Fatalf("idle hibernate intent: %+v %v", control, err)
 			}
 			var saveID uuid.UUID
