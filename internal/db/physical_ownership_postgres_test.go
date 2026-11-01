@@ -65,9 +65,16 @@ func TestSchemaImageBuildAssignmentAndDiagnosticOwnership(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at) VALUES($1,$2,$3,'assignment',clock_timestamp()+interval '10 minutes')`, f.Environment, build, f.Deployment)
 	const diagnostic = `INSERT INTO diagnostic_chunks(environment_id,image_build_id,image_build_epoch,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete) VALUES($1,$2,$3,'stdout',1,1,0,1,'data',1,decode('01','hex'),0,false)`
 	rejectSchemaRow(t, tx, "23514", diagnostic, f.Environment, build, 0)
-	const assign = `UPDATE image_builds SET status='running',executor_epoch=$3,worker_host_id=l.worker_host_id,worker_epoch=l.worker_epoch,allocation_id=$2,channel_credential_digest=l.channel_credential_digest,reserved_memory_bytes=l.reserved_memory_bytes,reserved_scratch_bytes=l.reserved_scratch_bytes,vm_platform_id=l.vm_platform_id,vm_vcpu_count=l.vm_vcpu_count,cpu_config_digest=l.cpu_config_digest FROM computer_leases l WHERE image_builds.environment_id=$1 AND image_builds.id=$2 AND l.environment_id=$1 AND l.computer_id=$4`
+	const assign = `UPDATE image_builds SET status='running',executor_epoch=$3,worker_group_id=(SELECT worker_group_id FROM worker_hosts WHERE id=l.worker_host_id),worker_host_id=l.worker_host_id,worker_epoch=l.worker_epoch,allocation_id=$2,channel_credential_digest=l.channel_credential_digest,reserved_memory_bytes=l.reserved_memory_bytes,reserved_scratch_bytes=l.reserved_scratch_bytes,vm_platform_id=l.vm_platform_id,vm_vcpu_count=l.vm_vcpu_count,cpu_config_digest=l.cpu_config_digest FROM computer_leases l WHERE image_builds.environment_id=$1 AND image_builds.id=$2 AND l.environment_id=$1 AND l.computer_id=$4`
 	rejectSchemaRow(t, tx, "23514", assign, f.Environment, build, 2, f.Computer)
 	dbtest.MustExec(t, t.Context(), tx, assign, f.Environment, build, 1, f.Computer)
+	// The producing group is recorded with the executor and is the host's group.
+	other, token := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO regions(id,display_name) VALUES('producing-group','Producing')`)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO worker_group_tokens(id,token_hash) VALUES($1,decode(repeat('07',32),'hex'))`, token)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($1,$2,'producing-group','other')`, other, token)
+	rejectSchemaRow(t, tx, "23514", `UPDATE image_builds SET worker_group_id=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, build)
+	rejectSchemaRow(t, tx, "23503", `UPDATE image_builds SET worker_group_id=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, build, other)
 	rejectSchemaRow(t, tx, "23503", diagnostic, f.Environment, build, 2)
 	dbtest.MustExec(t, t.Context(), tx, diagnostic, f.Environment, build, 1)
 	var starting bool

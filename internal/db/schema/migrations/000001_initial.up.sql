@@ -75,6 +75,7 @@ CREATE TABLE projects (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, id, default_region_id),
     UNIQUE (org_id, slug),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (default_region_id) REFERENCES regions(id) ON DELETE RESTRICT
@@ -310,8 +311,12 @@ CREATE TABLE worker_group_tokens (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- A group without an owner is deployment capacity. An organization group's
+-- owner is fixed at creation because its hosts have held that organization's
+-- data; runtime privileges exclude updating it.
 CREATE TABLE worker_groups (
     id uuid PRIMARY KEY,
+    owner_org_id uuid,
     capacity_observed_at timestamptz,
     capacity_supply_fingerprint text,
     capacity_pools jsonb,
@@ -326,12 +331,16 @@ CREATE TABLE worker_groups (
     primary_pool_id uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (region_id, name),
+    UNIQUE NULLS NOT DISTINCT (owner_org_id, region_id, name),
+    UNIQUE (id, owner_org_id, region_id),
+    FOREIGN KEY (owner_org_id) REFERENCES organizations(id) ON DELETE RESTRICT,
     FOREIGN KEY (token_id) REFERENCES worker_group_tokens(id) ON DELETE RESTRICT,
     FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx ON worker_groups(region_id) WHERE status IN ('active', 'paused');
+CREATE UNIQUE INDEX worker_groups_one_active_deployment_per_region_idx ON worker_groups(region_id) WHERE owner_org_id IS NULL AND status IN ('active', 'paused');
+
+CREATE INDEX worker_groups_owner_idx ON worker_groups(owner_org_id, region_id) WHERE owner_org_id IS NOT NULL;
 
 CREATE INDEX worker_groups_active_dispatch_idx ON worker_groups (region_id, id) WHERE status = 'active';
 
@@ -582,6 +591,29 @@ CREATE TABLE deployment_objects (
 
 CREATE INDEX deployment_objects_cas ON deployment_objects(org_id, digest);
 
+-- An environment maps each placement name its templates use to the deployment
+-- capacity of its project's region (no group) or to a group its organization
+-- owns in that region. Without a row, default maps to deployment capacity, so
+-- a default row always names a group.
+CREATE TABLE environment_placements (
+    org_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    region_id text NOT NULL,
+    name text NOT NULL CHECK (name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+    worker_group_id uuid,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (environment_id, name),
+    CHECK (name <> 'default' OR worker_group_id IS NOT NULL),
+    FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id),
+    FOREIGN KEY (org_id, project_id, region_id) REFERENCES projects(org_id, id, default_region_id),
+    CONSTRAINT environment_placements_group_fkey
+        FOREIGN KEY (worker_group_id, org_id, region_id) REFERENCES worker_groups(id, owner_org_id, region_id)
+);
+
+CREATE INDEX environment_placements_worker_group ON environment_placements(worker_group_id) WHERE worker_group_id IS NOT NULL;
+
 -- Preparation input identity is immutable. Scheduling policy is derived from
 -- promoted definitions and never changes the input specification.
 CREATE TABLE image_specs (
@@ -699,6 +731,7 @@ CREATE TABLE image_builds (
     deadline_at timestamptz NOT NULL,
     error_code text,
     executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch IN (0,1)),
+    worker_group_id uuid REFERENCES worker_groups(id),
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
     allocation_id uuid UNIQUE,
@@ -770,6 +803,9 @@ CREATE TABLE image_builds (
         OR (worker_host_id IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL)),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
     CHECK (status<>'queued' OR worker_host_id IS NULL),
+    -- The producing group is recorded with the executor and stays with the build.
+    CHECK (worker_host_id IS NULL OR worker_group_id IS NOT NULL),
+    FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id),
     CHECK (fenced_at IS NULL OR status IN ('succeeded', 'failed')),
     CHECK (disk_released_at IS NULL OR (fenced_at IS NOT NULL AND write_key_id IS NOT NULL)),
     FOREIGN KEY (environment_id, id, write_key_id)
@@ -912,6 +948,7 @@ CREATE TABLE boot_seed_builds (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     deadline_at timestamptz,
     error_code text,
+    worker_group_id uuid REFERENCES worker_groups(id),
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
     allocation_id uuid UNIQUE,
@@ -946,6 +983,10 @@ CREATE TABLE boot_seed_builds (
     CHECK (status NOT IN ('queued','running','succeeded') OR image_id IS NOT NULL),
     CHECK (status NOT IN ('waiting','queued') OR worker_host_id IS NULL),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
+    -- A seed depends on its producing group's VM platform and CPU shape, so the
+    -- group stays recorded across executor attempts.
+    CHECK (worker_host_id IS NULL OR worker_group_id IS NOT NULL),
+    FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id),
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
     CHECK ((status='succeeded')=(manifest IS NOT NULL AND qualification_evidence IS NOT NULL)),
     CHECK (manifest IS NULL OR octet_length(manifest)<=1048576),
@@ -985,6 +1026,8 @@ CREATE TABLE computers (
     image_spec_id uuid,
     origin_deployment_id uuid NOT NULL,
     origin_template_id uuid NOT NULL,
+    -- The group this Computer runs on. A Computer never moves between groups.
+    worker_group_id uuid REFERENCES worker_groups(id),
     cpu_millis bigint NOT NULL CHECK (cpu_millis>0),
     memory_bytes bigint NOT NULL CHECK (memory_bytes>0 AND memory_bytes%1048576=0),
     disk_bytes bigint CHECK (disk_bytes>0 AND disk_bytes%1048576=0),

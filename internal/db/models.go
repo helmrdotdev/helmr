@@ -145,6 +145,17 @@ type Environment struct {
 	AdmissionRefilledAt pgtype.Timestamptz `json:"admission_refilled_at"`
 }
 
+type EnvironmentPlacement struct {
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	RegionID      string             `json:"region_id"`
+	Name          string             `json:"name"`
+	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IdempotencyReceipt struct {
 	ID                 pgtype.UUID        `json:"id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
@@ -282,6 +293,7 @@ type VMPlatform struct {
 
 type WorkerGroup struct {
 	ID                        pgtype.UUID        `json:"id"`
+	OwnerOrgID                pgtype.UUID        `json:"owner_org_id"`
 	CapacityObservedAt        pgtype.Timestamptz `json:"capacity_observed_at"`
 	CapacitySupplyFingerprint pgtype.Text        `json:"capacity_supply_fingerprint"`
 	CapacityPools             []byte             `json:"capacity_pools"`

@@ -151,7 +151,7 @@ const usableBootSeedImageSQL = `EXISTS(SELECT 1 FROM images i
  WHERE i.environment_id=b.environment_id AND i.id=b.image_id AND i.root_id IS NOT NULL AND p.status='succeeded' AND ` + usableImageSecretsSQL + `)`
 
 func AssignBootSeedBuild(ctx context.Context, tx pgx.Tx, a Allocation, policyRevision int64) (bool, error) {
-	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
+	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_group_id=(SELECT worker_group_id FROM worker_hosts WHERE id=$3),worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11,
  deadline_at=clock_timestamp()+$14::bigint*interval '1 millisecond'
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND executor_epoch=$12::bigint-1

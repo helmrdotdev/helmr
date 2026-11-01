@@ -388,7 +388,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"sessions", "turns", "computers", "commands", "checkpoints", "diagnostic_chunks", "trigger_activations"}
+	// A Computer is pinned to its group; work running on it follows that pin.
+	logicalTables := []string{"sessions", "turns", "commands", "checkpoints", "diagnostic_chunks", "trigger_activations"}
 	var assignmentLeaks int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=ANY($1::text[]) AND column_name='worker_group_id'`, logicalTables).Scan(&assignmentLeaks); err != nil {
 		t.Fatal(err)
@@ -409,9 +410,11 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	tables := []string{"worker_groups", "worker_pools", "worker_hosts", "worker_host_secrets", "worker_scale_in_operations"}
-	columns := []string{"id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id"}
-	nullability := []string{"NO", "NO", "NO", "NO", "NO"}
+	// Placements, Computers and preparation record a group only once one is
+	// assigned.
+	tables := []string{"worker_groups", "worker_pools", "worker_hosts", "worker_host_secrets", "worker_scale_in_operations", "environment_placements", "computers", "image_builds", "boot_seed_builds"}
+	columns := []string{"id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id"}
+	nullability := []string{"NO", "NO", "NO", "NO", "NO", "YES", "YES", "YES", "YES"}
 	rows, err := pool.Query(ctx, `
 		WITH expected AS (
 			SELECT *

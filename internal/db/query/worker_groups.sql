@@ -3,10 +3,11 @@
 SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
 -- name: LockWorkerGroupMutation :exec
 SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
--- name: GetWorkerGroupByRegionName :one
+-- name: GetDeploymentWorkerGroupByRegionName :one
 SELECT *
   FROM worker_groups
- WHERE region_id = sqlc.arg(region_id)
+ WHERE owner_org_id IS NULL
+   AND region_id = sqlc.arg(region_id)
    AND name = sqlc.arg(name);
 -- name: CreateWorkerGroup :one
 WITH token AS (
@@ -14,8 +15,8 @@ WITH token AS (
     VALUES (sqlc.arg(token_id), sqlc.arg(token_hash))
     RETURNING id
 )
-INSERT INTO worker_groups (id, token_id, region_id, name, description, status)
-SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
+INSERT INTO worker_groups (id, owner_org_id, token_id, region_id, name, description, status)
+SELECT sqlc.arg(id), sqlc.narg(owner_org_id), token.id, sqlc.arg(region_id), sqlc.arg(name),
        sqlc.arg(description), 'active'
   FROM token
 RETURNING *;

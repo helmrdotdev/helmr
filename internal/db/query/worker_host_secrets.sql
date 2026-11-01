@@ -154,7 +154,8 @@ UPDATE worker_host_secrets
    AND worker_pools.status IN ('active','draining')
 RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
-          worker_hosts.epoch_started_at;
+          worker_hosts.epoch_started_at,
+          worker_groups.owner_org_id AS worker_group_owner_org_id;
 
 -- name: AuthorizeActivatingWorkerHostSecret :one
 UPDATE worker_host_secrets
@@ -176,7 +177,8 @@ UPDATE worker_host_secrets
    AND worker_pools.status IN ('pending','active','draining')
 RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
-          worker_hosts.epoch_started_at;
+          worker_hosts.epoch_started_at,
+          worker_groups.owner_org_id AS worker_group_owner_org_id;
 
 -- name: AuthorizeRecoveringWorkerHostSecret :one
 UPDATE worker_host_secrets
@@ -204,12 +206,14 @@ UPDATE worker_host_secrets
    AND worker_pools.status IN ('pending','active','draining')
 RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
-          worker_hosts.epoch_started_at;
+          worker_hosts.epoch_started_at,
+          worker_groups.owner_org_id AS worker_group_owner_org_id;
 
 -- name: AuthorizeWorkerDrainReplay :one
 SELECT worker_host_secrets.*, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
-       worker_hosts.epoch_started_at
+       worker_hosts.epoch_started_at,
+       worker_groups.owner_org_id AS worker_group_owner_org_id
   FROM worker_host_secrets
   JOIN worker_hosts
     ON worker_hosts.id = worker_host_secrets.worker_host_id
@@ -225,11 +229,13 @@ SELECT worker_host_secrets.*, worker_hosts.resource_id,
 -- name: AuthorizeWorkerFenceReplay :one
 SELECT worker_host_secrets.*, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
-       worker_hosts.epoch_started_at
+       worker_hosts.epoch_started_at,
+       worker_groups.owner_org_id AS worker_group_owner_org_id
   FROM worker_host_secrets
   JOIN worker_hosts
     ON worker_hosts.id = worker_host_secrets.worker_host_id
    AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+  JOIN worker_groups ON worker_groups.id = worker_host_secrets.worker_group_id
  WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
    AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
    AND worker_host_secrets.revoked_at IS NOT NULL

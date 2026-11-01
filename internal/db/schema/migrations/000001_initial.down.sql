@@ -59,6 +59,7 @@ DROP TABLE IF EXISTS
     template_definitions,
     templates,
     image_specs,
+    environment_placements,
     deployment_objects,
     deployments,
     worker_host_secrets,

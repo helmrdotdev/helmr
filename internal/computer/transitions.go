@@ -21,7 +21,7 @@ import (
 // AssignImageBuild places a queued image build on an allocation and reports
 // whether the build was still assignable.
 func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, spec uuid.UUID) (bool, error) {
-	changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
+	changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_group_id=(SELECT worker_group_id FROM worker_hosts WHERE id=$3),worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
  SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id

@@ -123,7 +123,8 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 
 	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, credential)
 	if recovering.HostID != enrolled.HostID || recovering.GroupID != f.groupID() || recovering.Epoch != 1 ||
-		recovering.ResourceID != "i-lifecycle" || recovering.Status != db.WorkerHostStatusRegistering || recovering.EpochStartedAt.IsZero() {
+		recovering.ResourceID != "i-lifecycle" || recovering.Status != db.WorkerHostStatusRegistering || recovering.EpochStartedAt.IsZero() ||
+		recovering.OwnerOrgID != nil {
 		t.Fatalf("recovering principal = %+v", recovering)
 	}
 	if err := RecordStartupRecovery(t.Context(), f.q, recovering, startupEvidence(t)); err != nil {

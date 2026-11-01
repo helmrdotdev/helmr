@@ -56,6 +56,7 @@ type Querier interface {
 	// Upload receipts authorize nothing once their allocation ends. Removing them
 	// lets an upload abandoned by that allocation become a retirement candidate.
 	DeleteEndedUploadReceipts(ctx context.Context) (int64, error)
+	DeleteEnvironmentPlacement(ctx context.Context, arg DeleteEnvironmentPlacementParams) (int64, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
 	// EnrollHost owns the deciding authority locks and physical-custody exclusion.
@@ -74,6 +75,7 @@ type Querier interface {
 	GetCommandByIdempotencyReceipt(ctx context.Context, arg GetCommandByIdempotencyReceiptParams) (Command, error)
 	GetCommandLogState(ctx context.Context, arg GetCommandLogStateParams) (Command, error)
 	GetCommandTarget(ctx context.Context, arg GetCommandTargetParams) (GetCommandTargetRow, error)
+	GetDeploymentWorkerGroupByRegionName(ctx context.Context, arg GetDeploymentWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)
@@ -98,7 +100,6 @@ type Querier interface {
 	GetTriggerByID(ctx context.Context, arg GetTriggerByIDParams) (GetTriggerByIDRow, error)
 	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
-	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error)
 	GetWorkerHostPoolID(ctx context.Context, arg GetWorkerHostPoolIDParams) (pgtype.UUID, error)
 	GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStatusParams) (GetWorkerHostStatusRow, error)
@@ -122,6 +123,7 @@ type Querier interface {
 	ListAuthorizedProjects(ctx context.Context, arg ListAuthorizedProjectsParams) ([]Project, error)
 	ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityWorkerHostsParams) ([]ListCapacityWorkerHostsRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
+	ListEnvironmentPlacements(ctx context.Context, environmentID pgtype.UUID) ([]EnvironmentPlacement, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)
 	ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error)
 	ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error)
@@ -186,6 +188,7 @@ type Querier interface {
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)
 	SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error)
+	SetEnvironmentPlacement(ctx context.Context, arg SetEnvironmentPlacementParams) (EnvironmentPlacement, error)
 	SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)

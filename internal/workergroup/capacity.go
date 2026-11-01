@@ -28,10 +28,10 @@ type HostFilter struct {
 	Limit                  int32
 }
 
-// ResolveGroup returns the capacity projection of the worker group with the
-// name in the region.
+// ResolveGroup returns the capacity projection of the deployment worker group
+// with the name in the region.
 func ResolveGroup(ctx context.Context, q db.Querier, regionID string, name string) (Group, error) {
-	group, err := q.GetWorkerGroupByRegionName(ctx, db.GetWorkerGroupByRegionNameParams{RegionID: regionID, Name: name})
+	group, err := q.GetDeploymentWorkerGroupByRegionName(ctx, db.GetDeploymentWorkerGroupByRegionNameParams{RegionID: regionID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Group{}, ErrGroupNotFound
 	}

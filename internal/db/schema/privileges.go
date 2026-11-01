@@ -7,6 +7,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// immutableColumns are columns the runtime role sets on insert and can never
+// update. An organization worker group's owner is fixed at creation.
+var immutableColumns = map[string][]string{
+	"worker_groups": {"owner_org_id"},
+}
+
 // ConfigurePrivileges runs only with the migration credential after migrations.
 // Grants cover existing relations; future tables receive no implicit privileges.
 func ConfigurePrivileges(ctx context.Context, migrationURL, runtimeRole, maintenanceRole string) error {
@@ -61,7 +67,23 @@ func ConfigurePrivileges(ctx context.Context, migrationURL, runtimeRole, mainten
 				return err
 			}
 		default:
-			if _, err := tx.Exec(ctx, "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "+name+" TO "+runtime); err != nil {
+			fixed, ok := immutableColumns[table]
+			if !ok {
+				if _, err := tx.Exec(ctx, "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "+name+" TO "+runtime); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := tx.Exec(ctx, "GRANT SELECT, INSERT, DELETE ON TABLE "+name+" TO "+runtime); err != nil {
+				return err
+			}
+			var updatable string
+			if err := tx.QueryRow(ctx, `SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+  FROM information_schema.columns
+ WHERE table_schema='public' AND table_name=$1 AND is_generated='NEVER' AND NOT (column_name = ANY($2))`, table, fixed).Scan(&updatable); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, "GRANT UPDATE ("+updatable+") ON TABLE "+name+" TO "+runtime); err != nil {
 				return err
 			}
 		}
