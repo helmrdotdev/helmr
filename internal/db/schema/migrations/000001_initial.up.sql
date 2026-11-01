@@ -340,8 +340,6 @@ CREATE TABLE worker_groups (
 
 CREATE UNIQUE INDEX worker_groups_one_active_deployment_per_region_idx ON worker_groups(region_id) WHERE owner_org_id IS NULL AND status IN ('active', 'paused');
 
-CREATE INDEX worker_groups_owner_idx ON worker_groups(owner_org_id, region_id) WHERE owner_org_id IS NOT NULL;
-
 CREATE INDEX worker_groups_active_dispatch_idx ON worker_groups (region_id, id) WHERE status = 'active';
 
 CREATE TABLE vm_platforms (
@@ -983,8 +981,8 @@ CREATE TABLE boot_seed_builds (
     CHECK (status NOT IN ('queued','running','succeeded') OR image_id IS NOT NULL),
     CHECK (status NOT IN ('waiting','queued') OR worker_host_id IS NULL),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
-    -- A seed depends on its producing group's VM platform and CPU shape, so the
-    -- group stays recorded across executor attempts.
+    -- A seed depends on its producing group's VM platform and CPU shape. The
+    -- group is recorded with each executor attempt.
     CHECK (worker_host_id IS NULL OR worker_group_id IS NOT NULL),
     FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id),
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
