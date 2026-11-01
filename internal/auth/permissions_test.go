@@ -175,6 +175,9 @@ func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 			}
 		}
 	}
+	if !keys["session_operator"] {
+		t.Fatal("missing session_operator")
+	}
 }
 
 func TestAuditScopeUsesCurrentTypedAuthority(t *testing.T) {
