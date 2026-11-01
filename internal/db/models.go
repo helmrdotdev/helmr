@@ -293,7 +293,6 @@ type VMPlatform struct {
 
 type WorkerGroup struct {
 	ID                        pgtype.UUID        `json:"id"`
-	OwnerOrgID                pgtype.UUID        `json:"owner_org_id"`
 	CapacityObservedAt        pgtype.Timestamptz `json:"capacity_observed_at"`
 	CapacitySupplyFingerprint pgtype.Text        `json:"capacity_supply_fingerprint"`
 	CapacityPools             []byte             `json:"capacity_pools"`
@@ -306,6 +305,7 @@ type WorkerGroup struct {
 	PrimaryPoolID             pgtype.UUID        `json:"primary_pool_id"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	OwnerOrgID                pgtype.UUID        `json:"owner_org_id"`
 }
 
 type WorkerGroupToken struct {

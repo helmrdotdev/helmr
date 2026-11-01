@@ -95,13 +95,13 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 		}
 	}
 	assertVersion(1)
-	originalData := existingData()
-	originalCatalog := dumpCatalog(t, ctx, pool)
-	wantCatalog, err := os.ReadFile(catalogSnapshot)
+	current, err := CurrentVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest, err := CurrentVersion()
+	originalData := existingData()
+	originalCatalog := dumpCatalog(t, ctx, pool)
+	wantCatalog, err := os.ReadFile(catalogSnapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 		if err := Up(ctx, database.DSN); err != nil {
 			t.Fatalf("upgrade %d: %v", cycle, err)
 		}
-		assertVersion(int(latest))
+		assertVersion(int(current))
 		if got := existingData(); got != originalData {
 			t.Fatalf("upgrade changed existing data: got %s, want %s", got, originalData)
 		}

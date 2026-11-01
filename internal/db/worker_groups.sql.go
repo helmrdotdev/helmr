@@ -105,7 +105,7 @@ INSERT INTO worker_groups (id, owner_org_id, token_id, region_id, name, descript
 SELECT $1, $2, token.id, $3, $4,
        $5, 'active'
   FROM token
-RETURNING id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
+RETURNING id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
 `
 
 type CreateWorkerGroupParams struct {
@@ -131,7 +131,6 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -144,12 +143,13 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
 
 const getDeploymentWorkerGroupByRegionName = `-- name: GetDeploymentWorkerGroupByRegionName :one
-SELECT id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
   FROM worker_groups
  WHERE owner_org_id IS NULL
    AND region_id = $1
@@ -166,7 +166,6 @@ func (q *Queries) GetDeploymentWorkerGroupByRegionName(ctx context.Context, arg 
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -179,12 +178,13 @@ func (q *Queries) GetDeploymentWorkerGroupByRegionName(ctx context.Context, arg 
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
 
 const getWorkerGroup = `-- name: GetWorkerGroup :one
-SELECT id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at FROM worker_groups WHERE id = $1
+SELECT id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id FROM worker_groups WHERE id = $1
 `
 
 func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error) {
@@ -192,7 +192,6 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGro
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -205,6 +204,7 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGro
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
@@ -716,7 +716,7 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
   FROM worker_groups
  WHERE $1::text IS NULL OR region_id = $1
  ORDER BY region_id, name ASC
@@ -739,7 +739,6 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		var i WorkerGroup
 		if err := rows.Scan(
 			&i.ID,
-			&i.OwnerOrgID,
 			&i.CapacityObservedAt,
 			&i.CapacitySupplyFingerprint,
 			&i.CapacityPools,
@@ -752,6 +751,7 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.PrimaryPoolID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OwnerOrgID,
 		); err != nil {
 			return nil, err
 		}
@@ -852,7 +852,7 @@ func (q *Queries) LockWorkerGroupCreationRegion(ctx context.Context, lockKey int
 }
 
 const lockWorkerGroupForPoolMutation = `-- name: LockWorkerGroupForPoolMutation :one
-SELECT id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
+SELECT id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
   FROM worker_groups
  WHERE id = $1
  FOR UPDATE
@@ -863,7 +863,6 @@ func (q *Queries) LockWorkerGroupForPoolMutation(ctx context.Context, workerGrou
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -876,6 +875,7 @@ func (q *Queries) LockWorkerGroupForPoolMutation(ctx context.Context, workerGrou
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
@@ -1326,7 +1326,7 @@ UPDATE worker_groups
        END
   FROM selection
  WHERE worker_groups.id = selection.worker_group_id
-RETURNING worker_groups.id, worker_groups.owner_org_id, worker_groups.capacity_observed_at, worker_groups.capacity_supply_fingerprint, worker_groups.capacity_pools, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
+RETURNING worker_groups.id, worker_groups.capacity_observed_at, worker_groups.capacity_supply_fingerprint, worker_groups.capacity_pools, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at, worker_groups.owner_org_id
 `
 
 type SetInitialWorkerGroupPrimaryPoolParams struct {
@@ -1339,7 +1339,6 @@ func (q *Queries) SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetI
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -1352,6 +1351,7 @@ func (q *Queries) SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetI
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
@@ -1364,7 +1364,7 @@ UPDATE worker_groups
  WHERE worker_groups.id = $2
    AND worker_groups.claim_version = $3
    AND worker_groups.status IN ('active', 'paused')
-RETURNING worker_groups.id, worker_groups.owner_org_id, worker_groups.capacity_observed_at, worker_groups.capacity_supply_fingerprint, worker_groups.capacity_pools, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at
+RETURNING worker_groups.id, worker_groups.capacity_observed_at, worker_groups.capacity_supply_fingerprint, worker_groups.capacity_pools, worker_groups.token_id, worker_groups.region_id, worker_groups.name, worker_groups.description, worker_groups.status, worker_groups.claim_version, worker_groups.primary_pool_id, worker_groups.created_at, worker_groups.updated_at, worker_groups.owner_org_id
 `
 
 type SetWorkerGroupPrimaryPoolParams struct {
@@ -1378,7 +1378,6 @@ func (q *Queries) SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGr
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -1391,6 +1390,7 @@ func (q *Queries) SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGr
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
@@ -1399,7 +1399,7 @@ const updateWorkerGroupDescription = `-- name: UpdateWorkerGroupDescription :one
 UPDATE worker_groups
    SET description = $1, updated_at = now()
  WHERE id = $2
-RETURNING id, owner_org_id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
+RETURNING id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
 `
 
 type UpdateWorkerGroupDescriptionParams struct {
@@ -1412,7 +1412,6 @@ func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWo
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.CapacityObservedAt,
 		&i.CapacitySupplyFingerprint,
 		&i.CapacityPools,
@@ -1425,6 +1424,7 @@ func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWo
 		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerOrgID,
 	)
 	return i, err
 }
