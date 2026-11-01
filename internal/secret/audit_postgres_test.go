@@ -139,7 +139,7 @@ func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), org, user)
 				dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.rotate", "secrets.revoke")
 			case "old-proof":
-				p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
+				p.AuthenticatedAt = p.AuthenticatedAt.Add(-3 * time.Hour)
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
 			}
 			_, createErr := store.Create(t.Context(), p, env, "NEW_NAME", []byte("new"), "new-name")
@@ -196,7 +196,7 @@ func TestSecretRevokedNameIsRotatedWithRecentProof(t *testing.T) {
 	// Create never issues new material under a revoked name, with or without
 	// recent proof. Setting a new value is a rotation, which needs recent proof.
 	recent := p.AuthenticatedAt
-	p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
+	p.AuthenticatedAt = p.AuthenticatedAt.Add(-3 * time.Hour)
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
 	if _, err = store.Create(t.Context(), p, env, "RETIRED", []byte("replacement"), ""); !errors.Is(err, ErrNameRevoked) {
 		t.Fatalf("create on a revoked name = %v, want it refused as revoked", err)

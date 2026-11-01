@@ -42,7 +42,7 @@ A CLI login is bound to the account and organization approved in the browser.
 To authorize another organization, run `helmr login` again and approve that
 organization.
 
-Approving needs a browser that signed in within the last hour. When the browser's
+Approving needs a browser that signed in within the last two hours. When the browser's
 sign-in is older, the approval page asks you to confirm your sign-in, then you
 approve. That approval is the CLI's proof: CLI commands, including sensitive ones,
 never ask you to confirm again.

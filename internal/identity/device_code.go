@@ -138,7 +138,7 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 		}
 		if approve {
 			// A CLI login never needs recent proof again, so approving one
-			// needs a browser that signed in within the last hour.
+			// needs a browser with recent proof.
 			if err := auth.RequireRecentProof(approver); err != nil {
 				return err
 			}

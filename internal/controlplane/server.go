@@ -378,7 +378,7 @@ func (s *Server) mountAdminRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(limitRequestBody(adminRequestBodyLimit))
-		r.Use(s.requireAdmin)
+		r.Use(s.requireOperator)
 		r.Get("/audit-events", s.adminListAuditEvents)
 		r.Get("/audit-events/actions", s.adminListAuditActions)
 		r.Get("/regions", s.adminListRegions)

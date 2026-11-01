@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -122,7 +123,12 @@ func (s *Server) adminGetWorkerGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, adminWorkerGroup(row))
 }
 
+// Creating a worker group issues its first enrollment token.
 func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
@@ -218,7 +224,13 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, status)
 }
 
+// Issuing an enrollment token needs recent proof; other platform writes need
+// only a live operator session.
 func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)

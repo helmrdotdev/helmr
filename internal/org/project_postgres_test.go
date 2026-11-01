@@ -706,7 +706,7 @@ func TestProjectUpdateIncludesRetentionWithOperationSpecificProof(t *testing.T) 
 		t.Fatal("missing update authorization evidence", err)
 	}
 	stale := f.manager
-	stale.Human.AuthenticatedAt = time.Now().Add(-2 * time.Hour)
+	stale.Human.AuthenticatedAt = time.Now().Add(-3 * time.Hour)
 	if _, err := UpdateProject(t.Context(), f.pool, stale, id, ProjectDetails{Name: "Ordinary edit"}); err != nil {
 		t.Fatal("ordinary edit required recent sign-in", err)
 	}

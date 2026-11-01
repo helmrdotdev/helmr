@@ -479,7 +479,7 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 func TestAPIKeyExpiryUpdateRequiresCurrentRecentProof(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	key := f.issue(t, "bounded", auth.PermissionSessionsRead)
-	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, f.owner.SessionID)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, f.owner.SessionID)
 	if err := f.pool.QueryRow(t.Context(), `SELECT authenticated_at FROM login_sessions WHERE id=$1`, f.owner.SessionID).Scan(&f.owner.AuthenticatedAt); err != nil {
 		t.Fatal(err)
 	}

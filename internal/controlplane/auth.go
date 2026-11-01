@@ -149,18 +149,6 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	return s.requireSessionWithErrorWriter(next, writeSessionAuthError)
 }
 
-func (s *Server) requireAdmin(next http.Handler) http.Handler {
-	return s.requireOperator(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
-				s.writeOperationError(w, r, err)
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	}))
-}
-
 type accountOnlyContextKey struct{}
 
 func (s *Server) requireAccount(next http.Handler) http.Handler {

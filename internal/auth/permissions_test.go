@@ -239,7 +239,7 @@ func TestRoleAssignmentLevelsPreserveAgentRefinement(t *testing.T) {
 }
 
 func TestRecentAuthenticationCoversOnlyAccessAndDestructiveChanges(t *testing.T) {
-	stale := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-2 * time.Hour)}
+	stale := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-3 * time.Hour)}
 	for _, permission := range []Permission{PermissionSecretsCreate, PermissionAgentConnectionsConfigure, PermissionAgentConnectionsRead, PermissionGroupsAddMember, PermissionGroupsRemoveMember, PermissionInvitationsCreate} {
 		if err := RequireRecentFor(stale, permission); err != nil {
 			t.Fatalf("%s required recent sign-in: %v", permission, err)
