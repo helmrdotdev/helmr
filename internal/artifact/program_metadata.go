@@ -96,7 +96,6 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 		value.Resources.DiskMiB = cloneInt64(value.Resources.DiskMiB)
 		if value.Refresh != nil {
 			refresh := *value.Refresh
-			refresh.MaxAgeMs = cloneInt64(refresh.MaxAgeMs)
 			value.Refresh = &refresh
 		}
 		value.Secrets = secretbinding.CloneReferences(value.Secrets)

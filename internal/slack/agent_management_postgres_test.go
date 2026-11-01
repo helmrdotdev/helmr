@@ -51,7 +51,7 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_grants WHERE environment_id=$1`, f.Environment)
-	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), f.publication, observed, refreshResult().grant); !errors.Is(err, errInstallationAuthority) {
+	if _, err = store.attachConnectionGrant(t.Context(), f.Principal(t), f.publication, observed, refreshResult().grant, bindNoTriggers); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("revoked manager attached credentials: %v", err)
 	}
 	var revision int64
@@ -78,7 +78,7 @@ func TestConnectionGrantCannotAdoptReplacementAuthority(t *testing.T) {
 			case "suspended":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, prior.MemberID)
 			}
-			if _, err = store.attachConnectionGrant(t.Context(), prior, f.publication, observed, refreshResult().grant); !errors.Is(err, errInstallationAuthority) {
+			if _, err = store.attachConnectionGrant(t.Context(), prior, f.publication, observed, refreshResult().grant, bindNoTriggers); !errors.Is(err, errInstallationAuthority) {
 				t.Fatal("stale management source changed connection", err)
 			}
 			var revision int64

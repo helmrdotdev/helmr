@@ -25,7 +25,7 @@ interface TemplateDefinition {
   readonly network?: NetworkPolicy
   readonly prepareNetwork?: NetworkPolicy
   readonly prepare?: (prepare: PrepareContext) => MaybePromise<void>
-  readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
+  readonly refresh?: { readonly every: Duration }
   readonly deleteAfterUnused?: Retention
   readonly secrets?: readonly SecretBinding[]
   readonly prepareSecrets?: readonly SecretBinding[]
@@ -45,8 +45,7 @@ Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 | `network` | no | Outbound network maximum for Computers created from this Template. Omission keeps ordinary IPv4 connectivity under installation restrictions. |
 | `prepareNetwork` | no | Replaces the network policy during `prepare`; omission inherits `network`. Requires a callback. |
 | `prepare` | no | Preparation function. Runs with a `PrepareContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
-| `refresh.every` | yes, with `refresh` | Best-effort interval between background preparations after promotion. A usable build already in progress satisfies the interval; missed intervals are coalesced. |
-| `refresh.maxAge` | no | Maximum age of a prepared image a new Computer may start from; an older one is prepared again first. |
+| `refresh.every` | yes, with `refresh` | Best-effort interval between background preparations after promotion. A usable build already in progress satisfies the interval; missed intervals are coalesced. A new Computer does not start from a prepared image older than three intervals; an older one is prepared again first. Without `refresh`, images have no age limit. |
 | `deleteAfterUnused` | no | Deletes a Computer created from this Template after it stays unused this long: a `Duration` or `"never"`. Default `"7d"`. A Computer always uses its origin Template's value; to keep a long-lived Computer longer, create it from a Template with a longer period. |
 | `secrets` | no | Secret bindings available to processes on the Computer. |
 | `prepareSecrets` | no | Secret bindings available to `prepare`. Nonempty bindings require a callback. |
@@ -74,7 +73,7 @@ export const repoComputer = template({
     await build.exec(["git", "clone", "https://github.com/acme/app", "/app"])
     await build.exec(["npm", "ci"], { cwd: "/app" })
   },
-  refresh: { every: "1d", maxAge: "7d" },
+  refresh: { every: "1d" },
 })
 ```
 

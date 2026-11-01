@@ -196,7 +196,7 @@ activation; it cannot be reused for another activation.
 
 Human-session equivalents are available under
 `/api/projects/{project}/environments/{environment}/triggers`.
-Agent Delete, Restore and retained status use separate human management routes;
+Agent Delete and retained status use separate human management routes;
 see [Agent lifecycle](/docs/reference/api/agents).
 
 ### Deployment uploads
@@ -220,3 +220,22 @@ transfer before its server deadline; configure and qualify the complete path.
 Quarantined inputs expire under the AWS recipe's one-day lifecycle
 (and noncurrent versions after one day); S3 applies expiration asynchronously.
 Rerun upload planning if an unfinalized input has expired.
+
+### Deployment promotion
+
+`POST /v1/deployments/{deploymentID}/promote` returns 202 with
+`preparation_state: "preparing"` while Environment preparation runs; repeat the
+request after preparation finishes. A completed promotion returns 200 with the
+Deployment and, when non-empty:
+
+| Field | Meaning |
+| --- | --- |
+| `restored_agents` | Keys of deleted Agents the Deployment declares; promotion restored them. |
+| `waiting_triggers` | `{ "agent", "trigger" }` entries whose Slack destination waits for a connection of the Agent. |
+
+A trigger with a Slack destination waits when its Agent has no authorized
+Slack connection, and the promotion still succeeds. When the Agent has a connection,
+one that has lost authorization or lacks the channel's scopes fails promotion
+with 409 `target_not_published`, and a channel the app cannot use fails it with
+404 `channel_unavailable`. A connection change during promotion returns 409
+`conversation_changed`, and the request can be retried. See [Triggers](/docs/concepts/triggers#slack-delivery).

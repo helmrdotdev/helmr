@@ -43,7 +43,7 @@ func ReadBootSeedBuild(ctx context.Context, q db.DBTX, env, id uuid.UUID) (BootS
 // deployment. A missing prepared image leaves cheap metadata waiting; it does
 // not cause authored preparation or hold promotion.
 func QueueDeploymentBootSeeds(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT image_spec_id,cpu_millis,memory_bytes,min(max_image_age_ms) FROM template_definitions
+	rows, err := tx.Query(ctx, `SELECT image_spec_id,cpu_millis,memory_bytes,min(3*refresh_every_ms) FROM template_definitions
  WHERE environment_id=$1 AND deployment_id=$2 GROUP BY image_spec_id,cpu_millis,memory_bytes ORDER BY image_spec_id,cpu_millis,memory_bytes`, env, deployment)
 	if err != nil {
 		return err

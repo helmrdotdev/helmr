@@ -24,8 +24,15 @@ import (
 // occurrence within this window of its scheduled time starts.
 const TriggerLateness = 5 * time.Minute
 
+// errSlackNotConnected rejects an instant of a trigger whose Slack destination
+// waits for a connection of its Agent.
+var errSlackNotConnected = errors.New("the Agent has no connected Slack app for the trigger destination")
+
 type triggerActivation struct {
-	slackChannelID                     *uuid.UUID
+	// slackChannel is the declared Slack channel. A declared channel without
+	// slackBindingID waits for a Slack connection of the Agent.
+	slackChannel                       *string
+	slackBindingID                     *uuid.UUID
 	slackRouteActive                   bool
 	environment, id, agent, deployment uuid.UUID
 	trigger, cron, timezone            string
@@ -114,15 +121,21 @@ func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, limits
 		if err != nil {
 			return err
 		}
-		s := triggerActivation{environment: env, id: id, slackChannelID: route, slackRouteActive: routeActive}
-		err = tx.QueryRow(ctx, `SELECT a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,a.active_from,a.active_until,a.next_fire_at FROM trigger_activations a
+		s := triggerActivation{environment: env, id: id, slackBindingID: route, slackRouteActive: routeActive}
+		var locked *uuid.UUID
+		err = tx.QueryRow(ctx, `SELECT a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,t.slack_channel_id,a.slack_channel_binding_id,a.active_from,a.active_until,a.next_fire_at FROM trigger_activations a
  JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
- WHERE a.environment_id=$1 AND a.id=$2 FOR NO KEY UPDATE OF a`, env, id).Scan(&s.agent, &s.deployment, &s.trigger, &s.cron, &s.timezone, &s.input, &s.from, &s.until, &s.next)
+ WHERE a.environment_id=$1 AND a.id=$2 FOR NO KEY UPDATE OF a`, env, id).Scan(&s.agent, &s.deployment, &s.trigger, &s.cron, &s.timezone, &s.input, &s.slackChannel, &locked, &s.from, &s.until, &s.next)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+		if (locked == nil) != (route == nil) || locked != nil && *locked != *route {
+			// Connection authorization bound the activation after the channel
+			// locks were taken. The next pass locks the new binding.
+			return nil
 		}
 		var now time.Time
 		if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
@@ -172,6 +185,8 @@ func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, limits
 						reason = "execution_capacity_incompatible"
 					case errors.Is(admissionErr, workergroup.ErrCapacityExhausted):
 						reason = "execution_capacity_exhausted"
+					case errors.Is(admissionErr, errSlackNotConnected):
+						reason = "slack_not_connected"
 					case errors.Is(admissionErr, slackroute.ErrChannelUnavailable):
 						reason = "slack_channel_unavailable"
 					case errors.Is(admissionErr, session.ErrAgentDeleted):
@@ -206,15 +221,18 @@ func recordTriggerOccurrence(ctx context.Context, tx pgx.Tx, s triggerActivation
 // admitScheduledSession admits a trigger occurrence's Session and, for a
 // Slack destination, its Slack root, in the evaluation transaction.
 func admitScheduledSession(ctx context.Context, auditPolicy auditpolicy.Policy, limits executionlimit.Limits, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time) (session.Admission, error) {
-	if s.slackChannelID != nil && !s.slackRouteActive {
+	if s.slackChannel != nil && s.slackBindingID == nil {
+		return session.Admission{}, errSlackNotConnected
+	}
+	if s.slackBindingID != nil && !s.slackRouteActive {
 		return session.Admission{}, slackroute.ErrChannelUnavailable
 	}
 	receipt, err := session.AdmitScheduled(ctx, auditPolicy, limits, tx, trust, session.ScheduledStart{EnvironmentID: s.environment, ActivationID: s.id, AgentID: s.agent, DeploymentID: s.deployment, Input: s.input, At: at})
 	if err != nil {
 		return session.Admission{}, err
 	}
-	if s.slackChannelID != nil {
-		if err = slack.CreateScheduledRoot(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, *s.slackChannelID, s.agent, s.deployment, at); err != nil {
+	if s.slackBindingID != nil {
+		if err = slack.CreateScheduledRoot(ctx, tx, s.environment, receipt.SessionID, receipt.TurnID, *s.slackBindingID, s.agent, s.deployment, at); err != nil {
 			return session.Admission{}, err
 		}
 	}

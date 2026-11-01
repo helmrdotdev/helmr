@@ -93,7 +93,7 @@ func TestAgentDeletionCancelsSessionsAndCleanupContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
-	preview, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "", false, true)
+	preview, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "", true)
 	if err != nil || !preview.CanApply || len(preview.Blockers) != 0 || preview.Effects.SessionsCancelled != 1 {
 		t.Fatalf("preview %+v %v", preview, err)
 	}
@@ -101,7 +101,7 @@ func TestAgentDeletionCancelsSessionsAndCleanupContinues(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT status FROM sessions WHERE id=$1`, f.session).Scan(&status); err != nil || status != "open" {
 		t.Fatalf("preview changed the Session: %s %v", status, err)
 	}
-	deleted, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", false, false)
+	deleted, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", false)
 	if err != nil || !deleted.Changed || deleted.Effects.SessionsCancelled != 1 {
 		t.Fatalf("delete %+v %v", deleted, err)
 	}
@@ -159,7 +159,7 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			admitted := make(chan error, 1)
 			go func() {
 				<-start
-				_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "1", false, false)
+				_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "1", false)
 				deleted <- err
 			}()
 			go func() {
@@ -196,9 +196,8 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&before); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "2", true, false); err != nil {
-					t.Fatal(err)
-				}
+				// Promotion restores the identity the same way; the sealed activation stays sealed.
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agents SET deleted_at=NULL,revision=revision+1 WHERE environment_id=$1 AND id=$2`, f.env, target)
 				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, activation); err != nil {
 					t.Fatal(err)
 				}
@@ -230,7 +229,7 @@ func TestAgentCleanupSerializesSameManagerBeforeSharedChecks(t *testing.T) {
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", false, true)
+			_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", true)
 			results <- err
 		}()
 	}

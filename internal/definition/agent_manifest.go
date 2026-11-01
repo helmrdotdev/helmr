@@ -33,8 +33,7 @@ type CronTrigger struct {
 type SecretBinding = secretbinding.Reference
 type SecretBindingEnv = secretbinding.ReferenceEnv
 type ComputerRefresh struct {
-	EveryMs  int64  `json:"everyMs"`
-	MaxAgeMs *int64 `json:"maxAgeMs,omitempty"`
+	EveryMs int64 `json:"everyMs"`
 }
 
 type TemplateInputManifest struct {
@@ -97,7 +96,7 @@ func validateComputerSettings(resources ResourcesManifest, refresh *ComputerRefr
 		return err
 	}
 	if refresh != nil {
-		if !positiveSafeInteger(refresh.EveryMs) || (refresh.MaxAgeMs != nil && !positiveSafeInteger(*refresh.MaxAgeMs)) {
+		if !positiveSafeInteger(refresh.EveryMs) {
 			return errors.New("computer refresh requires positive safe integer milliseconds")
 		}
 	}

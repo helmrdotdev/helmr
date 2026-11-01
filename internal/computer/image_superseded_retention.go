@@ -19,11 +19,12 @@ const retirableSupersededImage = `i.root_id IS NOT NULL
  AND p.fenced_at IS NOT NULL AND p.disk_released_at IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=i.environment_id AND c.image_id=i.id
    AND (c.deleted_at IS NULL OR c.initial_root_id IS NOT NULL))
- AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=i.environment_id
+ AND NOT EXISTS(SELECT 1 FROM computers c JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)
+   WHERE c.environment_id=i.environment_id
    AND (c.image_build_id=p.id OR c.image_build_id=p.predecessor_build_id)
    AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL
    AND c.preparation_deadline_at>clock_timestamp()
-   AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms))
+   AND (d.refresh_every_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=3*d.refresh_every_ms))
  AND i.id IS DISTINCT FROM (SELECT newest.id FROM images newest
    JOIN image_builds p ON (p.environment_id,p.id)=(newest.environment_id,newest.image_build_id)
    JOIN image_specs spec ON (spec.environment_id,spec.id)=(newest.environment_id,newest.image_spec_id)

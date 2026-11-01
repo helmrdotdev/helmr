@@ -580,7 +580,6 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/agents", s.listManagementAgents)
 		r.Get("/projects/{project}/environments/{environment}/agents/{agent}/status", s.getAgentStatus)
 		r.Delete("/projects/{project}/environments/{environment}/agents/{agent}", s.deleteAgent)
-		r.Post("/projects/{project}/environments/{environment}/agents/{agent}/restore", s.restoreAgent)
 		r.Get("/projects/{project}/environments/{environment}/agents/{agent}", s.getAgentDefinition)
 		r.Get("/projects/{project}/environments/{environment}/agents/{agentName}/slack", s.agentSlackConnection)
 		r.Post("/projects/{project}/environments/{environment}/agents/{agentName}/slack", s.agentSlackConnection)

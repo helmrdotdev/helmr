@@ -53,7 +53,7 @@ const eligiblePreparationSourceSQL = `b.status='succeeded' AND b.payload_retired
  AND EXISTS(SELECT 1 FROM images image WHERE image.environment_id=b.environment_id AND image.id=b.image_id
  AND NOT EXISTS(SELECT 1 FROM template_definitions t WHERE t.environment_id=b.environment_id AND t.deployment_id=b.deployment_id
  AND t.image_spec_id=b.image_spec_id AND t.cpu_millis=b.cpu_millis AND t.memory_bytes=b.memory_bytes
- AND t.max_image_age_ms IS NOT NULL AND extract(epoch FROM statement_timestamp()-image.published_at)*1000>t.max_image_age_ms))`
+ AND t.refresh_every_ms IS NOT NULL AND extract(epoch FROM statement_timestamp()-image.published_at)*1000>3*t.refresh_every_ms))`
 
 const preparationSourceJoinsSQL = ` FROM boot_seed_builds b
  JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id

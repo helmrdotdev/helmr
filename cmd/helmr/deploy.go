@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -379,7 +380,7 @@ func (r cliDeployReporter) DeploymentCreated(value api.DeploymentResponse) error
 
 func (r cliDeployReporter) DeploymentResult(value api.DeploymentResponse, phase string) error {
 	if phase == "promoted" && !r.jsonOutput {
-		fmt.Fprintln(r.cmd.ErrOrStderr(), promotionEffects)
+		writePromotionEffects(r.cmd.ErrOrStderr(), value)
 	}
 	if r.jsonOutput {
 		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_result", Phase: phase, Deployment: &value}})
@@ -388,7 +389,20 @@ func (r cliDeployReporter) DeploymentResult(value api.DeploymentResponse, phase 
 	return err
 }
 
-const promotionEffects = "New Sessions and future triggers now use this Deployment. Agents absent from it no longer accept new independent Sessions or Slack conversations; retained identities, connections and pinned Sessions are unchanged. Inactive trigger intervals are not replayed."
+const promotionEffects = "New Sessions and future triggers now use this Deployment. Deleted Agents it includes are restored without their removed access or Slack connections. Agents absent from it no longer accept new independent Sessions or Slack conversations; retained identities, connections and pinned Sessions are unchanged. Inactive trigger intervals are not replayed."
+
+// writePromotionEffects writes the promotion receipt for people. A trigger
+// waiting for Slack records its scheduled instants as rejected until a Slack
+// connection for its Agent is authorized.
+func writePromotionEffects(w io.Writer, value api.DeploymentResponse) {
+	fmt.Fprintln(w, promotionEffects)
+	for _, agent := range value.RestoredAgents {
+		fmt.Fprintf(w, "Restored Agent %s\n", agent)
+	}
+	for _, trigger := range value.WaitingTriggers {
+		fmt.Fprintf(w, "Trigger %s/%s waits for a Slack connection of its Agent\n", trigger.Agent, trigger.Trigger)
+	}
+}
 
 func promoteCommand() *cobra.Command {
 	var projectID string
@@ -411,7 +425,7 @@ func promoteCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(value))
-			fmt.Fprintln(cmd.ErrOrStderr(), promotionEffects)
+			writePromotionEffects(cmd.ErrOrStderr(), value)
 			return nil
 		},
 	}

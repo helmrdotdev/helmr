@@ -37,24 +37,12 @@ type AgentDeletionEffects struct {
 
 var ErrAgentDeletionBlocked = errors.New("agent deletion has unresolved prerequisites")
 var ErrAgentNotFound = errors.New("agent not found")
-var ErrAgentDeleted = errors.New("restore deleted Agents before promotion")
-
-type DeletedAgentsError struct {
-	Keys  []string `json:"agents"`
-	Count int64    `json:"count"`
-}
-
-func (e DeletedAgentsError) Error() string { return ErrAgentDeleted.Error() }
-func (e DeletedAgentsError) Unwrap() error { return ErrAgentDeleted }
 
 // ChangeAgent joins access, Slack and scheduling owners in one durable operation.
 // Discovery takes earlier-order locks first, then the Environment and Agent fences.
 // A new earlier-order dependency rolls back rather than inverting lock order.
-func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, p auth.Principal, scope auth.Scope, key, revision string, restore, dryRun bool) (AgentChange, error) {
+func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, p auth.Principal, scope auth.Scope, key, revision string, dryRun bool) (AgentChange, error) {
 	permission := auth.PermissionAgentsDelete
-	if restore {
-		permission = auth.PermissionAgentsRestore
-	}
 	result := AgentChange{Blockers: []string{}, Warnings: []string{}}
 	if p.Kind != auth.PrincipalKindSession {
 		return result, ErrPermissionRequired
@@ -98,7 +86,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		if err := authorize(current, scope, permission); err != nil {
 			return err
 		}
-		grants, err := org.LockAgentGrantCleanup(ctx, tx, m, env, id, restore)
+		grants, err := org.LockAgentGrantCleanup(ctx, tx, m, env, id)
 		if err != nil {
 			return err
 		}
@@ -107,7 +95,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 			return err
 		}
 		var disconnection *slack.ConnectionDisconnection
-		if connection != nil && !restore {
+		if connection != nil {
 			disconnection, err = slack.LockAgentDeletionDisconnection(ctx, tx, p, env, id, *connection)
 			if err != nil {
 				return err
@@ -120,7 +108,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		if err = tx.QueryRow(ctx, `SELECT (SELECT id FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, env, id).Scan(&currentConnection); err != nil {
 			return err
 		}
-		if !restore && ((connection == nil) != (currentConnection == nil) || connection != nil && currentConnection != nil && *connection != *currentConnection) {
+		if (connection == nil) != (currentConnection == nil) || connection != nil && currentConnection != nil && *connection != *currentConnection {
 			return org.ErrAgentDependenciesChanged
 		}
 		if err = tx.QueryRow(ctx, `SELECT a.key,a.deleted_at,a.revision,e.current_deployment_id::text,EXISTS(SELECT 1 FROM agent_definitions d WHERE d.environment_id=a.environment_id AND d.agent_id=a.id AND d.deployment_id=e.current_deployment_id)
@@ -142,32 +130,28 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 			return org.ErrStaleRevision
 		}
 		result.CanApply = true
-		if (result.DeletedAt == nil) == restore {
+		if result.DeletedAt != nil {
 			return nil
 		}
-		if restore {
-			result.Warnings = append(result.Warnings, "Removed access and Slack connections will not be restored. Broad access assignments apply again, and existing parent Sessions can create children immediately. New independent Sessions and schedules require a deployment containing this Agent.")
-		} else {
-			if result.DefinedInCurrent {
-				result.Blockers = append(result.Blockers, "defined_in_current")
-			}
-			result.CanApply = len(result.Blockers) == 0
-			if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, true); err != nil {
-				return err
-			}
-			result.Effects.SelectedAgentEdgesRemoved, result.Effects.IneffectiveAssignmentsRemoved, result.Effects.MixedAssignmentsPreserved = grants.Counts()
-			if connection != nil {
-				v := connection.String()
-				result.Effects.SlackConnectionDisconnected = &v
-			}
-			if err = tx.QueryRow(ctx, `SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND agent_id=$2 AND active_until IS NOT NULL AND next_fire_at<active_until`, env, id).Scan(&result.Effects.TriggerActivationsSealed); err != nil {
-				return err
-			}
-			broad := scope
-			broad.AgentID = ""
-			if !current.HasPermission(permission, broad) {
-				result.Warnings = append(result.Warnings, "Deletion removes your selected Agent management access. A manager with surviving broad access, or an owner using access recovery, must inspect status or restore it afterward.")
-			}
+		if result.DefinedInCurrent {
+			result.Blockers = append(result.Blockers, "defined_in_current")
+		}
+		result.CanApply = len(result.Blockers) == 0
+		if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, true); err != nil {
+			return err
+		}
+		result.Effects.SelectedAgentEdgesRemoved, result.Effects.IneffectiveAssignmentsRemoved, result.Effects.MixedAssignmentsPreserved = grants.Counts()
+		if connection != nil {
+			v := connection.String()
+			result.Effects.SlackConnectionDisconnected = &v
+		}
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM trigger_activations WHERE environment_id=$1 AND agent_id=$2 AND active_until IS NOT NULL AND next_fire_at<active_until`, env, id).Scan(&result.Effects.TriggerActivationsSealed); err != nil {
+			return err
+		}
+		broad := scope
+		broad.AgentID = ""
+		if !current.HasPermission(permission, broad) {
+			result.Warnings = append(result.Warnings, "Deletion removes your selected Agent management access. A manager with surviving broad access, or an owner using access recovery, must inspect status or promote a deployment that includes it afterward.")
 		}
 		if dryRun {
 			return nil
@@ -175,33 +159,29 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		if !result.CanApply {
 			return ErrAgentDeletionBlocked
 		}
-		action := "agent.restored"
-		if !restore {
-			if disconnection != nil {
-				if err = disconnection.Apply(ctx, tx, policy, m.Actor); err != nil {
-					return err
-				}
-			}
-			if err = grants.Apply(ctx, tx); err != nil {
+		if disconnection != nil {
+			if err = disconnection.Apply(ctx, tx, policy, m.Actor); err != nil {
 				return err
 			}
-			result.Effects.TriggerActivationsSealed, err = agent.SealDeletedAgent(ctx, tx, env, id)
-			if err != nil {
-				return err
-			}
-			// Deletion ends the Agent's Sessions; their execution cleanup
-			// continues in the background.
-			if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, false); err != nil {
-				return err
-			}
-			action = "agent.deleted"
 		}
-		if err = tx.QueryRow(ctx, `UPDATE agents SET deleted_at=CASE WHEN $3::boolean THEN NULL ELSE clock_timestamp() END,revision=revision+1 WHERE environment_id=$1 AND id=$2 RETURNING deleted_at,revision`, env, id, restore).Scan(&result.DeletedAt, &result.Revision); err != nil {
+		if err = grants.Apply(ctx, tx); err != nil {
+			return err
+		}
+		result.Effects.TriggerActivationsSealed, err = agent.SealDeletedAgent(ctx, tx, env, id)
+		if err != nil {
+			return err
+		}
+		// Deletion ends the Agent's Sessions; their execution cleanup
+		// continues in the background.
+		if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, false); err != nil {
+			return err
+		}
+		if err = tx.QueryRow(ctx, `UPDATE agents SET deleted_at=clock_timestamp(),revision=revision+1 WHERE environment_id=$1 AND id=$2 RETURNING deleted_at,revision`, env, id).Scan(&result.DeletedAt, &result.Revision); err != nil {
 			return err
 		}
 		result.Changed = true
 		e := result.Effects
-		return audit.Append(ctx, tx, policy, audit.Event{Evidence: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed, SessionsCancelled: e.SessionsCancelled}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: "agent.deleted", TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed, SessionsCancelled: e.SessionsCancelled}})
 	})
 	if errors.Is(err, access.ErrDenied) || slack.IsInstallationDenied(err) {
 		err = ErrPermissionRequired

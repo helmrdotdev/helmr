@@ -58,7 +58,7 @@ func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 	}
 	grant := refreshResult().grant
 	rejectSlackAudit(t, f)
-	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant); err == nil {
+	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant, bindNoTriggers); err == nil {
 		t.Fatal("audit failure allowed grant")
 	}
 	var intact bool
@@ -66,7 +66,7 @@ func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 		t.Fatal(intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_slack_audit ON audit_events`)
-	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant); err != nil {
+	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant, bindNoTriggers); err != nil {
 		t.Fatal(err)
 	}
 	var count int

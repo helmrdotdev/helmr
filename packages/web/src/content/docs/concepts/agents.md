@@ -196,9 +196,9 @@ control work.
 
 Removing an Agent from a Deployment does not delete its identity. Delete is an
 explicit management operation in the Console or [`helmr agent`](/docs/reference/cli/agent).
-Delete requires a signed-in human with `agents.delete` on the Agent; Restore
-requires `agents.restore`. These permissions include the operation’s bounded cleanup
-without requiring assignment or connection management permissions. API keys and Agent runtimes cannot delete or restore Agents.
+Delete requires a signed-in human with `agents.delete` on the Agent. The
+permission includes the operation’s bounded cleanup without requiring assignment
+or connection management permissions. API keys and Agent runtimes cannot delete Agents.
 
 To delete an Agent:
 
@@ -215,8 +215,7 @@ successful preview does not reserve the Agent for deletion.
 Delete retains the Agent identity, immutable Deployment definitions and existing
 Session and Trigger history, subject to their normal retention and viewing
 permissions. It prevents execution through that identity, including child
-Sessions using older pinned definitions. Promoting a Deployment containing a
-deleted Agent fails until the Agent is restored.
+Sessions using older pinned definitions.
 
 Deletion also removes explicit selections of this Agent from Role assignments,
 disconnects its Slack Connection and clears the installation credentials, and
@@ -226,13 +225,14 @@ assignments with no remaining effect are removed. Broad access assignments remai
 in place. If your own access came only from a removed Agent selection, another
 manager with surviving access, or an owner using access recovery, must restore it.
 
-Choose **Deleted agents** in the Console to find an identity and **Restore** it.
-Restore keeps the same Agent ID and removes the deletion mark. It does **not**
-restore removed Role selections, Slack Connections or old schedule backlog.
-Reconfigure that access and reconnect Slack as needed. Broad assignments apply
-again immediately, and an existing parent Session can create children from its
-pinned Deployment as soon as the target Agent is restored. New independent
-Sessions and schedules require promotion of a Deployment containing the Agent.
+To restore a deleted Agent, promote a Deployment that declares it. Promotion
+keeps the same Agent ID, removes the deletion mark and lists the Agent in the
+promotion's `restored_agents`; `deployments.promote` is the only permission it
+needs. Promotion does **not** restore removed Role selections, Slack Connections,
+cancelled Sessions or old schedule backlog. Reconfigure that access and
+reconnect Slack as needed. Broad assignments apply again immediately. Slack
+schedules of the restored Agent wait until a Slack connection is authorized; see
+[Triggers](/docs/concepts/triggers#slack-delivery).
 
 See the [Agent lifecycle API](/docs/reference/api/agents) for previews, revisions
 and concurrent-change errors.

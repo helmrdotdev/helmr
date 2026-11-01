@@ -336,7 +336,6 @@ column computers.origin_deployment_id uuid not null
 column computers.origin_template_id uuid not null
 column computers.preparation_deadline_at timestamp with time zone
 column computers.preparation_failed_at timestamp with time zone
-column computers.preparation_max_age_ms bigint
 column computers.proxy_ca_certificate bytea
 column computers.proxy_ca_not_after timestamp with time zone
 column computers.proxy_ca_private_key_ciphertext bytea
@@ -1047,7 +1046,6 @@ column template_definitions.deployment_id uuid not null
 column template_definitions.disk_bytes bigint
 column template_definitions.environment_id uuid not null
 column template_definitions.image_spec_id uuid not null
-column template_definitions.max_image_age_ms bigint
 column template_definitions.memory_bytes bigint not null
 column template_definitions.network_policy jsonb not null
 column template_definitions.prepare boolean not null default false
@@ -1570,7 +1568,6 @@ constraint computers c CHECK (next_save_seq > 0)
 constraint computers c CHECK (num_nonnulls(proxy_ca_certificate, proxy_ca_not_after, proxy_ca_private_key_nonce, proxy_ca_private_key_ciphertext) = ANY (ARRAY[0, 4]))
 constraint computers c CHECK (octet_length(initial_root_digest) = 32)
 constraint computers c CHECK (preparation_failed_at IS NULL OR initial_root_digest IS NULL AND preparation_deadline_at IS NOT NULL)
-constraint computers c CHECK (preparation_max_age_ms > 0)
 constraint computers c CHECK (proxy_ca_certificate IS NULL OR octet_length(proxy_ca_certificate) >= 1 AND octet_length(proxy_ca_certificate) <= 16384 AND octet_length(proxy_ca_private_key_nonce) = 12 AND octet_length(proxy_ca_private_key_ciphertext) > 0)
 constraint computers c CHECK (storage_reservation_bytes > 0)
 constraint computers c CHECK (storage_reservation_bytes IS NOT NULL OR deleted_at IS NOT NULL)
@@ -2180,7 +2177,6 @@ constraint template_definitions c CHECK (((prepare_network_policy = ANY (ARRAY['
 constraint template_definitions c CHECK (cpu_millis > 0)
 constraint template_definitions c CHECK (delete_after_unused_ms > 0)
 constraint template_definitions c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
-constraint template_definitions c CHECK (max_image_age_ms > 0)
 constraint template_definitions c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
 constraint template_definitions c CHECK (prepare OR prepare_network_policy = '{"kind": "block"}'::jsonb)
 constraint template_definitions c CHECK (refresh_every_ms > 0)

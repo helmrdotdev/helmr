@@ -31,7 +31,7 @@ func newAgentDeleteFixture(t *testing.T) agentDeleteFixture {
 		t.Fatal(err)
 	}
 	f.h.grant(t, f.org, f.user, f.env, "agents.delete")
-	f.h.grant(t, f.org, f.user, f.env, "agents.restore")
+	f.h.grant(t, f.org, f.user, f.env, "agents.read")
 	f.h.grant(t, f.org, f.user, f.env, "sessions.read")
 	f.h.grant(t, f.org, f.user, f.env, "deployments.promote")
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT id FROM agents WHERE environment_id=$1`, f.env).Scan(&f.agent); err != nil {
@@ -57,21 +57,25 @@ func (f agentDeleteFixture) request(t *testing.T, method, path, token, body, rev
 	}
 	return w
 }
-func (f agentDeleteFixture) change(t *testing.T, restore, dry bool, revision string, status int) api.AgentChangeResponse {
+func (f agentDeleteFixture) change(t *testing.T, dry bool, revision string, status int) api.AgentChangeResponse {
 	t.Helper()
-	method, path, body := http.MethodDelete, f.base, ""
-	if restore {
-		method = http.MethodPost
-		path += "/restore"
-		body = `{}`
-		if dry {
-			body = `{"dry_run":true}`
-		}
-	} else if dry {
+	path := f.base
+	if dry {
 		path += "?dry_run=true"
 	}
-	w := f.request(t, method, path, f.token, body, revision, status)
+	w := f.request(t, http.MethodDelete, path, f.token, "", revision, status)
 	var result api.AgentChangeResponse
+	if status == 200 {
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return result
+}
+func (f agentDeleteFixture) promote(t *testing.T, token string, status int) api.DeploymentResponse {
+	t.Helper()
+	w := f.request(t, http.MethodPost, "/api/projects/deployments/environments/staging/deployments/"+f.dep.String()+"/promote", token, `{}`, "", status)
+	var result api.DeploymentResponse
 	if status == 200 {
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
@@ -89,7 +93,7 @@ func (f agentDeleteFixture) selectedGrant(t *testing.T, permissions []string, ag
 	}
 	return grant
 }
-func TestAgentDeleteRestoreHTTP(t *testing.T) {
+func TestAgentDeleteAndPromotionRestoreHTTP(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	sibling := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'sibling')`, f.env, sibling)
@@ -102,12 +106,12 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE slack_app_registrations SET client_id='test-client',app_id='test-app',credential_ciphertext=decode(repeat('11',16),'hex'),credential_nonce=decode(repeat('22',12),'hex'),credential_revision=1 WHERE id=$1; INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$1,$3,'test-app','test-team','test-bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),'{}',$4); UPDATE slack_connections SET slack_installation_id=$2 WHERE id=$5`, pgx.QueryExecModeSimpleProtocol, registration, installation, f.org, f.user, connection)
 	activation := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) VALUES($1,$2,$3,'daily','* * * * *','UTC','[]'); INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,active_until,next_fire_at) VALUES($1,$4,$2,$3,'daily',clock_timestamp()-interval '2 minutes',clock_timestamp()-interval '1 second',clock_timestamp()-interval '1 minute')`, pgx.QueryExecModeSimpleProtocol, f.env, f.agent, f.dep, activation)
-	preview := f.change(t, false, true, "", 200)
+	preview := f.change(t, true, "", 200)
 	if !preview.CanApply || preview.Changed || preview.Effects.SelectedAgentEdgesRemoved != 3 || preview.Effects.IneffectiveAssignmentsRemoved != 1 || preview.Effects.MixedAssignmentsPreserved != 1 || preview.Effects.SlackConnectionDisconnected == nil {
 		t.Fatalf("preview %+v", preview)
 	}
-	f.change(t, false, false, "", 428)
-	result := f.change(t, false, false, "1", 200)
+	f.change(t, false, "", 428)
+	result := f.change(t, false, "1", 200)
 	if !result.Changed || result.DeletedAt == nil || result.Revision != 2 || result.Effects.TriggerActivationsSealed != 1 {
 		t.Fatalf("delete %+v", result)
 	}
@@ -120,48 +124,56 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	}
 	f.request(t, http.MethodGet, f.base+"/status", f.token, "", "", 200)
 	f.request(t, http.MethodGet, strings.TrimSuffix(f.base, "/daily-report")+"?view=deleted", f.token, "", "", 200)
-	f.request(t, http.MethodPost, "/api/projects/deployments/environments/staging/deployments/"+f.dep.String()+"/promote", f.token, `{}`, "", 409)
-	if r := f.change(t, false, false, "2", 200); r.Changed || r.Revision != 2 {
+	if r := f.change(t, false, "2", 200); r.Changed || r.Revision != 2 {
 		t.Fatalf("noop %+v", r)
 	}
-	f.change(t, true, true, "", 200)
-	if r := f.change(t, true, false, "2", 200); !r.Changed || r.DeletedAt != nil || r.Revision != 3 {
-		t.Fatalf("restore %+v", r)
+	// Promoting a Deployment that declares the deleted Agent restores its identity.
+	if r := f.promote(t, f.token, 200); len(r.RestoredAgents) != 1 || r.RestoredAgents[0] != "daily-report" || len(r.WaitingTriggers) != 0 {
+		t.Fatalf("promotion receipt %+v", r)
 	}
-	f.change(t, false, false, "1", 412)
-	f.request(t, http.MethodPost, f.base+"/restore", f.token, "", "3", 200)
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT (SELECT deleted_at IS NULL AND revision=3 FROM agents WHERE id=$1) AND (SELECT count(*)=1 FROM audit_events WHERE action='agent.restored' AND target_id=$1 AND deployment_id=$2 AND (details->>'revision')::bigint=3)`, f.agent, f.dep).Scan(&good); err != nil || !good {
+		t.Fatalf("restoration %v %v", good, err)
+	}
+	if r := f.promote(t, f.token, 200); len(r.RestoredAgents) != 0 {
+		t.Fatalf("second promotion restored again %+v", r)
+	}
+	f.change(t, false, "1", 412)
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT disconnected_at IS NOT NULL AND credential_ciphertext IS NULL AND credential_nonce IS NULL FROM slack_installations WHERE id=$1`, installation).Scan(&good); err != nil || !good {
 		t.Fatalf("installation credential resurrection %v %v", good, err)
 	}
 
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT (SELECT revoked_at IS NOT NULL FROM slack_connections WHERE id=$1) AND NOT EXISTS(SELECT 1 FROM role_grant_agents WHERE agent_id=$2) AND (SELECT next_fire_at=active_until FROM trigger_activations WHERE id=$3)`, connection, f.agent, activation).Scan(&good); err != nil || !good {
-		t.Fatalf("restore resurrected effects: %v %v", good, err)
+		t.Fatalf("restoration resurrected effects: %v %v", good, err)
+	}
+	// Grants removed at deletion stay removed after restoration.
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM role_grants WHERE id=$1) AND NOT EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=ANY($2::uuid[]) AND agent_id=$3)`, pure, []uuid.UUID{mixed, multi}, f.agent).Scan(&good); err != nil || !good {
+		t.Fatalf("restoration restored grants: %v %v", good, err)
 	}
 }
 
 func TestAgentDeletePrerequisitesAndRollback(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, f.dep)
-	if r := f.change(t, false, true, "", 200); r.CanApply || len(r.Blockers) != 1 || r.Blockers[0].Code != "defined_in_current" {
+	if r := f.change(t, true, "", 200); r.CanApply || len(r.Blockers) != 1 || r.Blockers[0].Code != "defined_in_current" {
 		t.Fatalf("defined %+v", r)
 	}
-	f.change(t, false, false, "1", 409)
+	f.change(t, false, "1", 409)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
 	sess := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$2,0,$5)`, f.env, sess, f.agent, f.dep, f.user)
 	// An open Session does not block deletion; the preview counts it.
-	if r := f.change(t, false, true, "", 200); !r.CanApply || len(r.Blockers) != 0 || r.Effects.SessionsCancelled != 1 {
+	if r := f.change(t, true, "", 200); !r.CanApply || len(r.Blockers) != 0 || r.Effects.SessionsCancelled != 1 {
 		t.Fatalf("live %+v", r)
 	}
 	grant := f.selectedGrant(t, []string{"sessions.create"}, f.agent)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.deleted' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_agent_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()`)
-	f.change(t, false, false, "1", 500)
+	f.change(t, false, "1", 500)
 	var intact bool
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT (SELECT deleted_at IS NULL AND revision=1 FROM agents WHERE id=$1) AND EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=$2 AND agent_id=$1) AND (SELECT status='open' FROM sessions WHERE id=$3)`, f.agent, grant, sess).Scan(&intact); err != nil || !intact {
 		t.Fatalf("partial cleanup %v %v", intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.h.pool, `DROP TRIGGER reject_agent_audit ON audit_events`)
-	if r := f.change(t, false, false, "1", 200); !r.Changed || r.Effects.SessionsCancelled != 1 {
+	if r := f.change(t, false, "1", 200); !r.Changed || r.Effects.SessionsCancelled != 1 {
 		t.Fatalf("delete %+v", r)
 	}
 	var cancelled bool
@@ -181,15 +193,14 @@ func TestAgentDeleteScopedManagerVisibilityAndSelfLockout(t *testing.T) {
 	scoped.selectedGrant(t, []string{"agents.delete"}, f.agent)
 	sess := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$2,0,$5)`, f.env, sess, f.agent, f.dep, f.user)
-	preview := scoped.change(t, false, true, "", 200)
+	preview := scoped.change(t, true, "", 200)
 	if !preview.CanApply || len(preview.Blockers) != 0 || preview.Effects.SessionsCancelled != 1 || len(preview.Warnings) != 1 {
 		t.Fatalf("scoped preview %+v", preview)
 	}
-	scoped.change(t, false, false, "1", 200)
-	scoped.change(t, true, true, "", 404)
+	scoped.change(t, false, "1", 200)
 	scoped.request(t, http.MethodGet, f.base+"/status", token, "", "", 404)
-	f.change(t, true, false, "2", 200)
-	scoped.change(t, false, true, "", 404)
+	f.promote(t, f.token, 200)
+	scoped.change(t, true, "", 404)
 }
 
 func TestAgentLifecycleRequiresOnlyItsDedicatedPermission(t *testing.T) {
@@ -199,15 +210,17 @@ func TestAgentLifecycleRequiresOnlyItsDedicatedPermission(t *testing.T) {
 	f.h.grant(t, f.org, user, f.env, "agents.delete")
 	token := f.h.session(t, user, f.org)
 	f.request(t, http.MethodDelete, f.base+"?dry_run=true", token, "", "", 200)
-	f.request(t, http.MethodPost, f.base+"/restore", token, `{"dry_run":true}`, "", 403)
-	restorer := f.h.user(t, "Agent restorer")
-	f.h.member(t, f.org, restorer, "member")
-	f.h.grant(t, f.org, restorer, f.env, "agents.restore")
-	restoreToken := f.h.session(t, restorer, f.org)
-	f.request(t, http.MethodDelete, f.base+"?dry_run=true", restoreToken, "", "", 403)
+	f.promote(t, token, 403)
+	promoter := f.h.user(t, "Deployment promoter")
+	f.h.member(t, f.org, promoter, "member")
+	f.h.grant(t, f.org, promoter, f.env, "deployments.promote")
+	promoteToken := f.h.session(t, promoter, f.org)
+	f.request(t, http.MethodDelete, f.base+"?dry_run=true", promoteToken, "", "", 404)
 	f.request(t, http.MethodDelete, f.base, token, "", "1", 200)
-	f.request(t, http.MethodPost, f.base+"/restore", restoreToken, `{"dry_run":true}`, "", 200)
-	f.request(t, http.MethodPost, f.base+"/restore", restoreToken, `{}`, "2", 200)
+	// The promote permission alone restores the Agents a Deployment declares.
+	if r := f.promote(t, promoteToken, 200); len(r.RestoredAgents) != 1 {
+		t.Fatalf("promoter did not restore %+v", r)
+	}
 	admin := f.h.user(t, "Access manager")
 	f.h.member(t, f.org, admin, "admin")
 	f.request(t, http.MethodDelete, f.base+"?dry_run=true", f.h.session(t, admin, f.org), "", "", 404)
@@ -215,8 +228,6 @@ func TestAgentLifecycleRequiresOnlyItsDedicatedPermission(t *testing.T) {
 		f.request(t, http.MethodDelete, f.base+query, f.token, "", "1", 400)
 	}
 	f.request(t, http.MethodDelete, f.base, f.token, `{}`, "1", 400)
-	f.request(t, http.MethodPost, f.base+"/restore", f.token, `{"unexpected":true}`, "1", 400)
-	f.request(t, http.MethodPost, f.base+"/restore?dry_run=true", f.token, `{}`, "1", 400)
 	_, foreign := f.h.organizationOwner(t, "foreign-delete")
 	f.request(t, http.MethodDelete, f.base+"?dry_run=true", foreign, "", "", 400)
 }
@@ -224,7 +235,11 @@ func TestAgentLifecycleRequiresOnlyItsDedicatedPermission(t *testing.T) {
 func TestAgentDeleteSerializesPromotion(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	start := make(chan struct{})
-	results := make(chan int, 2)
+	type outcome struct {
+		operation string
+		code      int
+	}
+	results := make(chan outcome, 2)
 	for _, operation := range []string{"delete", "promote"} {
 		go func() {
 			<-start
@@ -239,13 +254,18 @@ func TestAgentDeleteSerializesPromotion(t *testing.T) {
 			r.Header.Set("If-Match", `"1"`)
 			w := httptest.NewRecorder()
 			f.h.handler.ServeHTTP(w, r)
-			results <- w.Code
+			results <- outcome{operation, w.Code}
 		}()
 	}
 	close(start)
-	a, b := <-results, <-results
-	if !((a == 200 && b == 409) || (a == 409 && b == 200)) {
-		t.Fatalf("race outcomes %d %d", a, b)
+	codes := map[string]int{}
+	for range 2 {
+		r := <-results
+		codes[r.operation] = r.code
+	}
+	// Deletion first is undone by the promotion; promotion first blocks deletion.
+	if codes["promote"] != 200 || codes["delete"] != 200 && codes["delete"] != 409 {
+		t.Fatalf("race outcomes %v", codes)
 	}
 	var consistent bool
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT NOT (a.deleted_at IS NOT NULL AND e.current_deployment_id IS NOT DISTINCT FROM $3) FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.id=$2`, f.env, f.agent, f.dep).Scan(&consistent); err != nil || !consistent {
@@ -253,13 +273,17 @@ func TestAgentDeleteSerializesPromotion(t *testing.T) {
 	}
 }
 
-func TestDeletedAgentPromotionReportsKeysBeforeSlackPreflight(t *testing.T) {
+func TestPromotionRestoresDeletedAgentWithWaitingSlackTrigger(t *testing.T) {
 	f := newAgentDeleteFixture(t)
-	f.change(t, false, false, "1", 200)
+	f.change(t, false, "1", 200)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input,slack_channel_id) VALUES($1,$2,$3,'daily','* * * * *','UTC','[]','CEXAMPLE')`, f.env, f.agent, f.dep)
-	w := f.request(t, http.MethodPost, "/api/projects/deployments/environments/staging/deployments/"+f.dep.String()+"/promote", f.token, `{}`, "", 409)
-	if !strings.Contains(w.Body.String(), `"agent_deleted"`) || !strings.Contains(w.Body.String(), `"agents":["daily-report"]`) || !strings.Contains(w.Body.String(), `"count":1`) {
-		t.Fatalf("missing blockers: %s", w.Body)
+	r := f.promote(t, f.token, 200)
+	if len(r.RestoredAgents) != 1 || r.RestoredAgents[0] != "daily-report" || len(r.WaitingTriggers) != 1 || r.WaitingTriggers[0] != (api.WaitingTrigger{Agent: "daily-report", Trigger: "daily"}) {
+		t.Fatalf("promotion receipt %+v", r)
+	}
+	var waiting bool
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT slack_channel_binding_id IS NULL FROM trigger_activations WHERE environment_id=$1 AND agent_id=$2 AND trigger_key='daily' AND active_until IS NULL`, f.env, f.agent).Scan(&waiting); err != nil || !waiting {
+		t.Fatalf("waiting activation %v %v", waiting, err)
 	}
 }
 
@@ -325,7 +349,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 			if w.Code != 409 || !strings.Contains(w.Body.String(), "agent_dependencies_changed") {
 				t.Fatalf("new dependency not rejected: %d %s", w.Code, w.Body)
 			}
-			f.change(t, false, false, "1", 200)
+			f.change(t, false, "1", 200)
 		})
 	}
 }
@@ -337,8 +361,8 @@ func TestAgentDeleteInvalidatesGrantEditorsAndPreservesEmptyMixedGrant(t *testin
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT role_id FROM role_grants WHERE id=$1`, grant).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
-	f.change(t, false, false, "1", 200)
-	f.change(t, true, false, "2", 200)
+	f.change(t, false, "1", 200)
+	f.promote(t, f.token, 200)
 	input := map[string]any{"role_id": role, "expected_role_revision": 1, "subject": map[string]any{"type": "member", "member_id": f.member}, "project_id": f.project, "environment_id": f.env, "agents_mode": "selected", "agent_ids": []uuid.UUID{f.agent}}
 	body, _ := json.Marshal(input)
 	f.request(t, http.MethodPatch, "/api/role-grants/"+grant.String(), f.token, string(body), "1", 412)

@@ -16,7 +16,7 @@ export interface TemplateManifest {
   readonly network: NetworkPolicy
   readonly prepareNetwork?: NetworkPolicy
   readonly prepare: boolean
-  readonly refresh?: { readonly everyMs: number; readonly maxAgeMs?: number }
+  readonly refresh?: { readonly everyMs: number }
   readonly secrets: readonly SecretBinding[]
   readonly prepareSecrets: readonly SecretBinding[]
 }
@@ -139,12 +139,12 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     validatePolicyOrigins(network,secrets,`${definition.id}.secrets`)
     validatePolicyOrigins(definition.prepare === undefined ? {blockAll:true} : prepareNetwork ?? network,prepareSecrets,`${definition.id}.prepareSecrets`)
     const refresh = definition.refresh
-    if (refresh !== undefined) assertMembers(refresh, ["every", "maxAge"], "Computer refresh")
+    if (refresh !== undefined) assertMembers(refresh, ["every"], "Computer refresh")
     return { kind: "template", declaredId: definition.id, manifest: {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
       prepare: definition.prepare !== undefined, network, ...(prepareNetwork === undefined ? {} : { prepareNetwork }),
       deleteAfterUnusedMs: retention(definition.deleteAfterUnused, DEFAULT_RETENTION, "deleteAfterUnused"),
-      ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every"), ...(refresh.maxAge === undefined ? {} : { maxAgeMs: duration(refresh.maxAge, "refresh.maxAge") }) } }),
+      ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every") } }),
       secrets, prepareSecrets,
     } }
   })

@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/jackc/pgx/v5"
@@ -244,6 +245,80 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// A trigger that declares a Slack channel and has no binding waits for Slack:
+// its instant is rejected, the cursor advances and no Session starts without
+// the declared destination.
+func TestTriggerWaitingForSlackRejectsInstantWithoutSession(t *testing.T) {
+	f := newAdmissionFixture(t)
+	due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
+	trigger := seedTrigger(t, f, due)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers SET slack_channel_id='C1' WHERE environment_id=$1 AND agent_id=$2 AND key='daily'`, f.env, f.agent)
+	var sessions int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1`, f.env).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, trigger); err != nil {
+		t.Fatal(err)
+	}
+	var rejectedAt time.Time
+	if err := f.pool.QueryRow(t.Context(), `SELECT scheduled_at FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2 AND disposition='rejected' AND reason='slack_not_connected' AND session_id IS NULL AND turn_id IS NULL`, f.env, trigger).Scan(&rejectedAt); err != nil {
+		t.Fatalf("waiting instant was not rejected: %v", err)
+	}
+	var advanced bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT next_fire_at>$3 FROM trigger_activations WHERE environment_id=$1 AND id=$2)
+ AND (SELECT count(*) FROM sessions WHERE environment_id=$1)=$4
+ AND NOT EXISTS(SELECT 1 FROM slack_threads WHERE environment_id=$1)`, f.env, trigger, rejectedAt, sessions).Scan(&advanced); err != nil || !advanced {
+		t.Fatalf("waiting instant started work or kept its cursor: %v %v", advanced, err)
+	}
+	// The rejected instant never fires later, even after a binding appears.
+	_, channel := slackRouteFixture(t, f)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET slack_channel_binding_id=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, channel)
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.env, trigger); err != nil {
+		t.Fatal(err)
+	}
+	var once bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(disposition='rejected') FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2 AND scheduled_at=$3`, f.env, trigger, rejectedAt).Scan(&once); err != nil || !once {
+		t.Fatalf("rejected instant replayed: %v %v", once, err)
+	}
+}
+
+// Authorizing a Slack connection binds the Agent's open schedules that wait
+// for Slack or are bound to a revoked connection, in place. Schedules without
+// a Slack channel and closed activations are left alone.
+func TestSlackAuthorizationBindsWaitingAndRevokedSchedules(t *testing.T) {
+	f := newAdmissionFixture(t)
+	_, current := slackRouteFixture(t, f)
+	var connection uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT connection_id FROM slack_channel_bindings WHERE id=$1`, current).Scan(&connection); err != nil {
+		t.Fatal(err)
+	}
+	revoked, revokedBinding := uuid.NewV7(), uuid.NewV7()
+	waiting, pinned, plain, closed := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,created_by_user_id,retired_at) SELECT transport,$12,org_id,'old-app','old-client',1,created_by_user_id,clock_timestamp() FROM slack_app_registrations WHERE id=(SELECT slack_app_registration_id FROM slack_connections WHERE id=$3);
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,granted_scopes,connected_by_user_id,disconnected_at) SELECT $13,$12,org_id,'old-app',team_id,'old-bot',1,granted_scopes,connected_by_user_id,clock_timestamp() FROM slack_installations WHERE id=(SELECT slack_installation_id FROM slack_connections WHERE id=$3);
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id,revoked_at) SELECT $2,environment_id,agent_id,$12,$13,created_by_user_id,org_id,clock_timestamp() FROM slack_connections WHERE id=$3;
+ INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $4,environment_id,$2,$13,org_id,team_id,'C2' FROM slack_channel_bindings WHERE id=$5;
+ INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input,slack_channel_id) VALUES($1,$6,$7,'waiting','* * * * *','UTC','[]','C1'),($1,$6,$7,'pinned','* * * * *','UTC','[]','C2'),($1,$6,$7,'plain','* * * * *','UTC','[]',NULL);
+ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,active_until,next_fire_at,slack_channel_binding_id) VALUES
+ ($1,$8,$6,$7,'waiting',clock_timestamp(),NULL,clock_timestamp()+interval '1 minute',NULL),
+ ($1,$9,$6,$7,'pinned',clock_timestamp(),NULL,clock_timestamp()+interval '1 minute',$4),
+ ($1,$10,$6,$7,'plain',clock_timestamp(),NULL,clock_timestamp()+interval '1 minute',NULL),
+ ($1,$11,$6,$7,'waiting',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '1 minute',clock_timestamp()-interval '1 minute',NULL)`, pgx.QueryExecModeSimpleProtocol, f.env, revoked, connection, revokedBinding, current, f.agent, f.deployment, waiting, pinned, plain, closed, uuid.NewV7(), uuid.NewV7())
+	var before time.Time
+	if err := f.pool.QueryRow(t.Context(), `SELECT next_fire_at FROM trigger_activations WHERE environment_id=$1 AND id=$2`, f.env, waiting).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error { return agent.BindSlackTriggers(t.Context(), tx, f.env, f.agent) }); err != nil {
+		t.Fatal(err)
+	}
+	var bound bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT slack_channel_binding_id=$3 AND active_until IS NULL AND next_fire_at=$7 FROM trigger_activations WHERE environment_id=$1 AND id=$2)
+ AND (SELECT b.connection_id=$5 AND b.slack_channel_id='C2' FROM trigger_activations a JOIN slack_channel_bindings b ON b.id=a.slack_channel_binding_id WHERE a.environment_id=$1 AND a.id=$4)
+ AND (SELECT bool_and(slack_channel_binding_id IS NULL) FROM trigger_activations WHERE environment_id=$1 AND id=ANY($6::uuid[]))`, f.env, waiting, current, pinned, connection, []uuid.UUID{plain, closed}, before).Scan(&bound); err != nil || !bound {
+		t.Fatalf("binding: %v %v", bound, err)
 	}
 }
 

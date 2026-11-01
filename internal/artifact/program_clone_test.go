@@ -13,7 +13,7 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	a.CloseAfterIdleMs = new(int64(200))
 	c := index.Definitions[2].Template
 	c.Resources.DiskMiB = new(int64(500))
-	c.Refresh = &definition.ComputerRefresh{EveryMs: 1000, MaxAgeMs: new(int64(2000))}
+	c.Refresh = &definition.ComputerRefresh{EveryMs: 1000}
 	c.Seed.Config.Env = []string{"KEY=value"}
 	c.Seed.Config.Cmd = []string{"true"}
 	c.Seed.Config.Entrypoint = []string{"sh"}
@@ -28,7 +28,6 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	cc := clone.Definitions[2].Template
 	*cc.Resources.DiskMiB = 501
 	cc.Refresh.EveryMs = 1001
-	*cc.Refresh.MaxAgeMs = 2001
 	cc.Seed.Config.Env[0] = "changed"
 	cc.Seed.Config.Cmd[0] = "changed"
 	cc.Seed.Config.Entrypoint[0] = "changed"

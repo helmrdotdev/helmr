@@ -8,12 +8,12 @@ async function choose(page: Page, menu: string, item: string) {
   await page.getByRole("menu", { name: menu }).getByRole("menuitem", { name: item, exact: true }).click();
 }
 
-test("Agent deletion previews prerequisites, cancels open Sessions and restores retained identity without redeploying", async ({ page }, testInfo) => {
+test("Agent deletion previews prerequisites, cancels open Sessions and promotion restores the retained identity", async ({ page }, testInfo) => {
   await page.goto("/dev/login");
   const { scope, base, environmentID, environmentInternalID, deploymentID } = await createAgentCatalog(page);
   const { current_member: me } = await (await page.request.get("/api/organization")).json();
   const targets = await (await page.request.get("/api/projects/console-demo/access-targets")).json();
-  const roleResponse = await page.request.post("/api/roles", { data: { name: `Deletion ${crypto.randomUUID()}`, permissions: ["agents.read", "agents.delete", "agents.restore", "sessions.create", "sessions.read", "deployments.promote"] } });
+  const roleResponse = await page.request.post("/api/roles", { data: { name: `Deletion ${crypto.randomUUID()}`, permissions: ["agents.read", "agents.delete", "sessions.create", "sessions.read", "deployments.promote"] } });
   expect(roleResponse.ok(), await roleResponse.text()).toBeTruthy();
   const role = await roleResponse.json();
   const grant = await page.request.post("/api/role-grants", { data: { role_id: role.id, expected_role_revision: role.revision, subject: { type: "member", member_id: me.id }, project_id: targets.project_id, environment_id: environmentInternalID, agents_mode: "all", agent_ids: [] } });
@@ -38,8 +38,12 @@ test("Agent deletion previews prerequisites, cancels open Sessions and restores 
   await expect(dialog.getByRole("button", { name: "Delete agent", exact: true })).toBeEnabled();
   const concurrentDelete = await page.request.delete(`${base}/agents/browser-agent`, { headers: { "If-Match": '\"1\"' } });
   expect(concurrentDelete.ok(), await concurrentDelete.text()).toBeTruthy();
-  const concurrentRestore = await page.request.post(`${base}/agents/browser-agent/restore`, { headers: { "If-Match": '\"2\"' }, data: {} });
-  expect(concurrentRestore.ok(), await concurrentRestore.text()).toBeTruthy();
+  // Promoting a deployment that declares the Agent restores it, then the empty deployment becomes current again.
+  const restoring = await page.request.post(`${base}/deployments/${deploymentID}/promote`, { data: {} });
+  expect(restoring.ok(), await restoring.text()).toBeTruthy();
+  expect((await restoring.json()).restored_agents).toEqual(["browser-agent"]);
+  const repromoted = await page.request.post(`${base}/deployments/${emptyDeployment}/promote`, { data: {} });
+  expect(repromoted.ok(), await repromoted.text()).toBeTruthy();
   await dialog.getByRole("button", { name: "Delete agent", exact: true }).click();
   await expect(dialog).toContainText("Refresh this preview before trying again");
   await expect(dialog.getByRole("button", { name: "Delete agent", exact: true })).toBeDisabled();
@@ -50,7 +54,6 @@ test("Agent deletion previews prerequisites, cancels open Sessions and restores 
   await dialog.getByRole("button", { name: "Delete agent", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await page.getByRole("button", { name: "Agent actions", exact: true }).click();
-  await expect(page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Restore", exact: true })).toBeVisible();
   await expect(page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Delete agent", exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
   let status = await (await page.request.get(`${base}/agents/browser-agent/status`)).json();
@@ -59,22 +62,16 @@ test("Agent deletion previews prerequisites, cancels open Sessions and restores 
   const history = await page.request.get(`${base}/sessions/${session.session_id}`);
   expect(history.ok(), await history.text()).toBeTruthy();
   expect((await history.json()).status).toBe("closed");
-  const blocked = await page.request.post(`${base}/deployments/${deploymentID}/promote`, { data: {} });
-  expect(blocked.status()).toBe(409);
-  await page.goto(`/agents?${scope}`);
-  await page.getByRole("button", { name: "Deleted agents", exact: true }).click();
-  await page.getByRole("link", { name: "browser-agent", exact: true }).click();
-  await choose(page, "Agent actions", "Restore");
-  await expect(dialog).toContainText("will not be restored");
-  await dialog.getByRole("button", { name: "Restore agent", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
+  const restored = await page.request.post(`${base}/deployments/${deploymentID}/promote`, { data: {} });
+  expect(restored.ok(), await restored.text()).toBeTruthy();
+  expect((await restored.json()).restored_agents).toEqual(["browser-agent"]);
+  await page.reload();
   await page.getByRole("button", { name: "Agent actions", exact: true }).click();
   await expect(page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Delete agent", exact: true })).toBeVisible();
-  await expect(page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Restore", exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
   status = await (await page.request.get(`${base}/agents/browser-agent/status`)).json();
   expect(status.revision).toBe(5);
   expect(status.deleted_at).toBeNull();
-  expect(status.defined_in_current).toBe(false);
+  expect(status.defined_in_current).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("restored-agent.png"), fullPage: true });
 });

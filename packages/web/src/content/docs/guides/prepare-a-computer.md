@@ -114,13 +114,13 @@ they run go in `secrets`, not `prepareSecrets`.
 ## Limit the prepared image's age
 
 ```ts
-refresh: { every: "1d", maxAge: "7d" },
+refresh: { every: "1d" },
 ```
 
-With `maxAge`, a new Computer does not start from a prepared image older than that;
-Helmr prepares a fresh one first. Both fields are durations, and `every` is
-required. In this release Helmr does not re-prepare images in the background
-on the `every` interval; see [Computers](/docs/concepts/computers).
+After promotion, Helmr re-prepares the image in the background about once per
+`every` interval. A new Computer does not start from a prepared image older than
+three intervals (three days here); Helmr prepares a fresh one first. `every` is a
+duration. See [Computers](/docs/concepts/computers#refresh).
 
 ## Roll out a change
 

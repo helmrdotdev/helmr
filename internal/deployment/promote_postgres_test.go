@@ -106,7 +106,10 @@ func TestTriggerCutoverOwnsExactBoundary(t *testing.T) {
 	}
 	cutover := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
 	for range 2 {
-		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error { return reconcileTriggers(t.Context(), tx, r.EnvironmentID, r.ID, cutover, nil) }); err != nil {
+		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+			_, err := reconcileTriggers(t.Context(), tx, r.EnvironmentID, r.ID, cutover, nil)
+			return err
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -218,7 +221,8 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 	for i, deployment := range []uuid.UUID{first.ID, second.ID, first.ID} {
 		cutover := base.Add(time.Duration(i)*time.Minute + 30*time.Second)
 		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-			return reconcileTriggers(t.Context(), tx, first.EnvironmentID, deployment, cutover, nil)
+			_, err := reconcileTriggers(t.Context(), tx, first.EnvironmentID, deployment, cutover, nil)
+			return err
 		}); err != nil {
 			t.Fatal(err)
 		}

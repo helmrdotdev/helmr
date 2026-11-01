@@ -65,7 +65,7 @@ func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 			p.Definitions[0].Agent.Triggers["nightly"] = v
 		},
 		"invalid disk":             func(p *BuildPlan) { p.Definitions[1].Template.Resources.DiskMiB = new(int64(0)) },
-		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Template.Refresh.MaxAgeMs = new(int64(0)) },
+		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Template.Refresh.EveryMs = 0 },
 		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Template.Secrets = nil },
 		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Template.PrepareSecrets = nil },
 		"invalid build Secret": func(p *BuildPlan) {

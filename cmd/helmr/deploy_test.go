@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestDeployReporterEmitsObjectTransferProgress(t *testing.T) {
 	}
 }
 
-func TestDeployJSONEmitsPromotedDeploymentResult(t *testing.T) {
+func TestDeployReportsPromotedDeploymentResult(t *testing.T) {
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	createdAt := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -191,6 +192,8 @@ func TestDeployJSONEmitsPromotedDeploymentResult(t *testing.T) {
 		case "/v1/deployments/" + deploymentID + "/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: createdAt,
+				RestoredAgents:  []string{"reporter"},
+				WaitingTriggers: []api.WaitingTrigger{{Agent: "reporter", Trigger: "daily"}},
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -219,8 +222,21 @@ func TestDeployJSONEmitsPromotedDeploymentResult(t *testing.T) {
 		}
 	}
 	if result.Type != "deployment_result" || result.Phase != "promoted" ||
-		result.Deployment == nil || result.Deployment.ID != deploymentID {
+		result.Deployment == nil || result.Deployment.ID != deploymentID ||
+		!slices.Equal(result.Deployment.RestoredAgents, []string{"reporter"}) || len(result.Deployment.WaitingTriggers) != 1 {
 		t.Fatalf("deployment_result = %+v", result)
+	}
+
+	var text bytes.Buffer
+	cmd = newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&text)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text.String(), "Restored Agent reporter\n") || !strings.Contains(text.String(), "Trigger reporter/daily waits for a Slack connection of its Agent\n") {
+		t.Fatalf("text receipt = %q", text.String())
 	}
 }
 
@@ -292,22 +308,27 @@ func TestDeploymentPromote(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 			ID: deploymentID, Version: "v-test", CreatedAt: time.Now(),
+			RestoredAgents:  []string{"reporter"},
+			WaitingTriggers: []api.WaitingTrigger{{Agent: "reporter", Trigger: "daily"}},
 		})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
+	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"deployment", "promote", deploymentID})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "v-test\n" {
 		t.Fatalf("output = %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Restored Agent reporter\n") || !strings.Contains(errOut.String(), "Trigger reporter/daily waits for a Slack connection of its Agent\n") {
+		t.Fatalf("receipt = %q", errOut.String())
 	}
 }
 

@@ -78,7 +78,8 @@ Helmr does not backfill missed occurrences:
 - Times when the Environment had no promoted Deployment containing the
   trigger are never run.
 - An occurrence that cannot be admitted, for example because its Slack
-  channel is no longer available, is recorded as rejected and is not retried.
+  channel is no longer available or the trigger waits for a Slack connection,
+  is recorded as rejected and is not retried.
   When current Worker capacity cannot be confirmed, Helmr retries within that
   five-minute window. If it remains unavailable, the occurrence is missed; it
   does not run later when capacity returns. Persistent failures can require
@@ -94,9 +95,22 @@ does not mean the scheduled work has started.
 
 With `slack: { channelId: "C0123456789" }`, each fire opens a new thread in
 that channel and binds the Session to it. `channelId` is a raw Slack channel
-ID. Promotion checks that the Agent's Slack app is connected and can use the
-channel, then pins that connection for the trigger. If the connection is later
-replaced, promote again. See [Slack](/docs/concepts/slack).
+ID. When the Agent has a Slack connection, promotion checks that it can use
+the channel and binds the trigger to that connection. A connection that has
+lost authorization or lacks the scopes for the channel fails promotion with
+`target_not_published`; a channel the app cannot use, or a Helmr installation
+without Slack configured, fails it with `channel_unavailable`.
+
+When the Agent has no authorized Slack connection, because none was set up
+yet, setup has not been authorized, or the last one was disconnected, promotion still succeeds and the trigger waits for
+Slack. The promotion lists it in `waiting_triggers`, and
+`helmr deploy` and `helmr deployment promote` print it. While it waits, each
+scheduled time is recorded as `rejected` with reason `slack_not_connected`
+and never runs later. Authorizing a Slack connection for the Agent binds its
+waiting triggers, and those bound to a disconnected connection, to the new
+connection without another promotion. This binding does not check the
+channel; a channel problem shows in the delivery result of the first scheduled
+Session. See [Slack](/docs/concepts/slack).
 
 ## Changing triggers
 
@@ -130,8 +144,8 @@ Each activation links to its Deployment and recorded occurrence outcomes:
 
 Deleting an Agent seals unfinished historical activations. A due occurrence can
 be recorded as `missed` with reason `agent_deleted`; this does not imply that
-future scheduled times ran. Restoring the Agent does not replay the backlog.
-Promote a Deployment containing the restored Agent to activate new schedules.
+future scheduled times ran. Promoting a Deployment that declares the Agent
+restores it and activates its schedules; the backlog is not replayed.
 
 Use `helmr trigger list --agent AGENT` or `client.triggers.list({ agent: "support" })`
 to filter by the identifier declared in code. In TypeScript, retrieve one activation

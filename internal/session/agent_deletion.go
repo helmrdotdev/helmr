@@ -7,7 +7,7 @@ import (
 	"uuid"
 )
 
-var ErrAgentDeleted = errors.New("agent is deleted; restore it before execution")
+var ErrAgentDeleted = errors.New("agent is deleted; promote a deployment that includes it before execution")
 
 func requireAgentAvailable(ctx context.Context, q db.DBTX, env, agent uuid.UUID) error {
 	var deleted bool

@@ -9,14 +9,14 @@ const compile = (...exports: ReturnType<typeof entry>[]) => analyze({ architectu
 describe("Agent declaration analysis", () => {
   test("bundles inline Computer and all execution functions without running them", () => {
     const prepare = () => { throw new Error("prepare executed during compilation") }
-    const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
+    const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
     expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", hasInit: true, inputKind: "text", maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, hibernateAfterIdleMs: null, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
     const declaration = result.buildPlan.definitions[1]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })
-    expect(declaration.manifest.refresh).toEqual({ everyMs: 3600000, maxAgeMs: 86400000 })
+    expect(declaration.manifest.refresh).toEqual({ everyMs: 3600000 })
     expect(declaration.manifest.prepareSecrets).toEqual([])
     expect(JSON.parse(new TextDecoder().decode(result.definitionIndexBytes)).templates).toEqual([{ id: "machine", modulePath: "helmr/app/entry-0.mjs", exportName: "worker", throughAgent: true }])
     const frame = successfulVerificationResult(result)
@@ -47,7 +47,7 @@ describe("Agent declaration analysis", () => {
   })
   test("rejects misspelled policy fields and preserves explicit cron identity", () => {
     const worker = agent({ id: "worker", template: machine(), turn: () => null })
-    for (const value of [{ ...worker, maxTurnDurations: "1h" }, { ...machine(), secret: {} }, { ...machine(), refresh: { every: "1h", maxage: "2h" } }, { ...machine(), resources: { cpu: 1, memory: "1GiB", disks: "1GiB" } }, { ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: [], overlap: true }] }]) expect(() => compile(entry(value))).toThrow("unknown members")
+    for (const value of [{ ...worker, maxTurnDurations: "1h" }, { ...machine(), secret: {} }, { ...machine(), refresh: { every: "1h", maxAge: "2h" } }, { ...machine(), resources: { cpu: 1, memory: "1GiB", disks: "1GiB" } }, { ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: [], overlap: true }] }]) expect(() => compile(entry(value))).toThrow("unknown members")
     expect(() => triggers.cron("tick", "* * * * *", { input: [] } as never)).toThrow("timezone")
     const tick = triggers.cron("tick", "* * * * *", { timezone: "Asia/Tokyo", input: [] })
     expect(() => compile(entry({ ...worker, triggers: [tick, tick] }))).toThrow("Duplicate")

@@ -281,8 +281,9 @@ Slack's remote stream outcome remains unknown. There are no manual delivery reco
 actions.
 
 Reconnecting an Agent's Slack app creates a new connection. Threads from the
-old connection stay disconnected, earlier undelivered output is not
-backfilled, and cron triggers that post to Slack must be promoted again.
+old connection stay disconnected and earlier undelivered output is not
+backfilled. Cron triggers that post to Slack follow the new connection once it
+is authorized; see [Triggers](/docs/concepts/triggers#slack-delivery).
 
 ## Related
 

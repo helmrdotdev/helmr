@@ -34,7 +34,7 @@ export interface TemplateDefinition {
   readonly prepare?: (prepare: PrepareContext) => MaybePromise<void>
   /** Deletes a Computer made from this Template after it stays unused this long. Omitted: 7 days. */
   readonly deleteAfterUnused?: Retention
-  readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
+  readonly refresh?: { readonly every: Duration }
   readonly secrets?: readonly SecretBinding[]
   readonly prepareSecrets?: readonly SecretBinding[]
 }

@@ -57,12 +57,11 @@ export function AgentsSection(props: { children?: JSX.Element }) {
 type AgentRow = RetainedAgent & { template?: string | undefined };
 
 // The object menu for an Agent, the same in its list row and by its name.
-function agentMenu(options: { agent: string; deleted: boolean; manageAccess: boolean; canDelete: boolean; canRestore: boolean; copyLink: ActionMenuItem; onChange: () => void }): ActionMenuItem[] {
+function agentMenu(options: { agent: string; deleted: boolean; manageAccess: boolean; canDelete: boolean; copyLink: ActionMenuItem; onDelete: () => void }): ActionMenuItem[] {
   return [
     ...(options.manageAccess && !options.deleted ? [{ label: "Manage access", href: agentHref(options.agent, "access") }] : []),
-    ...(options.canRestore && options.deleted ? [{ label: "Restore", onSelect: options.onChange }] : []),
     options.copyLink,
-    ...(options.canDelete && !options.deleted ? [{ label: "Delete agent", tone: "danger" as const, onSelect: options.onChange }] : []),
+    ...(options.canDelete && !options.deleted ? [{ label: "Delete agent", tone: "danger" as const, onSelect: options.onDelete }] : []),
   ];
 }
 
@@ -94,7 +93,7 @@ export function AgentList() {
   const manageAccess = () => hasPermission(me.data, "assignments.read");
   const audience = useAgentAudience(manageAccess);
   const copyLink = useCopyLink();
-  const [changing, setChanging] = createSignal<{ agent: string; restore: boolean }>();
+  const [deleting, setDeleting] = createSignal<string>();
   const [catalogView, setCatalogView] = createSignal<"current" | "all" | "deleted">("current");
   const all = () => catalogView() !== "current";
   const [search, setSearch] = createSignal("");
@@ -153,9 +152,8 @@ export function AgentList() {
               <RowActions label={`Actions for ${item.agent}`} items={agentMenu({
                 agent: item.agent, deleted: !!item.deleted_at, manageAccess: manageAccess(),
                 canDelete: hasPermission(me.data, "agents.delete", { ...scope(), agent: item.agent }),
-                canRestore: hasPermission(me.data, "agents.restore", { ...scope(), agent: item.agent }),
                 copyLink: copyLink.item(agentHref(item.agent)),
-                onChange: () => setChanging({ agent: item.agent, restore: !!item.deleted_at }),
+                onDelete: () => setDeleting(item.agent),
               })} />
             </tr>}</For>
           </DataTable>
@@ -174,7 +172,7 @@ export function AgentList() {
       </>} />
       {table()}
     </Show>
-    <Show when={changing()} keyed>{target => <AgentDeleteDialog agent={target.agent} scope={scope()} restore={target.restore} onClose={() => setChanging(undefined)} onSaved={() => { setChanging(undefined); invalidateAfterChange(cache); }} />}</Show>
+    <Show when={deleting()} keyed>{target => <AgentDeleteDialog agent={target} scope={scope()} onClose={() => setDeleting(undefined)} onSaved={() => { setDeleting(undefined); invalidateAfterChange(cache); }} />}</Show>
   </>;
 }
 
@@ -244,13 +242,13 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      menu={missing() ? undefined : agentMenu({ agent: name(), deleted: !!agent.data?.deleted_at, manageAccess: hasPermission(me.data, "assignments.read"), canDelete: !!agent.data && can("agents.delete"), canRestore: !!agent.data && can("agents.restore"), copyLink: copyLink.item(), onChange: () => setChangeOpen(true) })}
+      menu={missing() ? undefined : agentMenu({ agent: name(), deleted: !!agent.data?.deleted_at, manageAccess: hasPermission(me.data, "assignments.read"), canDelete: !!agent.data && can("agents.delete"), copyLink: copyLink.item(), onDelete: () => setChangeOpen(true) })}
       menuLabel="Agent actions"
     />
     <copyLink.LiveRegion />
     <Show when={changeMessage()}><Notice tone="success" class="mb-4" onDismiss={() => setChangeMessage("")}>{changeMessage()}</Notice></Show>
-    <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {
-      setChangeMessage(agent.data?.deleted_at ? "Agent restored. Removed access and Slack connections remain removed." : "Agent deleted. History is retained; access and connection cleanup completed.");
+    <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} onClose={() => setChangeOpen(false)} onSaved={() => {
+      setChangeMessage("Agent deleted. History is retained; access and connection cleanup completed.");
       setChangeOpen(false);
       invalidateAfterChange(cache);
     }} /></Show>

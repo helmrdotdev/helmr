@@ -21,8 +21,8 @@ import (
 func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *testing.T) {
 	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	every, age := int64(1001), int64(3507)
-	output.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every, MaxAgeMs: &age}
+	every := int64(1001)
+	output.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every}
 	register := func(deployment uuid.UUID, output artifact.ProgramOutput) error {
 		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
@@ -45,10 +45,10 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_specs WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("specs %d: %v", count, err)
 	}
-	var gotEvery, gotAge int64
+	var gotEvery int64
 	var scheduled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,d.max_image_age_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.image_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &gotAge, &scheduled); err != nil || gotEvery != every || gotAge != age || scheduled {
-		t.Fatalf("policy %d %d scheduled=%v: %v", gotEvery, gotAge, scheduled, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.image_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &scheduled); err != nil || gotEvery != every || scheduled {
+		t.Fatalf("policy %d scheduled=%v: %v", gotEvery, scheduled, err)
 	}
 	// A failed registration never leaves a new input row behind.
 	third := uuid.NewV7()

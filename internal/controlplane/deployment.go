@@ -180,7 +180,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
-	record, err := deployment.Promote(r.Context(), s.tx, s.auditPolicy, principal, scope, deploymentID, preflight)
+	promotion, err := deployment.Promote(r.Context(), s.tx, s.auditPolicy, principal, scope, deploymentID, preflight)
 	if err != nil {
 		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
 			s.writeAgentHTTPError(w, r, err)
@@ -190,10 +190,15 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := http.StatusOK
-	if record.PreparationState == "preparing" {
+	if promotion.PreparationState == "preparing" {
 		status = http.StatusAccepted
 	}
-	writeJSON(w, status, deploymentResponse(record))
+	response := deploymentResponse(promotion.Record)
+	response.RestoredAgents = promotion.RestoredAgents
+	for _, t := range promotion.WaitingTriggers {
+		response.WaitingTriggers = append(response.WaitingTriggers, api.WaitingTrigger{Agent: t.Agent, Trigger: t.Trigger})
+	}
+	writeJSON(w, status, response)
 }
 
 func deploymentResponse(record deployment.Record) api.DeploymentResponse {
@@ -213,7 +218,6 @@ func deploymentError(err error) error {
 		return badRequest(codedError{code: "invalid_runtime_mcp_policy", message: err.Error()})
 	}
 	var input deployment.InputError
-	var deleted deployment.DeletedAgentsError
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
@@ -227,9 +231,6 @@ func deploymentError(err error) error {
 		return conflict(codedError{code: "preparation_unavailable", message: "An unusable preparation still owns this environment image; retry the operation after its cleanup"})
 	case errors.Is(err, computer.ErrSecretUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
-	case errors.As(err, &deleted):
-		raw, _ := json.Marshal(deleted)
-		return conflict(codedError{code: "agent_deleted", message: err.Error(), details: map[string]json.RawMessage{"conflicts": raw}})
 	case errors.Is(err, deployment.ErrFinalizationConflict):
 		return conflict(err)
 	case errors.Is(err, deployment.ErrPermissionRequired):
