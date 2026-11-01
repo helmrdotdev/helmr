@@ -17,9 +17,22 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// mentionRoot is what one read of a requested root establishes.
+type mentionRoot int
+
+const (
+	// The root is unread or unproven; the reply stays pending.
+	mentionRootUnknown mentionRoot = iota
+	// A positive opening match or a positive unrelated sender permits admission.
+	mentionRootAdmissible
+	// The root is a managed opening whose Session thread is bound to another
+	// root message or whose opening was abandoned. The reply is rejected.
+	mentionRootSuperseded
+)
+
 // resolveMentionRoot reads exactly one requested root. Only a positive match or
 // positive unrelated sender permits admission; missing evidence stays pending.
-func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, connection slackroute.Connection, root string) (bool, error) {
+func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, connection slackroute.Connection, root string) (mentionRoot, error) {
 	var reserved bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=clock_timestamp()+$3*interval '1 second' WHERE id=$1 AND authorized_at=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL AND history_next_at<=clock_timestamp()`, connection.InstallationID, connection.AuthorizedAt, historyReadInterval.Seconds())
@@ -27,26 +40,26 @@ func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, 
 		return err
 	})
 	if err != nil || !reserved {
-		return false, err
+		return mentionRootUnknown, err
 	}
 	token, err := c.credentials.BotToken(ctx, connection.InstallationID, connection.CredentialRevision)
 	if err != nil || token == "" {
-		return false, ErrChannelVerification
+		return mentionRootUnknown, ErrChannelVerification
 	}
 	query := url.Values{"channel": {connection.ChannelID}, "latest": {root}, "inclusive": {"true"}, "limit": {"1"}, "include_all_metadata": {"true"}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://slack.com/api/conversations.history?"+query.Encode(), nil)
 	if err != nil {
-		return false, err
+		return mentionRootUnknown, err
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := c.http.Do(request)
 	if err != nil {
-		return false, err
+		return mentionRootUnknown, err
 	}
 	defer response.Body.Close()
-	rateLimited := func() (bool, error) {
+	rateLimited := func() (mentionRoot, error) {
 		retry := rateLimitResult(response.Header).RetryAfter
-		return false, db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		return mentionRootUnknown, db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 			_, err := tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=GREATEST(history_next_at,clock_timestamp()+$2*interval '1 second') WHERE id=$1`, connection.InstallationID, retry.Seconds())
 			return err
 		})
@@ -56,18 +69,18 @@ func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, 
 	}
 
 	if response.StatusCode != http.StatusOK {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024+1))
 	if err != nil {
-		return false, err
+		return mentionRootUnknown, err
 	}
 	if len(raw) > 1024*1024 {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	raw, err = jsoncanon.Transform(raw)
 	if err != nil {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	var result struct {
 		OK       bool              `json:"ok"`
@@ -78,33 +91,77 @@ func (c *WebClient) resolveMentionRoot(ctx context.Context, pool db.TxBeginner, 
 		} `json:"response_metadata"`
 	}
 	if json.Unmarshal(raw, &result) != nil {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	if !result.OK && (result.Error == "ratelimited" || result.Error == "rate_limited") {
 		return rateLimited()
 	}
 	if !result.OK || len(result.Messages) != 1 || len(result.Metadata.Warnings) > 0 {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	message := result.Messages[0]
 	if message.Timestamp != root || message.User == "" || (message.Thread != "" && message.Thread != root) {
-		return false, nil
+		return mentionRootUnknown, nil
 	}
 	message.Channel = connection.ChannelID
+	superseded, err := supersededOpening(ctx, pool, connection.OrganizationID, connection.TeamID, message)
+	if err != nil {
+		return mentionRootUnknown, err
+	}
+	if superseded {
+		return mentionRootSuperseded, nil
+	}
 	matched, err := confirmOpeningMessage(ctx, pool, connection.OrganizationID, connection.TeamID, message)
-	if err != nil || matched {
-		return matched, err
+	if err != nil {
+		return mentionRootUnknown, err
+	}
+	if matched {
+		return mentionRootAdmissible, nil
 	}
 	var managed bool
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE org_id=$1 AND team_id=$2 AND (bot_user_id=$3 OR app_id=NULLIF($4,'')))`, connection.OrganizationID, connection.TeamID, message.User, message.AppID).Scan(&managed)
 	})
-	return !managed, err
+	if err != nil || managed {
+		return mentionRootUnknown, err
+	}
+	return mentionRootAdmissible, nil
+}
+
+// supersededOpening recognizes an opening sent by the actual managed sender whose
+// Session thread no longer continues under this root message: the thread is
+// bound to another root, or its opening was abandoned. Replies there would never
+// reach a visible conversation.
+func supersededOpening(ctx context.Context, pool db.TxBeginner, org uuid.UUID, team string, message observedMessage) (bool, error) {
+	var metadata struct {
+		Type    string `json:"event_type"`
+		Payload struct {
+			Post string `json:"post_id"`
+		} `json:"event_payload"`
+	}
+	if json.Unmarshal(message.Metadata, &metadata) != nil || metadata.Type != "helmr_post" {
+		return false, nil
+	}
+	postID, err := uuid.Parse(metadata.Payload.Post)
+	if err != nil {
+		return false, nil
+	}
+	var superseded bool
+	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
+ JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
+ WHERE p.id=$1 AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key
+ AND c.org_id=$2 AND c.team_id=$3 AND c.slack_channel_id=$4 AND i.app_id=$5 AND i.bot_user_id=$6
+ AND ((t.thread_ts IS NOT NULL AND t.thread_ts<>$7) OR p.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND p.status IN ('failed','suppressed'))))`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&superseded)
+	})
+	return superseded, err
 }
 
 // Opening recognition uses the immutable operation and authenticated actual
 // sender, not a body digest that Slack can normalize. Historical/abandoned sends
-// remain recognizable without reviving execution or delivery.
+// remain recognizable without reviving execution or delivery. An opening waiting
+// to be sent once more is recognized by its current revision, so late evidence
+// of the first attempt settles it instead of sending a duplicate root.
 func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUID, team string, message observedMessage) (bool, error) {
 	var metadata struct {
 		Type    string `json:"event_type"`
@@ -126,14 +183,14 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 		var currentRoot *string
 		var revision *int64
 		var state string
-		var disposed bool
-		err := tx.QueryRow(ctx, `SELECT t.id,p.id,t.thread_ts,p.inflight_revision,p.status,p.delivery_disposed_at IS NOT NULL
+		var disposed, resend bool
+		err := tx.QueryRow(ctx, `SELECT t.id,p.id,t.thread_ts,COALESCE(p.inflight_revision,CASE WHEN p.status='pending' AND t.opening_resent_at IS NOT NULL THEN p.desired_revision END),p.status,p.delivery_disposed_at IS NOT NULL,p.status='pending' AND t.opening_resent_at IS NOT NULL
  FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
  JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key
  AND c.org_id=$2 AND c.team_id=$3 AND c.slack_channel_id=$4 AND i.app_id=$5 AND i.bot_user_id=$6
- AND (p.inflight_method='chat.postMessage' AND p.inflight_attempt_id IS NOT NULL OR p.message_ts=$7)
- FOR NO KEY UPDATE OF t,p`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&thread, &post, &currentRoot, &revision, &state, &disposed)
+ AND (p.inflight_method='chat.postMessage' AND p.inflight_attempt_id IS NOT NULL OR p.message_ts=$7 OR (p.status='pending' AND t.opening_resent_at IS NOT NULL))
+ FOR NO KEY UPDATE OF t,p`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&thread, &post, &currentRoot, &revision, &state, &disposed, &resend)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -144,10 +201,10 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 			matched = *currentRoot == message.Timestamp
 			return nil
 		}
-		if revision == nil || *revision != metadata.Payload.Revision || (state != "sending" && state != "uncertain" && !(state == "failed" && disposed)) {
+		if revision == nil || *revision != metadata.Payload.Revision || (state != "sending" && state != "uncertain" && !(state == "failed" && disposed) && !resend) {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=$3,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp, *revision); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE slack_threads SET thread_ts=$2 WHERE id=$1::uuid AND thread_ts IS NULL`, thread, message.Timestamp); err != nil {

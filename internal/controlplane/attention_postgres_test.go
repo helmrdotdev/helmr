@@ -101,6 +101,15 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($4,$1,$2,'app','team','bot','Acme',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3,clock_timestamp()-interval '1 hour');
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($5,$6,$7,$1,$4,$3,(SELECT org_id FROM slack_app_registrations WHERE id=$1))`, pgx.QueryExecModeSimpleProtocol, registration, org, f.User, installation, connection, f.Environment, f.Agent)
 
+	// An open Session whose Slack thread stopped receiving output half an hour
+	// ago: its unconfirmed opening was disposed before a root was known.
+	stopped, binding, thread, source, opening := attentionSession(t, f), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,'team','C1');
+ INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,opening_post_key) VALUES($6,$2,$7,$1,$5,'team','C1','opening');
+ INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($8,$6,$2,$7);
+ INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,role,payload,payload_digest,presentation_path,status,error,delivery_disposed_at,delivery_disposed_through_seq,closed_at)
+ VALUES($9,$2,$7,$8,$6,1,'opening','opening','\x7b7d',decode(repeat('11',32),'hex'),'post','failed','history_no_match',clock_timestamp()-interval '30 minutes',0,clock_timestamp()-interval '30 minutes')`, pgx.QueryExecModeSimpleProtocol, binding, f.Environment, connection, installation, org, thread, stopped, source, opening)
+
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
@@ -175,10 +184,10 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
 	owner := read(h.session(t, f.User, org))
-	if got := kinds(owner); len(got) != 4 || got[0] != "hold" || got[1] != "failed_turn" || got[2] != "slack_reauthorization" || got[3] != "question" {
+	if got := kinds(owner); len(got) != 5 || got[0] != "hold" || got[1] != "failed_turn" || got[2] != "slack_reauthorization" || got[3] != "slack_delivery_stopped" || got[4] != "question" {
 		t.Fatalf("owner order: %v", got)
 	}
-	if c := owner.Counts; (c.Question == nil || *c.Question != 1) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 1) || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 {
+	if c := owner.Counts; (c.Question == nil || *c.Question != 1) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 1) || (c.SlackDeliveryStopped == nil || *c.SlackDeliveryStopped != 1) || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 {
 		t.Fatalf("owner counts: %+v", c)
 	}
 	if item := owner.Items[0]; item.ID != hold.String() || *item.SessionID != held.String() || *item.HoldKind != "interrupt" || item.Agent != "agent" || item.TurnID != nil {
@@ -190,7 +199,10 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if item := owner.Items[2]; item.ID != connection.String() || item.Agent != "agent" || item.WorkspaceName == nil || *item.WorkspaceName != "Acme" || item.SessionID != nil {
 		t.Fatalf("Slack connection: %+v", item)
 	}
-	if item := owner.Items[3]; item.ID != question.String() || *item.TurnID != asked.TurnID.String() || *item.SessionID != f.Session.String() || *item.Prompt != "Ship the release?" {
+	if item := owner.Items[3]; item.ID != opening.String() || *item.SessionID != stopped.String() || item.Agent != "agent" || item.ErrorCode == nil || *item.ErrorCode != "history_no_match" || item.TurnID != nil {
+		t.Fatalf("stopped Slack delivery: %+v", item)
+	}
+	if item := owner.Items[4]; item.ID != question.String() || *item.TurnID != asked.TurnID.String() || *item.SessionID != f.Session.String() || *item.Prompt != "Ship the release?" {
 		t.Fatalf("Question: %+v", item)
 	}
 
@@ -282,7 +294,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 			t.Fatalf("%s: %d %s", role, w.Code, w.Body.String())
 		}
-		if got := kinds(read(h.session(t, f.User, org))); len(got) != 3 || got[0] != "hold" || got[1] != "failed_turn" || got[2] != "question" {
+		if got := kinds(read(h.session(t, f.User, org))); len(got) != 4 || got[0] != "hold" || got[1] != "failed_turn" || got[2] != "slack_delivery_stopped" || got[3] != "question" {
 			t.Fatalf("%s kinds: %v", role, got)
 		}
 	}
@@ -290,7 +302,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	t.Run("Slack-only and omitted Session counts", func(t *testing.T) {
 		f.SetPermissions(t, "agent_connections.read")
 		view := read(h.session(t, f.User, org))
-		if view.Counts.Question != nil || view.Counts.Hold != nil || view.Counts.FailedTurn != nil || view.Counts.SlackReauthorization == nil {
+		if view.Counts.Question != nil || view.Counts.Hold != nil || view.Counts.FailedTurn != nil || view.Counts.SlackDeliveryStopped != nil || view.Counts.SlackReauthorization == nil || strings.Contains(strings.Join(kinds(view), ","), "slack_delivery_stopped") {
 			t.Fatalf("Slack-only counts: %+v", view.Counts)
 		}
 		f.SetPermissions(t, "agents.read")
@@ -319,7 +331,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, AnswerID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
 		t.Fatal(err)
 	}
-	if after := read(h.session(t, f.User, org)); (after.Counts.Question == nil || *after.Counts.Question != 0) || len(after.Items) != 2 {
+	if after := read(h.session(t, f.User, org)); (after.Counts.Question == nil || *after.Counts.Question != 0) || len(after.Items) != 3 {
 		t.Fatalf("answered Question still waiting: %+v", after)
 	}
 

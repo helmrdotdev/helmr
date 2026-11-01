@@ -145,7 +145,7 @@ func (h InteractionHandler) receiveInteractionPayload(parent context.Context, bo
 	if err != nil || occurred.After(time.Now().Add(5*time.Minute)) {
 		return receiptResult{disposition: receiptInvalid}
 	}
-	expires := occurred.Add(5 * time.Minute)
+	expires := occurred.Add(gestureExpiry)
 	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); claims.ExpiresAt != 0 && tokenExpiry.Before(expires) {
 		expires = tokenExpiry
 	}

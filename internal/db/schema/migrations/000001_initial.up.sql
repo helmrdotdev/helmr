@@ -2071,6 +2071,7 @@ CREATE TABLE slack_threads (
     thread_ts text CHECK (thread_ts<>''),
     projected_lifecycle_state jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
+    opening_resent_at timestamptz,
     recipient_team_id text,
     recipient_user_id text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),

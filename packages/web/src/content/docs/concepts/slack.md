@@ -87,7 +87,7 @@ its status or replied in the accepted thread, human replies continue that Sessio
 without another mention. Unmentioned messages elsewhere in the channel do not
 start work. Helmr removes routing mentions and passes the remaining text as a
 text part. In a DM, no mention is needed and submitted text keeps its mentions.
-An unbound DM reply waits for its root until the five-minute receipt deadline,
+An unbound DM reply waits for its root until the one-hour receipt deadline,
 then asks for a new top-level message. Rejected requests are never replayed after
 linking.
 
@@ -97,16 +97,22 @@ steers the active Turn, or becomes a new queued Turn when none is active. See
 delivered, Helmr posts a notice in the thread.
 
 Helmr ignores message edits and messages from bots, and rejects messages with
-file attachments. A message that Helmr cannot accept within five minutes of
-when it was sent is rejected. If current Worker capacity cannot be confirmed,
-Helmr retries within this window and checks permissions again before accepting
-the request. If the problem persists, the request expires without acceptance;
-ask an administrator to check service health and Worker pool configuration before
-repeatedly resending it. A confirmed capacity limit or an incompatible workload
-is rejected.
+file attachments. A message or mention that Helmr cannot accept within one hour
+of when it was sent is rejected. Buttons, answer forms and Slack's Stop control
+act on what you saw, so they must be accepted within five minutes.
+
+While Worker capacity is full, the Environment execution quota is in use or a
+previous execution is still settling, a message waits and Helmr retries it every
+minute. Slack shows no notice while it waits. If the hour passes first, Helmr
+rejects the message with the reason it was waiting on. If current Worker capacity
+cannot be confirmed, Helmr also retries within the window and checks permissions
+again before accepting the request; ask an administrator to check service health
+and Worker pool configuration before repeatedly resending it. An incompatible
+workload is rejected immediately. Lifecycle commands such as `!wake` and buttons
+do not wait: full capacity or a quota in use rejects them immediately.
 
 After acceptance, work may remain queued while execution starts. This uses a
-fixed 10-minute deadline for execution to start, not the message's five-minute
+fixed 10-minute deadline for execution to start, not the message's one-hour
 acceptance window. You can stop queued work with Slack's Stop control or cancel
 the Session in Console.
 
@@ -269,11 +275,33 @@ checks against Slack history. Confirmed evidence can establish delivery; missing
 history cannot prove that a message was never delivered. Rate-limited reads count
 toward the same limit and respect Slack's retry delay.
 
-If confirmation is unavailable or the checks reach their limit, delivery ends
-locally as unconfirmed. Helmr does not resend the uncertain content or its dependent
-continuations. An unconfirmed first message suppresses later output to that thread;
-Helmr does not create a replacement thread. Agent work continues. Later positive
-evidence can update the recorded outcome without restarting suppressed delivery.
+Temporary history errors, an expired history cursor and incomplete history pages
+are retried within the same limit, about one minute apart. Broken pagination or
+an invalid history request or response ends the checks immediately.
+
+When the checks end without confirmation, delivery ends locally as
+unconfirmed. Helmr does not resend the uncertain content or its dependent
+continuations, with one exception: when the thread's first message is not
+found or its checks reach their limit, Helmr sends it once more in the same
+channel, and output already waiting for the thread follows whichever first
+message Slack confirms. Evidence of the first attempt that arrives before the
+second send settles the message without sending it again. Both attempts carry
+the same identity, so at most one duplicate first message can remain in the
+channel.
+
+A thread no longer continues its Session when the Session moved to the other
+first message or the thread's delivery stopped. In a channel, a mention in such
+a thread is rejected right away with a hint; unmentioned replies there are
+ignored, as in any unrelated thread. A DM reply under such a first message waits
+for the message window and then expires. Once a stopped thread is bound to its
+first message, replies there are rejected with the same hint, and thread
+commands still apply to the Session.
+
+If the first message is still unconfirmed after it was sent again, its checks
+end early, or the connection can no longer verify the channel, later output to
+that thread is suppressed. The Session appears under **Needs attention** in
+Console until it closes. Agent work continues. Later positive evidence can update
+the recorded outcome without restarting suppressed delivery.
 
 Members with `sessions.read` for the Agent can inspect delivery status and retained
 output in Console. Content follows the Session history retention policy, even when

@@ -17,8 +17,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Each uncertain mutation gets at most eight paced attempts, including rate limits
-// and temporary credential refresh. Reservations survive crashes and restarts.
+// Each uncertain mutation gets at most eight paced attempts, including rate limits,
+// temporary credential refresh and transient read failures. Reservations survive
+// crashes and restarts.
 const historyPageBudget = 8
 
 // Dedicated Apps are created by each customer for their own workspace. Slack
@@ -159,7 +160,7 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 			return err
 		}
 		if pages >= historyPageBudget {
-			return disposeUnknownDelivery(ctx, tx, post, "history_attempt_limit")
+			return settleUnknownDelivery(ctx, tx, post, "history_attempt_limit", true)
 		}
 		pages++
 		if _, err = tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=clock_timestamp()+$2*interval '1 second' WHERE id=$1`, installation, historyReadInterval.Seconds()); err != nil {
@@ -211,34 +212,41 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 			return nil
 		}
 		next, code := cursor, page.Code
-		if page.RetryAfter > 0 {
+		// Transient read failures consume the page budget and retry at the next
+		// paced attempt; an expired cursor restarts from the first page. Only a
+		// complete scan without a match, broken pagination or an invalid read
+		// ends the check early.
+		terminal, replaceable := false, false
+		switch {
+		case page.RetryAfter > 0:
 			code = "history_rate_limited"
-		}
-		terminal := page.RetryAfter == 0
-		if code == "credential_unavailable" {
-			terminal = pages >= historyPageBudget
-		}
-		if code == "" {
+		case code == "history_cursor_expired":
+			next = ""
+		case code == "history_unavailable", code == "credential_unavailable", code == "history_incomplete":
+		case code == "":
 			next = page.NextCursor
 			switch {
 			case !page.More:
 				code = "history_no_match"
+				terminal, replaceable = true, true
 			case next == "" || next == cursor:
 				code = "history_pagination_unavailable"
-			case pages >= historyPageBudget:
-				code = "history_attempt_limit"
-			default:
-				terminal = false
+				terminal = true
 			}
-		}
-		if pages >= historyPageBudget {
+		default:
 			terminal = true
+		}
+		if !terminal && pages >= historyPageBudget {
+			if code == "" {
+				code = "history_attempt_limit"
+			}
+			terminal, replaceable = true, true
 		}
 		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_cursor=$3,error=COALESCE(NULLIF($4,''),error),next_attempt_at=GREATEST(next_attempt_at,clock_timestamp()+$5*interval '1 second') WHERE id=$1 AND inflight_digest=$2 AND delivery_disposed_at IS NULL`, post, digest, next, code, page.RetryAfter.Seconds()); err != nil {
 			return err
 		}
 		if terminal {
-			if err := disposeUnknownDelivery(ctx, tx, post, code); err != nil {
+			if err := settleUnknownDelivery(ctx, tx, post, code, replaceable); err != nil {
 				return err
 			}
 		}

@@ -8,10 +8,12 @@ const (
 	AttentionHold                 = "hold"
 	AttentionFailedTurn           = "failed_turn"
 	AttentionSlackReauthorization = "slack_reauthorization"
+	AttentionSlackDeliveryStopped = "slack_delivery_stopped"
 )
 
 // AttentionItem is one thing in an Environment waiting on a person. ID names
-// the Question, hold, Turn or Slack connection; At is when it started waiting.
+// the Question, hold, Turn, Slack connection or the Slack thread's opening
+// message; At is when it started waiting.
 type AttentionItem struct {
 	Kind      string    `json:"kind"`
 	ID        string    `json:"id"`
@@ -23,7 +25,8 @@ type AttentionItem struct {
 	Prompt *string `json:"prompt,omitempty"`
 	// A hold's kind: interrupt, process_failed, recovery_gap or storage_pressure.
 	HoldKind *string `json:"hold_kind,omitempty"`
-	// A failed Turn's sequence in its Session and error code.
+	// A failed Turn's sequence in its Session and error code, or why Slack
+	// delivery to a Session's thread stopped.
 	TurnSequence *int64  `json:"turn_sequence,omitempty"`
 	ErrorCode    *string `json:"error_code,omitempty"`
 	// The Slack workspace of a connection that lost its authorization.
@@ -37,6 +40,7 @@ type AttentionCounts struct {
 	Question             *int64 `json:"question,omitempty"`
 	Hold                 *int64 `json:"hold,omitempty"`
 	FailedTurn           *int64 `json:"failed_turn,omitempty"`
+	SlackDeliveryStopped *int64 `json:"slack_delivery_stopped,omitempty"`
 	SlackReauthorization *int64 `json:"slack_reauthorization,omitempty"`
 }
 

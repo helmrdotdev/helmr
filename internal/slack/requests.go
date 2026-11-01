@@ -17,6 +17,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// gestureExpiry bounds admission of a button, form submission or native Stop
+// after it happened. These act on what the person saw, so they expire quickly.
+const gestureExpiry = 5 * time.Minute
+
+// messageAdmissionWindow bounds admission of a message or mention, in a channel
+// or a DM, after it was sent. A message waits within it for execution capacity
+// and, as a DM reply, for its root to be accepted.
+const messageAdmissionWindow = time.Hour
+
 var errGestureConflict = errors.New("slack gesture content conflicts with its receipt")
 var errGestureInvalid = errors.New("invalid Slack gesture")
 

@@ -29,19 +29,19 @@ type AttentionItem struct {
 	TurnID    *uuid.UUID
 	Agent     string
 	At        time.Time
-	// The Question's first text part, the hold's kind, or the failed Turn's
-	// error code.
+	// The Question's first text part, the hold's kind, the failed Turn's error
+	// code, or why the Session's Slack delivery stopped.
 	Summary      string
 	TurnSequence *int64
 }
 
 // Attention lists, oldest first, what is waiting on a person in one
-// Environment: pending Questions, holds on open Sessions and failed Turns that
-// still stand. Each list holds at most AttentionLimit items; the counts are
-// complete.
+// Environment: pending Questions, holds on open Sessions, failed Turns that
+// still stand and open Sessions whose Slack thread no longer receives output.
+// Each list holds at most AttentionLimit items; the counts are complete.
 type Attention struct {
-	Questions, Holds, FailedTurns             []AttentionItem
-	QuestionCount, HoldCount, FailedTurnCount int64
+	Questions, Holds, FailedTurns, SlackDeliveryStopped                  []AttentionItem
+	QuestionCount, HoldCount, FailedTurnCount, SlackDeliveryStoppedCount int64
 }
 
 // A failed Turn waits on a person while it is the latest Turn of a Session that
@@ -86,10 +86,31 @@ const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t
  ORDER BY t.terminal_at,t.id LIMIT $4`
 const attentionFailedTurnsCountSQL = `SELECT count(*)` + attentionFailedTurnsFromSQL
 
+// Slack delivery to a Session's thread stops when its opening is disposed as
+// unconfirmed or ended before a root was known; later output is suppressed while
+// the Session keeps working. It waits on a person until the Session closes. The
+// lateral read selects the thread's single opening through its unique key, so a
+// thread counts once.
+const attentionSlackDeliveryStoppedFromSQL = `
+ FROM slack_threads th
+ JOIN sessions s ON (s.environment_id,s.id)=(th.environment_id,th.front_session_id)
+ JOIN agents ag ON (ag.environment_id,ag.id)=(s.environment_id,s.agent_id)
+ JOIN slack_thread_sources src ON src.thread_id=th.id AND (src.environment_id,src.session_id)=(th.environment_id,th.front_session_id)
+ CROSS JOIN LATERAL (SELECT o.id,o.error,COALESCE(o.delivery_disposed_at,o.closed_at,o.created_at) AS stopped_at FROM slack_posts o
+ WHERE o.thread_source_id=src.id AND o.post_key=th.opening_post_key AND o.continuation_ordinal=0
+ AND o.environment_id=th.environment_id AND o.thread_id=th.id AND o.role='opening'
+ AND (o.delivery_disposed_at IS NOT NULL OR (th.thread_ts IS NULL AND o.status IN ('failed','suppressed')))) o
+ WHERE th.environment_id=$1 AND s.status='open'
+ AND ` + attentionAccessSQL
+
+const attentionSlackDeliveryStoppedSQL = `SELECT o.id,s.id,ag.key,o.stopped_at,COALESCE(o.error,''),count(*) OVER ()` + attentionSlackDeliveryStoppedFromSQL + `
+ ORDER BY o.stopped_at,o.id LIMIT $4`
+const attentionSlackDeliveryStoppedCountSQL = `SELECT count(*)` + attentionSlackDeliveryStoppedFromSQL
+
 // ListAttention reads the Environment's waiting work with the same authority as
 // reading its Sessions, in one snapshot.
 func ListAttention(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env uuid.UUID) (Attention, error) {
-	result := Attention{Questions: []AttentionItem{}, Holds: []AttentionItem{}, FailedTurns: []AttentionItem{}}
+	result := Attention{Questions: []AttentionItem{}, Holds: []AttentionItem{}, FailedTurns: []AttentionItem{}, SlackDeliveryStopped: []AttentionItem{}}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
 			return err
@@ -139,8 +160,14 @@ func ListAttention(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.
 		if err != nil {
 			return err
 		}
+		result.SlackDeliveryStopped, result.SlackDeliveryStoppedCount, err = attentionRows(ctx, tx, attentionSlackDeliveryStoppedSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
+			return row.Scan(&item.ID, &item.SessionID, &item.Agent, &item.At, &item.Summary, count)
+		})
+		if err != nil {
+			return err
+		}
 		seen := map[uuid.UUID]bool{}
-		for _, items := range [][]AttentionItem{result.Questions, result.Holds, result.FailedTurns} {
+		for _, items := range [][]AttentionItem{result.Questions, result.Holds, result.FailedTurns, result.SlackDeliveryStopped} {
 			for _, item := range items {
 				if seen[item.SessionID] {
 					continue
@@ -208,7 +235,9 @@ func oneLine(text string, limit int) string {
 	return string(runes)
 }
 
-type AttentionCounts struct{ QuestionCount, HoldCount, FailedTurnCount int64 }
+type AttentionCounts struct {
+	QuestionCount, HoldCount, FailedTurnCount, SlackDeliveryStoppedCount int64
+}
 
 // CountAttention reads complete metadata counts without selecting application content.
 func CountAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID) (AttentionCounts, error) {
@@ -227,8 +256,8 @@ func CountAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env 
 		if !filter.All && len(filter.Agents) == 0 {
 			return ErrDenied
 		}
-		const countsSQL = `SELECT (` + attentionQuestionsCountSQL + `), (` + attentionHoldsCountSQL + `), (` + attentionFailedTurnsCountSQL + `)`
-		return tx.QueryRow(ctx, countsSQL, env, filter.All, filter.Agents).Scan(&result.QuestionCount, &result.HoldCount, &result.FailedTurnCount)
+		const countsSQL = `SELECT (` + attentionQuestionsCountSQL + `), (` + attentionHoldsCountSQL + `), (` + attentionFailedTurnsCountSQL + `), (` + attentionSlackDeliveryStoppedCountSQL + `)`
+		return tx.QueryRow(ctx, countsSQL, env, filter.All, filter.Agents).Scan(&result.QuestionCount, &result.HoldCount, &result.FailedTurnCount, &result.SlackDeliveryStoppedCount)
 	})
 	if err != nil {
 		return AttentionCounts{}, hideMissing(err)

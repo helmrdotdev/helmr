@@ -40,6 +40,21 @@ func rejectMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, code string) er
 	return err
 }
 
+// expireRequest rejects a receipt past its deadline with the reason it last
+// waited on, so the person learns why it was never accepted.
+func expireRequest(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error=COALESCE(error,'gesture_expired') WHERE id=$1 AND status='received'`, id)
+	return err
+}
+
+// deferMessage keeps a message waiting for execution to become available. It
+// retries every minute within its admission window and records why it waits.
+// The failed attempt's savepoint has already rolled back every admission effect.
+func deferMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, code string) error {
+	_, err := tx.Exec(ctx, `UPDATE slack_requests SET next_attempt_at=clock_timestamp()+interval '1 minute',error=$2 WHERE id=$1 AND status='received'`, id, code)
+	return err
+}
+
 func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messageAdmission, error) {
 	p := &messageAdmission{}
 	var raw []byte
@@ -64,7 +79,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	}
 	reject := func(code string) (*messageAdmission, error) { return nil, rejectMessage(ctx, tx, id, code) }
 	if !unexpired {
-		return reject("gesture_expired")
+		return nil, expireRequest(ctx, tx, id)
 	}
 	var env, target uuid.UUID
 	err = tx.QueryRow(ctx, `SELECT environment_id,agent_id FROM slack_connections WHERE slack_installation_id=$1`, p.installation).Scan(&env, &target)
@@ -101,17 +116,24 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject(code)
 	}
 	var owner uuid.UUID
-	var deleted bool
+	var deleted, abandoned bool
 	var peer, peerTeam *string
-	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL,t.recipient_user_id,t.recipient_team_id
+	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL,t.recipient_user_id,t.recipient_team_id,
+ EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND opening.status IN ('failed','suppressed'))))
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
- WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted, &peer, &peerTeam)
+ WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted, &peer, &peerTeam, &abandoned)
 	if err == nil {
 		if owner != p.route.Target.ConnectionID || deleted {
 			return reject("thread_generation_unavailable")
 		}
 		if slackroute.IsDirectMessage(p.message.Channel) && (peer == nil || peerTeam == nil || *peer != actor || *peerTeam != p.route.Target.TeamID) {
 			return reject("permission_denied")
+		}
+		// Output to a thread whose opening was abandoned is suppressed, so
+		// conversational input there would never be answered in Slack. Thread
+		// commands still apply to the Session.
+		if abandoned && threadInputCommand(p.message.Text, p.route.Target.BotUserID) == "" {
+			return reject("thread_superseded")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -160,11 +182,14 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits ex
 		return err
 	}
 	if p.thread == uuid.Nil() && p.message.Thread != "" {
-		unrelated, err := client.resolveMentionRoot(ctx, pool, p.route.Target, p.root)
+		root, err := client.resolveMentionRoot(ctx, pool, p.route.Target, p.root)
 		if err != nil {
 			return err
 		}
-		if !unrelated {
+		switch root {
+		case mentionRootSuperseded:
+			return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, id, "thread_superseded") })
+		case mentionRootUnknown:
 			return nil
 		}
 	}
@@ -276,17 +301,17 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits ex
 		if err != nil {
 			switch {
 			case errors.Is(err, errAdmissionExpired):
-				return rejectMessage(ctx, tx, id, "gesture_expired")
+				return expireRequest(ctx, tx, id)
 			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return rejectMessage(ctx, tx, id, "permission_denied")
 			case errors.Is(err, computer.ErrExecutionSettling):
-				return rejectMessage(ctx, tx, id, "execution_settling")
+				return deferMessage(ctx, tx, id, "execution_settling")
 			case errors.Is(err, workergroup.ErrCapacityIncompatible):
 				return rejectMessage(ctx, tx, id, "execution_capacity_incompatible")
 			case errors.Is(err, workergroup.ErrCapacityExhausted):
-				return rejectMessage(ctx, tx, id, "execution_capacity_exhausted")
+				return deferMessage(ctx, tx, id, "execution_capacity_exhausted")
 			case errors.Is(err, computer.ErrExecutionLimit):
-				return rejectMessage(ctx, tx, id, "execution_limit")
+				return deferMessage(ctx, tx, id, "execution_limit")
 			case (errors.Is(err, session.ErrNotReady) || errors.Is(err, computer.ErrNotReady)), (errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal)):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
 			case (errors.Is(err, session.ErrInvalidInput) || errors.Is(err, computer.ErrInvalidInput)), errors.Is(err, content.ErrUnsupported):
@@ -308,7 +333,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, limits ex
 			operation = "slack_route"
 			message = receipt.MessageID
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9,source_link_id=CASE WHEN $8 IN ('start','enqueue') THEN $10::uuid END WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message, p.human.SlackLinkID)
+		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),error=NULL,user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9,source_link_id=CASE WHEN $8 IN ('start','enqueue') THEN $10::uuid END WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message, p.human.SlackLinkID)
 		return err
 	})
 }

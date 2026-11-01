@@ -239,8 +239,8 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 			return nil
 		}
 		// This bounds receipt admission waiting, not the lifetime or execution queue
-		// of work after successful admission. Expired gestures need a new human action.
-		_, err = receiveGesture(ctx, tx, inboundGesture{Installation: installation, Key: envelope.EventID, Actor: e.User, OccurredAt: occurred, ExpiresAt: occurred.Add(5 * time.Minute), Payload: payload})
+		// of work after successful admission. Expired messages need a new human action.
+		_, err = receiveGesture(ctx, tx, inboundGesture{Installation: installation, Key: envelope.EventID, Actor: e.User, OccurredAt: occurred, ExpiresAt: occurred.Add(messageAdmissionWindow), Payload: payload})
 		return err
 	})
 }
