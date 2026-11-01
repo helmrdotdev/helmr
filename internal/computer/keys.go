@@ -128,6 +128,9 @@ func (b *KeyBroker) pin(ctx context.Context, host workergroup.HostPrincipal, ide
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := RequireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		var org uuid.UUID
 		var initial string
 		if err := tx.QueryRow(ctx, `SELECT e.org_id,'sha256:'||encode(c.initial_root_digest,'hex') FROM computers c JOIN environments e ON e.id=c.environment_id

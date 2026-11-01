@@ -89,6 +89,9 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostLease(ctx, tx, host, req.EnvironmentID, req.ComputerID, req.LeaseEpoch); err != nil {
+			return err
+		}
 		members, err := LockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID)
 		if err != nil {
 			return err

@@ -93,6 +93,9 @@ func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.Host
 		if err != nil {
 			return err
 		}
+		if err := requireHostImageBuild(ctx, tx, host, env, preparation); err != nil {
+			return err
+		}
 		p, err := computer.ReadImageBuild(ctx, tx, env, preparation)
 		if err != nil {
 			return err
@@ -147,6 +150,9 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 		if err != nil {
 			return err
 		}
+		if err := requireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		if _, err := session.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
@@ -197,6 +203,9 @@ func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host wo
 		}
 		supply, err := lockMaterializationHost(ctx, tx, host)
 		if err != nil {
+			return err
+		}
+		if err := requireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 			return err
 		}
 		if _, err := session.LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {

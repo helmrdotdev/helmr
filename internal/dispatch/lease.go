@@ -24,6 +24,9 @@ func ObserveLeaseStopped(ctx context.Context, auditPolicy auditpolicy.Policy, po
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		return recordComputerStopped(ctx, auditPolicy, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint, failedBootSeed)
 	}))
 }

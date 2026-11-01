@@ -132,6 +132,17 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		// A source outside the host group's region reads exactly like a missing
+		// one and its build is never locked.
+		var reachable bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM boot_seed_builds b
+ JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id
+ JOIN worker_groups g ON g.id=$3 WHERE b.environment_id=$1 AND b.id=$2 AND project.default_region_id=g.region_id)`, key.EnvironmentID, key.BuildID, host.GroupID).Scan(&reachable); err != nil {
+			return err
+		}
+		if !reachable {
+			return pgx.ErrNoRows
+		}
 		if _, err := LockBootSeedBuild(ctx, tx, key.EnvironmentID, key.BuildID); err != nil {
 			return err
 		}

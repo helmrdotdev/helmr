@@ -218,6 +218,9 @@ func RenewBootSeedBuild(ctx context.Context, database db.TxBeginner, host worker
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
+			return err
+		}
 		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {
 			return err
 		}
@@ -236,6 +239,9 @@ func FailBootSeedBuild(ctx context.Context, database db.TxBeginner, host workerg
 	}
 	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
 			return err
 		}
 		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {
@@ -261,6 +267,9 @@ func FailBootSeedBuild(ctx context.Context, database db.TxBeginner, host workerg
 func ReclaimBootSeedBuild(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref BootSeedExecutor) error {
 	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
 			return err
 		}
 		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {

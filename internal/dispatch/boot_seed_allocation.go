@@ -103,6 +103,9 @@ func (a *Allocator) DeliverBootSeed(ctx context.Context, host workergroup.HostPr
 		if err != nil {
 			return err
 		}
+		if err := requireHostBootSeedBuild(ctx, tx, host, identity.EnvironmentID, identity.OwnerID); err != nil {
+			return err
+		}
 		if _, err := computer.LockBootSeedBuild(ctx, tx, identity.EnvironmentID, identity.OwnerID); err != nil {
 			return err
 		}
@@ -143,6 +146,13 @@ func ObserveBootSeedStopped(ctx context.Context, database db.TxBeginner, host wo
 	}
 	return allocationError(db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		// A build this host epoch does not hold is closed for it, whether it is
+		// missing, superseded or another host's.
+		if err := requireHostBootSeedBuild(ctx, tx, host, identity.EnvironmentID, identity.OwnerID); errors.Is(err, ErrDenied) {
+			return ErrAllocationClosed
+		} else if err != nil {
 			return err
 		}
 		if _, err := computer.LockBootSeedBuild(ctx, tx, identity.EnvironmentID, identity.OwnerID); err != nil {

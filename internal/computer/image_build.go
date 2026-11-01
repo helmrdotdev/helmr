@@ -152,6 +152,9 @@ func lockImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.Hos
 // lockImageBuildExecutorOnHost requires the caller to hold LockHost,
 // allowing declared Secret locks to be acquired before the spec/attempt locks.
 func lockImageBuildExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref ImageBuildExecutor, live bool) error {
+	if err := RequireHostImageBuild(ctx, tx, host, ref.EnvironmentID, ref.ImageBuildID); err != nil {
+		return err
+	}
 	p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)
 	if err != nil {
 		return err
@@ -216,6 +219,9 @@ func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Polic
 	var result []ExposedSecret
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := RequireHostImageBuild(ctx, tx, host, ref.EnvironmentID, ref.ImageBuildID); err != nil {
 			return err
 		}
 		var spec uuid.UUID
@@ -373,6 +379,9 @@ func ObserveImageBuildStopped(ctx context.Context, pool db.TxBeginner, host work
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := RequireHostImageBuild(ctx, tx, host, ref.EnvironmentID, ref.ImageBuildID); err != nil {
 			return err
 		}
 		p, err := ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.ImageBuildID)

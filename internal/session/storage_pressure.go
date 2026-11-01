@@ -23,6 +23,9 @@ func ReportStoragePressure(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		if _, err := LockComputerMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}

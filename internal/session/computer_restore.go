@@ -37,6 +37,9 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostCheckpointTarget(ctx, tx, host, env, checkpoint, epoch); err != nil {
+			return err
+		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
@@ -289,6 +292,9 @@ func matchRestoreInstallation(ctx context.Context, tx pgx.Tx, env, checkpoint uu
 func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt, commit bool) (CaptureRecord, error) {
 	var r CaptureRecord
 	if err := computer.LockHost(ctx, tx, host); err != nil {
+		return r, err
+	}
+	if err := requireHostCheckpointRestore(ctx, tx, host, env, checkpoint); err != nil {
 		return r, err
 	}
 	r, err := LockCapture(ctx, tx, env, checkpoint)

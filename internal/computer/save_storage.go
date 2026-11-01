@@ -275,6 +275,9 @@ func lockSaveIdentity(ctx context.Context, tx pgx.Tx, ref SavePublication) (save
 	if err := LockHost(ctx, tx, ref.Host); err != nil {
 		return s, "", err
 	}
+	if err := RequireHostSave(ctx, tx, ref.Host, ref.EnvironmentID, ref.SaveID); err != nil {
+		return s, "", err
+	}
 	s.environmentID, s.saveID, s.leaseEpoch = pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.SaveID), ref.LeaseEpoch
 	if err := tx.QueryRow(ctx, `SELECT computer_id FROM computer_saves WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.SaveID).Scan(&s.computerID); err != nil {
 		return s, "", err

@@ -36,6 +36,9 @@ func ReadComputerContinuationControls(ctx context.Context, limits executionlimit
 			if err = computer.LockHost(ctx, tx, host); err != nil {
 				return err
 			}
+			if err = requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
+				return err
+			}
 			r, err = LockCapture(ctx, tx, env, checkpoint)
 			if err != nil {
 				return err

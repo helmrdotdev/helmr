@@ -149,6 +149,9 @@ func withBootSeedExecutor(ctx context.Context, database db.TxBeginner, host work
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
+			return err
+		}
 		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {
 			return err
 		}

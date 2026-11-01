@@ -63,6 +63,6 @@ Optional email providers create additional secret destinations. Resend needs `em
 
 ## Rotation and recovery limits
 
-Rotate a worker-group enrollment token from Admin and propagate it to the group explicitly. Online rotation of the root signing and encryption keys is not supported by the checked-in deployment flow. Preserve the checkpoint encryption key for every worker that may restore existing checkpoints; losing or changing it can make encrypted checkpoint data unusable.
+Rotate a worker-group enrollment token from Admin and propagate it to the group explicitly. Rotation does not revoke enrolled hosts; see [host secrets, token rotation and revocation](/docs/self-hosting/workers#host-secrets-token-rotation-and-revocation). Online rotation of the root signing and encryption keys is not supported by the checked-in deployment flow. Preserve the checkpoint encryption key for every worker that may restore existing checkpoints; losing or changing it can make encrypted checkpoint data unusable.
 
 Keep secret values out of tfvars, command history, logs, and support bundles.

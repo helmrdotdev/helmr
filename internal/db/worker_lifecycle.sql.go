@@ -468,6 +468,49 @@ func (q *Queries) MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLost
 	return i, err
 }
 
+const revokeWorkerGroupHostCredentials = `-- name: RevokeWorkerGroupHostCredentials :many
+WITH target AS (
+    UPDATE worker_hosts
+       SET status = 'lost', claim_version = worker_hosts.claim_version + 1,
+           lost_at = COALESCE(worker_hosts.lost_at, now()), updated_at = now()
+     WHERE worker_hosts.worker_group_id = $1
+       AND worker_hosts.status IN ('registering', 'active', 'draining')
+    RETURNING worker_hosts.id
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets
+       SET revoked_at = now()
+     WHERE worker_host_secrets.worker_group_id = $1
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
+)
+SELECT target.id
+  FROM target
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
+ ORDER BY target.id
+`
+
+// Fences every live host of the group as lost and revokes every unrevoked host
+// secret. The caller holds the group's status mutation lock and row lock.
+func (q *Queries) RevokeWorkerGroupHostCredentials(ctx context.Context, workerGroupID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, revokeWorkerGroupHostCredentials, workerGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const transitionWorkerGroupStatus = `-- name: TransitionWorkerGroupStatus :one
 WITH transitioned AS (
     UPDATE worker_groups

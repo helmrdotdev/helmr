@@ -175,6 +175,9 @@ type Querier interface {
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
+	// Fences every live host of the group as lost and revokes every unrevoked host
+	// secret. The caller holds the group's status mutation lock and row lock.
+	RevokeWorkerGroupHostCredentials(ctx context.Context, workerGroupID pgtype.UUID) ([]pgtype.UUID, error)
 	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)
