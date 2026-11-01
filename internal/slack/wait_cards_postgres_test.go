@@ -188,3 +188,26 @@ func TestSlackWaitCardFollowsCurrentPublication(t *testing.T) {
 		t.Fatalf("revoked connection published a wait: %+v", calls)
 	}
 }
+
+func TestSlackWaitSettlesOnlyAfterAnOutstandingRefresh(t *testing.T) {
+	f := newStatusFixture(t)
+	id := f.newMessage(t, "refreshing", "666.000001")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET error='execution_limit',next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, id)
+	caller := &recordingCaller{}
+	caller.drain(t, f)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET wait_status_at=clock_timestamp()-interval '2 minutes' WHERE id=$1`, id)
+	refresh, found, err := takeWaitCard(t.Context(), f.Pool)
+	if err != nil || !found || refresh == nil || !refresh.refreshing {
+		t.Fatalf("refresh claim: %+v %v %v", refresh, found, err)
+	}
+	// The message expires while the refresh call is still outstanding.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp() WHERE id=$1`, id)
+	if calls := caller.drain(t, f); len(calls) != 0 {
+		t.Fatalf("settled under an outstanding refresh: %+v", calls)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET wait_card='waiting' WHERE id=$1 AND wait_card='posting'`, id)
+	calls := caller.drain(t, f)
+	if len(calls) != 2 || calls[0].method != "chat.update" || calls[1].body["status"] != "active" {
+		t.Fatalf("settlement after refresh: %+v", calls)
+	}
+}
