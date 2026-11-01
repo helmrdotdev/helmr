@@ -22,7 +22,7 @@ func lifecycleButton(config ProjectionConfig, target controlTarget, action, labe
 	}
 	button := map[string]any{"type": "button", "action_id": "helmr.lifecycle." + action, "text": plainText(label), "value": value}
 	if action == "hibernate" || action == "confirm_close" {
-		text := "Background tasks on this Computer will stop progressing until you wake it or send a new request. State is preserved when capture succeeds."
+		text := "Background work on this Computer pauses until you wake it or send a new request."
 		if action == "confirm_close" {
 			text = "Close this Session and the owned Sessions listed here? New messages will no longer be accepted. Accepted work follows the close policy. Wake cannot undo closure."
 		}
@@ -31,17 +31,13 @@ func lifecycleButton(config ProjectionConfig, target controlTarget, action, labe
 	return button, nil
 }
 
-// Private help is rendered only after current linked-user authorization. Shared
-// cards never disclose another Session's identity or issue confirmations.
-func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool) (string, []any, error) {
-	state, _, err := readLifecycleState(ctx, tx, target)
+// lifecyclePresentation renders the private lifecycle reply to one linked user,
+// only after current authorization of that user.
+func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string) (string, []any, error) {
+	snapshot, err := readLifecycleState(ctx, tx, target)
 	if err != nil {
 		return "", nil, err
 	}
-	return lifecyclePresentationFromState(ctx, tx, config, target, action, actor, private, state)
-}
-
-func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool, snapshot lifecycleState) (string, []any, error) {
 	computerID, status, hibernateAfter, closeAfter, muted := snapshot.ComputerID, snapshot.Status, snapshot.HibernateAfter, snapshot.CloseAfter, snapshot.Muted
 	sleeping := false
 	text := "Session " + status + "."
@@ -98,7 +94,7 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 		return err
 	}
 	if status == "open" {
-		if private && (action == "sleep" || action == "close") {
+		if action == "sleep" || action == "close" {
 			var link uuid.UUID
 			if err := tx.QueryRow(ctx, `SELECT l.id FROM slack_user_links l WHERE l.installation_id=$1 AND l.slack_user_id=$2 AND l.revoked_at IS NULL`, target.Installation, actor).Scan(&link); err != nil {
 				return "", nil, err
@@ -150,18 +146,14 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 					return "", nil, err
 				}
 			}
-			if private {
-				muteAction, muteLabel := "mute", "Mute thread input"
-				if muted {
-					muteAction, muteLabel = "unmute", "Unmute thread input"
-				}
-				if err := add(muteAction, muteLabel, uuid.Nil()); err != nil {
-					return "", nil, err
-				}
-				if err := add("close", "Close Session", uuid.Nil()); err != nil {
-					return "", nil, err
-				}
-			} else if err := add("help", "More", uuid.Nil()); err != nil {
+			muteAction, muteLabel := "mute", "Mute thread input"
+			if muted {
+				muteAction, muteLabel = "unmute", "Unmute thread input"
+			}
+			if err := add(muteAction, muteLabel, uuid.Nil()); err != nil {
+				return "", nil, err
+			}
+			if err := add("close", "Close Session", uuid.Nil()); err != nil {
 				return "", nil, err
 			}
 		}
@@ -169,8 +161,8 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 	if len(buttons) > 0 {
 		blocks = append(blocks, map[string]any{"type": "actions", "elements": buttons})
 	}
-	if private && action == "help" {
-		blocks = append(blocks, map[string]any{"type": "section", "text": plainText("!sleep: confirm Computer hibernation. !wake: resume background execution without a prompt. !close: confirm terminal Session closure. !mute / !unmute: change future thread input. !aside text: keep one message out of Agent input. These commands do not release Stop holds.")})
+	if action == "help" {
+		blocks = append(blocks, map[string]any{"type": "section", "text": plainText("!sleep: confirm Computer hibernation. !wake: resume background execution without a prompt. !close: confirm terminal Session closure. !mute / !unmute: change future thread input. !aside text: keep one message out of Agent input. These commands do not resume stopped work.")})
 	}
 	return text, blocks, nil
 }

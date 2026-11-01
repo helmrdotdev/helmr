@@ -107,7 +107,7 @@ func TestSlackAnswerControlRequiresOpeningProvenance(t *testing.T) {
 func TestLifecycleBaseControlPersistsButConfirmationExpires(t *testing.T) {
 	key := []byte("01234567890123456789012345678901")
 	c := controlFixture()
-	c.Action = "help"
+	c.Action = "wake"
 	c.Target.Turn, c.Target.Ask = uuid.Nil(), uuid.Nil()
 	c.ExpiresAt = 0
 	token, err := encodeControl(key, c)

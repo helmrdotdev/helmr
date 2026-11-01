@@ -50,6 +50,28 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 		if err != nil || receipt.Status != "received" {
 			return err
 		}
+		// Stop withdraws the person's own messages still waiting in this thread
+		// for execution; a withdrawn message never runs. A message admitted just
+		// before this receipt commits is already work and is not withdrawn; its
+		// thread keeps showing processing, so a later Stop can stop it.
+		withdrawn, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error='stopped_waiting'
+ WHERE installation_id=$1 AND status='received' AND wait_card IN ('posting','waiting') AND wait_channel=$2 AND wait_thread_ts=$3 AND slack_user_id=$4 AND source_occurred_at<=$5`, installation, e.Channel, e.Thread, e.User, occurred)
+		if err != nil {
+			return err
+		}
+		// Withdrawing a message is the whole effect of Stop when the thread's
+		// Session and the Sessions it owns have no work of their own to stop.
+		if withdrawn.RowsAffected() > 0 {
+			var working bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN sessions owned ON owned.environment_id=t.environment_id AND owned.root_session_id=t.front_session_id
+ JOIN turns w ON w.environment_id=owned.environment_id AND w.session_id=owned.id
+ WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3 AND t.deleted_at IS NULL AND w.status IN ('queued','running'))`, installation, e.Channel, e.Thread).Scan(&working); err != nil {
+				return err
+			}
+			if !working {
+				return rejectMessage(ctx, tx, receipt.ID, "input_ignored")
+			}
+		}
 		// Fill the observation once, in the same transaction as the first receipt.
 		// A retry must not acquire a newer front or execution generation.
 		tag, err := tx.Exec(ctx, `UPDATE slack_requests r SET thread_id=t.id,environment_id=s.environment_id,session_id=s.id,thread_source_id=src.id,observed_authority_generation=s.authority_generation,observed_next_turn_seq=s.next_turn_seq

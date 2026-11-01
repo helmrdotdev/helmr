@@ -45,7 +45,7 @@ type controlEnvelope struct {
 // Confirmations and question responses remain time bounded.
 func persistentLifecycleControl(action string) bool {
 	switch action {
-	case "sleep", "wake", "close", "help", "mute", "unmute":
+	case "sleep", "wake", "close", "mute", "unmute":
 		return true
 	default:
 		return false
@@ -58,7 +58,7 @@ func validControl(c controlEnvelope) bool {
 		return false
 	}
 	switch c.Action {
-	case "sleep", "wake", "close", "help", "mute", "unmute":
+	case "sleep", "wake", "close", "mute", "unmute":
 		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == ""
 	case "hibernate":
 		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && c.Computer != uuid.Nil()

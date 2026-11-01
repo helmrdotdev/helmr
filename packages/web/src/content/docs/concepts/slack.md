@@ -103,15 +103,24 @@ act on what you saw, so they must be accepted within five minutes.
 
 While Worker capacity is full, the Environment execution quota is in use or a
 previous execution is still settling, a message waits and Helmr retries it every
-minute. Slack shows no notice while it waits. If the hour passes first, Helmr
-rejects the message with the reason it was waiting on. If current Worker capacity
+minute. While it waits, a card in its thread names what it is waiting for and
+Slack shows the conversation as working; Slack's Stop control withdraws your
+waiting message without running it, and also stops the Session's own work if
+it has any. If the hour passes first, the card turns
+to an error and Helmr rejects the message with the reason it was waiting on.
+Feedback about a refused message appears in the thread where you wrote it.
+Refusals caused by the Session, such as capacity that stayed full, are visible
+to everyone in the thread; feedback about your own access stays private. In an
+ended thread, only a message that mentions the Agent gets a visible reply. If current Worker capacity
 cannot be confirmed, Helmr also retries within the window and checks permissions
 again before accepting the request; ask an administrator to check service health
 and Worker pool configuration before repeatedly resending it. An incompatible
 workload is rejected immediately. Lifecycle commands such as `!wake` and buttons
 do not wait: full capacity or a quota in use rejects them immediately.
 
-After acceptance, work may remain queued while execution starts. This uses a
+After acceptance, work may remain queued while execution starts. While the
+Computer starts, wakes or waits for storage space, a card in the thread says so
+and turns complete when the work begins. This uses a
 fixed 10-minute deadline for execution to start, not the message's one-hour
 acceptance window. You can stop queued work with Slack's Stop control or cancel
 the Session in Console.
@@ -142,10 +151,9 @@ unaffected. Other Session input surfaces are unaffected.
 
 ### Computer and Session controls
 
-The thread's control card shows the Computer state and the Agent's automatic
-hibernation and close periods.
-Use its Hibernate/Wake button or More to recover the other actions. Commands are
-also available in an existing Session thread:
+Use these commands in an existing Session thread. `!help` privately shows the
+Computer state, the Agent's automatic hibernation and close periods, and buttons
+for these actions:
 
 | Message | Effect |
 | --- | --- |
@@ -239,6 +247,8 @@ existing native Stop hold.
 
 Native status follows execution facts: active work or uncertain cessation stays
 processing, while a genuine hold or input wait with no active work is suspended.
+Waiting for storage space stays processing because it resumes without anyone
+acting.
 A question does not make other owned work appear stopped. Once all Sessions
 contributing to the thread have ended and their stopping and Slack delivery
 obligations have settled, Slack receives the `closed` status. This applies to

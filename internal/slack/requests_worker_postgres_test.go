@@ -236,7 +236,7 @@ func TestSlackRequestRetriesUnavailableCapacityWithinReceiptExpiry(t *testing.T)
 					if err != nil || !found || feedback == nil {
 						t.Fatalf("expiry feedback: %v %v", found, err)
 					}
-					if !strings.Contains(string(feedback.payload), "not accepted before its deadline") || !strings.Contains(string(feedback.payload), "service health") {
+					if !strings.Contains(string(feedback.payload), "not applied in time") || !strings.Contains(string(feedback.payload), "service health") {
 						t.Fatalf("misleading expiry feedback: %s", feedback.payload)
 					}
 				}

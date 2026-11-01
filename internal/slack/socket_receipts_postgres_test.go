@@ -59,7 +59,7 @@ func TestSocketReceiptsCommitBeforeACKAndDeduplicate(t *testing.T) {
 	control.Target.Turn, control.Target.Ask = f.pendingQuestion(t)
 	control.OptionID = "yes"
 	form, _ := url.ParseQuery(string(interactionBody(t, InteractionHandler{ControlKey: key}, control, "human", slackNow())))
-	lifecycle := f.control("help")
+	lifecycle := f.control("wake")
 	lifecycle.ExpiresAt = 0
 	lifecycleForm, _ := url.ParseQuery(string(interactionBody(t, InteractionHandler{ControlKey: key}, lifecycle, "human", slackNow())))
 	for index, input := range []struct {

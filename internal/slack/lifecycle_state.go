@@ -7,8 +7,6 @@ import (
 	"uuid"
 )
 
-// The adapter compares and renders the same snapshot. Sampling again after
-// rendering could acknowledge a change that the published card never showed.
 // Aliases s and t are the front Session and its Slack thread.
 const lifecycleStateSQL = `jsonb_build_object(
  'computer_id',s.computer_id,'status',s.status,
@@ -35,13 +33,13 @@ type lifecycleState struct {
 	} `json:"control"`
 }
 
-func readLifecycleState(ctx context.Context, tx pgx.Tx, target controlTarget) (lifecycleState, []byte, error) {
+func readLifecycleState(ctx context.Context, tx pgx.Tx, target controlTarget) (lifecycleState, error) {
 	var state lifecycleState
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT `+lifecycleStateSQL+` FROM sessions s JOIN slack_threads t ON t.id=$3 AND t.front_session_id=s.id WHERE s.environment_id=$1 AND s.id=$2`, target.Environment, target.Session, target.Thread).Scan(&raw)
 	if err != nil {
-		return state, nil, err
+		return state, err
 	}
 	err = json.Unmarshal(raw, &state)
-	return state, raw, err
+	return state, err
 }

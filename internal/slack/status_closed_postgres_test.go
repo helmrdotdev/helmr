@@ -97,7 +97,7 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 				t.Fatalf("terminal guidance missing: %v", err)
 			}
 			var body map[string]any
-			if err = json.Unmarshal(hint.payload, &body); err != nil || body["text"] != "This Session is closed or unavailable. Mention the Agent in a new thread to start a new Session." {
+			if err = json.Unmarshal(hint.payload, &body); err != nil || body["text"] != "This Session has ended. Mention the Agent in a new thread to start another." {
 				t.Fatalf("terminal guidance: %s %v", hint.payload, err)
 			}
 			var n int

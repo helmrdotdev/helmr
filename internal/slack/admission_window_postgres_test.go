@@ -157,7 +157,7 @@ func TestSlackWaitingMessageExpiresWithItsReason(t *testing.T) {
 	var body struct {
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(intent.payload, &body); err != nil || !strings.Contains(body.Text, "not accepted within an hour") || !strings.Contains(body.Text, "execution quota") {
+	if err := json.Unmarshal(intent.payload, &body); err != nil || !strings.Contains(body.Text, "for an hour") || !strings.Contains(body.Text, "execution limit") {
 		t.Fatalf("feedback does not explain the wait: %q %v", body.Text, err)
 	}
 }
