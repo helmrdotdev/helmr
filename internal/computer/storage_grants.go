@@ -239,7 +239,7 @@ const (
 // ownReceiptSQL admits an object this same allocation was granted to upload, so
 // it can read its own upload back before certification. Parameters continue the
 // graph's: $6 host, $7 host epoch, $8 allocation.
-const ownReceiptSQL = `EXISTS(SELECT 1 FROM allocation_storage_writes w WHERE w.worker_host_id=$6 AND w.worker_epoch=$7 AND w.allocation_id=$8 AND w.org_id=$1 AND w.digest=$3)`
+const ownReceiptSQL = `EXISTS(SELECT 1 FROM allocation_upload_receipts w WHERE w.worker_host_id=$6 AND w.worker_epoch=$7 AND w.allocation_id=$8 AND w.org_id=$1 AND w.digest=$3)`
 
 func (b *StorageBroker) readAuthority(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, store, digest string) (storageAuthority, error) {
 	var a storageAuthority
@@ -309,7 +309,7 @@ func (b *StorageBroker) Read(ctx context.Context, host workergroup.HostPrincipal
 	return grant, nil
 }
 
-// writeAuthority records a create-only write receipt for this allocation. A
+// writeAuthority records a create-only upload receipt for this allocation. A
 // preparation source carries no write authority.
 func (b *StorageBroker) writeAuthority(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, record func(tx pgx.Tx, a storageAuthority) error) (storageAuthority, error) {
 	var a storageAuthority
@@ -329,12 +329,12 @@ func (b *StorageBroker) writeAuthority(ctx context.Context, host workergroup.Hos
 	return a, notReadyOnLock(err)
 }
 
-// recordStorageWrite records the receipt of an upload this allocation is about
+// recordUploadReceipt records the receipt of an upload this allocation is about
 // to make. The receipt binds a multipart upload to this allocation, lets it read
 // its own upload back before certification, and registers the upload's
 // lifetime so an abandoned one is reclaimed once the reclaimer has removed
 // receipts of ended allocations.
-func recordStorageWrite(ctx context.Context, tx pgx.Tx, a storageAuthority, object cas.Descriptor) error {
+func recordUploadReceipt(ctx context.Context, tx pgx.Tx, a storageAuthority, object cas.Descriptor) error {
 	var available bool
 	var size int64
 	if _, err := tx.Exec(ctx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, a.org, object.Digest, object.SizeBytes); err != nil {
@@ -346,10 +346,10 @@ func recordStorageWrite(ctx context.Context, tx pgx.Tx, a storageAuthority, obje
 	if size != object.SizeBytes || !available {
 		return ErrConflict
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO allocation_storage_writes(worker_host_id,worker_epoch,allocation_id,org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6,$7)
- ON CONFLICT (worker_host_id,allocation_id,digest) DO UPDATE SET upload_id=allocation_storage_writes.upload_id
- WHERE allocation_storage_writes.worker_epoch=EXCLUDED.worker_epoch AND allocation_storage_writes.org_id=EXCLUDED.org_id
- AND allocation_storage_writes.size_bytes=EXCLUDED.size_bytes AND allocation_storage_writes.media_type=EXCLUDED.media_type`,
+	tag, err := tx.Exec(ctx, `INSERT INTO allocation_upload_receipts(worker_host_id,worker_epoch,allocation_id,org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6,$7)
+ ON CONFLICT (worker_host_id,allocation_id,digest) DO UPDATE SET upload_id=allocation_upload_receipts.upload_id
+ WHERE allocation_upload_receipts.worker_epoch=EXCLUDED.worker_epoch AND allocation_upload_receipts.org_id=EXCLUDED.org_id
+ AND allocation_upload_receipts.size_bytes=EXCLUDED.size_bytes AND allocation_upload_receipts.media_type=EXCLUDED.media_type`,
 		a.hostID, a.hostEpoch, a.allocation, a.org, object.Digest, object.SizeBytes, object.MediaType)
 	if err != nil {
 		return err
@@ -366,7 +366,7 @@ func recordStorageWrite(ctx context.Context, tx pgx.Tx, a storageAuthority, obje
 // keep a released payload from reclamation. A multipart upload still in
 // progress keeps its receipt until it completes or its allocation ends.
 func releaseFinishedUploads(ctx context.Context, tx pgx.Tx, org uuid.UUID, digest string) error {
-	_, err := tx.Exec(ctx, `DELETE FROM allocation_storage_writes WHERE org_id=$1 AND digest=$2 AND upload_id IS NULL`, org, digest)
+	_, err := tx.Exec(ctx, `DELETE FROM allocation_upload_receipts WHERE org_id=$1 AND digest=$2 AND upload_id IS NULL`, org, digest)
 	return err
 }
 
@@ -391,7 +391,7 @@ func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipa
 	case !errors.Is(err, os.ErrNotExist):
 		return StorageWrite{}, SaveStorageUnavailable(err)
 	}
-	a, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return recordStorageWrite(ctx, tx, a, object) })
+	a, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error { return recordUploadReceipt(ctx, tx, a, object) })
 	if err != nil {
 		return StorageWrite{}, err
 	}
@@ -407,7 +407,7 @@ func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipa
 		return StorageWrite{}, SaveStorageUnavailable(err)
 	}
 	_, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error {
-		tag, err := tx.Exec(ctx, `UPDATE allocation_storage_writes SET upload_id=$5 WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4`, a.hostID, a.hostEpoch, a.allocation, object.Digest, upload.ID)
+		tag, err := tx.Exec(ctx, `UPDATE allocation_upload_receipts SET upload_id=$5 WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4`, a.hostID, a.hostEpoch, a.allocation, object.Digest, upload.ID)
 		if err == nil && tag.RowsAffected() != 1 {
 			err = ErrDenied
 		}
@@ -428,7 +428,7 @@ func (b *StorageBroker) ownedUpload(ctx context.Context, host workergroup.HostPr
 	}
 	a, err := b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error {
 		var owned bool
-		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM allocation_storage_writes WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4 AND size_bytes=$5 AND media_type=$6 AND upload_id=$7)`,
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM allocation_upload_receipts WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4 AND size_bytes=$5 AND media_type=$6 AND upload_id=$7)`,
 			a.hostID, a.hostEpoch, a.allocation, object.Digest, object.SizeBytes, object.MediaType, uploadID).Scan(&owned)
 		if err == nil && !owned {
 			err = ErrDenied
@@ -487,7 +487,7 @@ func (b *StorageBroker) Complete(ctx context.Context, host workergroup.HostPrinc
 	}
 	// The published object no longer depends on the upload.
 	_, err = b.writeAuthority(ctx, host, scope, object, func(tx pgx.Tx, a storageAuthority) error {
-		_, err := tx.Exec(ctx, `UPDATE allocation_storage_writes SET upload_id=NULL WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4 AND upload_id=$5`, a.hostID, a.hostEpoch, a.allocation, object.Digest, uploadID)
+		_, err := tx.Exec(ctx, `UPDATE allocation_upload_receipts SET upload_id=NULL WHERE worker_host_id=$1 AND worker_epoch=$2 AND allocation_id=$3 AND digest=$4 AND upload_id=$5`, a.hostID, a.hostEpoch, a.allocation, object.Digest, uploadID)
 		return err
 	})
 	return err

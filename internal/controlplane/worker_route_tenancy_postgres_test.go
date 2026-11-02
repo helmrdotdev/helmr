@@ -1364,7 +1364,7 @@ func (v *tenancyVictim) storageScope() workerapi.StorageScope {
 func receiptTenancyUpload(t *testing.T, v *tenancyVictim) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), v.f.Pool, `WITH blob AS (INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,$3 FROM environments WHERE id=$1 RETURNING org_id)
- INSERT INTO allocation_storage_writes(worker_host_id,worker_epoch,allocation_id,org_id,digest,size_bytes,media_type,upload_id)
+ INSERT INTO allocation_upload_receipts(worker_host_id,worker_epoch,allocation_id,org_id,digest,size_bytes,media_type,upload_id)
  SELECT $4,1,$5,org_id,$2,$3,$6,$7 FROM blob`, v.f.Environment, tenancyUpload.Digest, tenancyUpload.SizeBytes, v.f.Worker, v.f.Computer, tenancyUpload.MediaType, tenancyUploadID)
 }
 

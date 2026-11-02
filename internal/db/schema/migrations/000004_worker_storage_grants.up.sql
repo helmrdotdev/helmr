@@ -51,13 +51,13 @@ ALTER TABLE checkpoint_objects
     ADD FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id),
     ADD FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired);
 
--- Create-only storage writes granted to one Host allocation of an organization.
--- A receipt binds a multipart upload to the allocation that created it, lets
+-- Receipts of create-only uploads granted to one Host allocation of an
+-- organization. A receipt binds a multipart upload to the allocation that created it, lets
 -- the same allocation read back its own upload before certification, and keeps
 -- the upload's lifetime registered so the reclaimer can remove an abandoned
 -- upload once receipts of ended allocations are removed. Finding an object
 -- already stored records no receipt.
-CREATE TABLE allocation_storage_writes (
+CREATE TABLE allocation_upload_receipts (
     worker_host_id uuid NOT NULL REFERENCES worker_hosts(id) ON DELETE CASCADE,
     worker_epoch bigint NOT NULL CHECK (worker_epoch > 0),
     allocation_id uuid NOT NULL,
@@ -73,4 +73,4 @@ CREATE TABLE allocation_storage_writes (
     FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
 );
 
-CREATE INDEX allocation_storage_writes_digest ON allocation_storage_writes(org_id, digest);
+CREATE INDEX allocation_upload_receipts_digest ON allocation_upload_receipts(org_id, digest);

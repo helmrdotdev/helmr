@@ -10,7 +10,7 @@ SELECT lifetime.org_id, lifetime.digest
    AND NOT EXISTS (SELECT 1 FROM checkpoint_objects c WHERE c.org_id=lifetime.org_id AND c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM disk_objects c WHERE c.org_id=lifetime.org_id AND c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.org_id=lifetime.org_id AND o.digest=lifetime.digest)
-   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_upload_receipts w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
  ORDER BY lifetime.org_id, lifetime.digest
  LIMIT sqlc.arg(row_limit);
 
@@ -21,13 +21,13 @@ UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.org_id=sqlc.arg(org_id) AND lifetime.digest=sqlc.arg(digest)
    AND lifetime.retired_at IS NULL
-   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_upload_receipts w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
 ;
 
--- Write receipts authorize nothing once their allocation ends. Removing them
+-- Upload receipts authorize nothing once their allocation ends. Removing them
 -- lets an upload abandoned by that allocation become a retirement candidate.
--- name: DeleteEndedStorageWrites :execrows
-DELETE FROM allocation_storage_writes w
+-- name: DeleteEndedUploadReceipts :execrows
+DELETE FROM allocation_upload_receipts w
  WHERE NOT EXISTS (
     SELECT 1 FROM computer_leases l WHERE l.worker_host_id=w.worker_host_id AND l.worker_epoch=w.worker_epoch AND l.allocation_id=w.allocation_id AND l.fenced_at IS NULL)
    AND NOT EXISTS (

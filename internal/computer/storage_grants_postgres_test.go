@@ -264,7 +264,7 @@ func TestStorageGrantsEndWithAuthority(t *testing.T) {
 // Writes are create-only receipts of one allocation in its organization's
 // keyspace. The same allocation may read back its upload; another allocation
 // gets nothing, and an existing object is verified rather than re-signed.
-func TestStorageWritesAreAllocationReceipts(t *testing.T) {
+func TestStorageWritesRecordUploadReceipts(t *testing.T) {
 	g := newGrantFixture(t)
 	fresh := cas.Descriptor{Digest: digestOf("e"), SizeBytes: 7, MediaType: cas.CheckpointVMStateMediaType}
 	grant, err := g.broker.Write(t.Context(), g.host, g.scope(), fresh)
@@ -306,7 +306,7 @@ func TestStorageWritesAreAllocationReceipts(t *testing.T) {
 		}
 	}
 	var receipts int
-	if err := g.pool.QueryRow(t.Context(), `SELECT count(*) FROM allocation_storage_writes WHERE digest=$1`, sibling).Scan(&receipts); err != nil || receipts != 0 {
+	if err := g.pool.QueryRow(t.Context(), `SELECT count(*) FROM allocation_upload_receipts WHERE digest=$1`, sibling).Scan(&receipts); err != nil || receipts != 0 {
 		t.Fatalf("finding a stored object recorded %d receipts, %v", receipts, err)
 	}
 	g.signer.stored[g.own] = cas.Descriptor{Digest: g.own, SizeBytes: 7, MediaType: "application/octet-stream"}
@@ -370,7 +370,7 @@ func TestStorageOrganizationsHoldIndependentObjects(t *testing.T) {
 		t.Fatalf("lifetimes = %d, %v", lifetimes, err)
 	}
 	// Retiring one organization's abandoned lifetime leaves the other's.
-	dbtest.MustExec(t, t.Context(), g.pool, `DELETE FROM allocation_storage_writes WHERE org_id=$1 AND digest=$2`, g.org, shared)
+	dbtest.MustExec(t, t.Context(), g.pool, `DELETE FROM allocation_upload_receipts WHERE org_id=$1 AND digest=$2`, g.org, shared)
 	if n, err := db.New(g.pool).RetireAbandonedCasBlob(t.Context(), db.RetireAbandonedCasBlobParams{OrgID: pgvalue.UUID(g.org), Digest: shared}); err != nil || n != 1 {
 		t.Fatalf("retire own lifetime = %d, %v", n, err)
 	}

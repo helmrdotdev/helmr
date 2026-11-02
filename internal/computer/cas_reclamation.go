@@ -15,7 +15,7 @@ import (
 // Reconcile retires abandoned CAS blobs, then sweeps retired blobs'
 // remote storage. Retirement always commits before any remote I/O.
 func (r *CASReclaimer) Reconcile(ctx context.Context) error {
-	if _, err := r.queries.DeleteEndedStorageWrites(ctx); err != nil {
+	if _, err := r.queries.DeleteEndedUploadReceipts(ctx); err != nil {
 		return err
 	}
 	candidates, err := r.queries.ListAbandonedCasBlobs(ctx, 100)

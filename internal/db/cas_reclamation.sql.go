@@ -92,8 +92,8 @@ func (q *Queries) ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCa
 	return items, nil
 }
 
-const deleteEndedStorageWrites = `-- name: DeleteEndedStorageWrites :execrows
-DELETE FROM allocation_storage_writes w
+const deleteEndedUploadReceipts = `-- name: DeleteEndedUploadReceipts :execrows
+DELETE FROM allocation_upload_receipts w
  WHERE NOT EXISTS (
     SELECT 1 FROM computer_leases l WHERE l.worker_host_id=w.worker_host_id AND l.worker_epoch=w.worker_epoch AND l.allocation_id=w.allocation_id AND l.fenced_at IS NULL)
    AND NOT EXISTS (
@@ -102,10 +102,10 @@ DELETE FROM allocation_storage_writes w
     SELECT 1 FROM boot_seed_builds b WHERE b.worker_host_id=w.worker_host_id AND b.worker_epoch=w.worker_epoch AND b.allocation_id=w.allocation_id AND b.fenced_at IS NULL)
 `
 
-// Write receipts authorize nothing once their allocation ends. Removing them
+// Upload receipts authorize nothing once their allocation ends. Removing them
 // lets an upload abandoned by that allocation become a retirement candidate.
-func (q *Queries) DeleteEndedStorageWrites(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteEndedStorageWrites)
+func (q *Queries) DeleteEndedUploadReceipts(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEndedUploadReceipts)
 	if err != nil {
 		return 0, err
 	}
@@ -120,7 +120,7 @@ SELECT lifetime.org_id, lifetime.digest
    AND NOT EXISTS (SELECT 1 FROM checkpoint_objects c WHERE c.org_id=lifetime.org_id AND c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM disk_objects c WHERE c.org_id=lifetime.org_id AND c.digest=lifetime.digest)
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.org_id=lifetime.org_id AND o.digest=lifetime.digest)
-   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_upload_receipts w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
  ORDER BY lifetime.org_id, lifetime.digest
  LIMIT $1
 `
@@ -195,7 +195,7 @@ UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.org_id=$1 AND lifetime.digest=$2
    AND lifetime.retired_at IS NULL
-   AND NOT EXISTS (SELECT 1 FROM allocation_storage_writes w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
+   AND NOT EXISTS (SELECT 1 FROM allocation_upload_receipts w WHERE w.org_id=lifetime.org_id AND w.digest=lifetime.digest)
 `
 
 type RetireAbandonedCasBlobParams struct {

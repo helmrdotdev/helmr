@@ -1,4 +1,4 @@
-DROP TABLE allocation_storage_writes;
+DROP TABLE allocation_upload_receipts;
 
 ALTER TABLE checkpoint_objects
     DROP CONSTRAINT checkpoint_objects_org_id_digest_size_bytes_availability_r_fkey,

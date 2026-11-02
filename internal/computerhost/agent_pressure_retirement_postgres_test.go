@@ -75,7 +75,7 @@ func (c *pressureRetirementClient) PublishAgentSave(ctx context.Context, r worke
 
 type pressureRetirementReclaimer struct{ *cas.File }
 
-// receiptedSavePublisher records the write receipt a storage grant issues.
+// receiptedSavePublisher records the upload receipt a storage grant issues.
 type receiptedSavePublisher struct {
 	saveStoragePublisher
 	pool *pgxpool.Pool
