@@ -156,7 +156,8 @@ func ValidateTemplateManifest(m TemplateManifest) error {
 
 var computerSeedDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// DefaultPlacement is the placement of a Template that names none.
+// DefaultPlacement is the placement of a Template that names none. It maps to
+// deployment capacity unless its environment assigns it to a group.
 const DefaultPlacement = "default"
 
 // ValidatePlacement accepts a logical placement name. The name never identifies

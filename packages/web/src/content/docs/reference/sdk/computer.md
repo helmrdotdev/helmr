@@ -43,7 +43,7 @@ Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 | `resources.cpu` | yes | Positive number of CPUs; must resolve to whole milliCPU (for example `0.5`, `1`, `2`). |
 | `resources.memory` | yes | Positive integer with `MiB` or `GiB`, for example `"4GiB"`. |
 | `resources.disk` | no | Must be `"32GiB"` in this release; omit it to use that size. |
-| `placement` | no | Logical name of the capacity that runs Computers created from this Template, matching the definition ID syntax. Default `"default"`, which runs on the installation's own worker capacity unless the Environment binds it elsewhere. Each Environment binds every other name it deploys to worker capacity, so the same code deploys unchanged to every Environment; the name never identifies a worker group or machine. |
+| `placement` | no | Logical name for the capacity that runs Computers created from this Template, matching the definition ID syntax. Default `"default"`. The name never identifies a worker group or machine, so the same code deploys unchanged to every Environment. In this release every placement runs on the installation's own capacity. |
 | `network` | no | Outbound network maximum for Computers created from this Template. Omission keeps ordinary IPv4 connectivity under installation restrictions. |
 | `prepareNetwork` | no | Replaces the network policy during `prepare`; omission inherits `network`. Requires a callback. |
 | `prepare` | no | Preparation function. Runs with a `PrepareContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
