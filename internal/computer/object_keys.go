@@ -160,8 +160,9 @@ func (b *KeyBroker) BootSeedKey(ctx context.Context, host workergroup.HostPrinci
 			if ref.BuildID != build {
 				return a, ErrDenied
 			}
+			// A missing build is refused like another host's.
 			if err = CheckBootSeedExecutor(ctx, tx, host, ref, true); err != nil {
-				return a, err
+				return a, hideMissing(err)
 			}
 			a.mayCreate, a.authorizedHolder = true, true
 		case scope.Computer != nil:

@@ -115,7 +115,7 @@ func (v *tenancyVictim) configure(cfg *ServerConfig) {
 		cfg.ComputerKeys = v.keys
 	}
 	if v.cas.File != nil {
-		cfg.CAS = v.cas
+		cfg.CAS = func(uuid.UUID) cas.UploadStore { return v.cas }
 	}
 }
 
@@ -305,6 +305,30 @@ var workerRouteTenancyCases = []workerRouteTenancyCase{
 	}},
 	{route: "/worker/v1/allocations/image-build/logs", held: "image_build", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
 		return workerapi.PreparationLogRequest{Executor: v.imageBuild, Stream: "stdout", Kind: "data", Sequence: 1, ThroughSequence: 1, ObservedAtUnixNano: v.observedAt.UnixNano(), Data: []byte("output")}
+	}},
+	{route: "/worker/v1/agent-computers/checkpoint/key", setup: sealTenancyCapture, held: "checkpoint", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.CheckpointKeyRequest{Identity: v.lease(), CheckpointID: v.capture.CheckpointID}
+	}},
+	{route: "/worker/v1/boot-seeds/key", held: "boot_seed", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.BootSeedKeyRequest{Scope: workerapi.StorageScope{BootSeed: &v.bootSeed}, BuildID: v.bootSeed.Identity.OwnerID}
+	}},
+	{route: "/worker/v1/boot-seeds/key", name: "computer", setup: selectTenancyBootSeed, held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.BootSeedKeyRequest{Scope: v.storageScope(), BuildID: v.bootSeed.Identity.OwnerID}
+	}},
+	{route: "/worker/v1/storage/reads", setup: receiptTenancyUpload, held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.StorageReadRequest{Scope: v.storageScope(), Store: workerapi.StorageCAS, Digest: tenancyUpload.Digest}
+	}},
+	{route: "/worker/v1/storage/writes", held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.StorageWriteRequest{Scope: v.storageScope(), Object: tenancyUpload}
+	}},
+	{route: "/worker/v1/storage/writes/parts", setup: receiptTenancyUpload, held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.StoragePartsRequest{Scope: v.storageScope(), Object: tenancyUpload, UploadID: tenancyUploadID, Parts: []int32{1}}
+	}},
+	{route: "/worker/v1/storage/writes/complete", setup: receiptTenancyUpload, held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.StorageCompleteRequest{Scope: v.storageScope(), Object: tenancyUpload, UploadID: tenancyUploadID, Parts: []cas.CompletedPart{{Number: 1, ETag: "part"}}}
+	}},
+	{route: "/worker/v1/storage/writes/abort", setup: receiptTenancyUpload, held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
+		return workerapi.StorageAbortRequest{Scope: v.storageScope(), Object: tenancyUpload, UploadID: tenancyUploadID}
 	}},
 	{route: "/worker/v1/computer-saves/next", held: "lease", body: func(v *tenancyVictim, _ func([]byte) []byte) any {
 		return workerapi.AgentSaveDiscovery{AllocationIdentity: v.lease(), Admit: true}
@@ -634,6 +658,16 @@ func newTenancyVictim(t *testing.T, claimCommand bool) *tenancyVictim {
 // qualifyTenancyBootSeed publishes the victim's boot seed build for the
 // deployment's Program and acknowledges current resource policy on every
 // victim-group host, making it an eligible preparation source in region test.
+// selectTenancyBootSeed has the running seed allocation create its data key,
+// qualifies the seed and selects it for the victim lease, which may then
+// receive that key.
+func selectTenancyBootSeed(t *testing.T, v *tenancyVictim) {
+	t.Helper()
+	v.post(t, "/worker/v1/boot-seeds/key", workerapi.BootSeedKeyRequest{Scope: workerapi.StorageScope{BootSeed: &v.bootSeed}, BuildID: v.bootSeed.Identity.OwnerID}, nil)
+	qualifyTenancyBootSeed(t, v)
+	dbtest.MustExec(t, t.Context(), v.f.Pool, `UPDATE computer_leases SET boot_seed_build_id=$3 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, v.f.Environment, v.f.Computer, uuid.MustParse(v.bootSeed.Identity.OwnerID))
+}
+
 func qualifyTenancyBootSeed(t *testing.T, v *tenancyVictim) {
 	t.Helper()
 	program := computercheckpoint.Program{
@@ -1315,6 +1349,25 @@ func claimTenancyTurn(t *testing.T, v *tenancyVictim) {
 
 // bindTenancyLeaseDisk binds the lease's disk write key through the key
 // broker, as the victim host does before writing a save.
+// tenancyUpload is an object the victim lease uploads under tenancyUploadID.
+var tenancyUpload = workerapi.CASObject{Digest: sha256sum.DigestBytes([]byte("tenancy upload")), SizeBytes: int64(len("tenancy upload")), MediaType: cas.CheckpointMemoryMediaType}
+
+const tenancyUploadID = "tenancy-upload"
+
+func (v *tenancyVictim) storageScope() workerapi.StorageScope {
+	lease := v.lease()
+	return workerapi.StorageScope{Computer: &lease}
+}
+
+// receiptTenancyUpload records the victim lease's upload receipt for
+// tenancyUpload, so the victim host may read it back and continue it.
+func receiptTenancyUpload(t *testing.T, v *tenancyVictim) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), v.f.Pool, `WITH blob AS (INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,$3 FROM environments WHERE id=$1 RETURNING org_id)
+ INSERT INTO allocation_storage_writes(worker_host_id,worker_epoch,allocation_id,org_id,digest,size_bytes,media_type,upload_id)
+ SELECT $4,1,$5,org_id,$2,$3,$6,$7 FROM blob`, v.f.Environment, tenancyUpload.Digest, tenancyUpload.SizeBytes, v.f.Worker, v.f.Computer, tenancyUpload.MediaType, tenancyUploadID)
+}
+
 func bindTenancyLeaseDisk(t *testing.T, v *tenancyVictim) {
 	t.Helper()
 	bindFixtureLeaseDisk(t, v.f.Pool, workergroup.HostPrincipal{HostID: v.f.Worker, GroupID: v.f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}, v.f.Environment, v.f.Computer, 1)

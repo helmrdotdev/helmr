@@ -168,7 +168,7 @@ Two Admin API operations change worker group credentials, with different effects
   fences every registering, active and draining host of the group as lost and
   revokes every host secret the group issued. Their host credentials and Secret
   proxy grants fail every authorization check from then on; a request already
-  authorized before the revocation may still complete. Their allocations are
+  authorized before the revocation may still complete. Storage requests the Control Plane signed for those hosts before the revocation stay usable until they expire, at most 5 minutes later. Their allocations are
   reconciled as host loss. The response lists the fenced host IDs. The enrollment
   token is unchanged, so a machine that still holds it can enroll again. Each fenced host is audited as `worker_host.marked_lost`.
 
