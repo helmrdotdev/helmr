@@ -490,8 +490,8 @@ func TestPreparationGrantsCoverOnlyBuildInputs(t *testing.T) {
 	build, allocation := uuid.NewV7(), uuid.NewV7()
 	credential := bytes.Repeat([]byte{21}, 32)
 	digest := sha256.Sum256(credential)
-	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
- SELECT $1,$2,$3,'grants','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$6`,
+	dbtest.MustExec(t, t.Context(), g.pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,worker_group_id)
+ SELECT $1,$2,$3,'grants','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),536870912,1073741824,vm_platform_id,1,cpu_environment_digest,worker_group_id FROM worker_hosts WHERE id=$6`,
 		g.env, build, g.deployment, allocation, digest[:], g.base.Worker)
 	scope := StorageScope{Preparation: &ImageBuildExecutor{EnvironmentID: g.env, ImageBuildID: build, InstanceID: allocation, Epoch: 1, ChannelCredential: credential}}
 	artifact := digestOf("5")
