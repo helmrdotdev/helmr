@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/slack"
+	"github.com/helmrdotdev/helmr/internal/sso"
 	"time"
 	"uuid"
 
@@ -79,6 +80,9 @@ func RevokeOtherAccess(ctx context.Context, database db.TxBeginner, cfg Config, 
 // admitted before this transaction is refused at its next check.
 func retireAccountChannels(ctx context.Context, tx pgx.Tx, user, keep uuid.UUID) error {
 	if err := slack.RetireAccountAccess(ctx, tx, user); err != nil {
+		return err
+	}
+	if err := sso.RevokeAccountProofs(ctx, tx, user, keep); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL`, user, keep); err != nil {

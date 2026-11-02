@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/slack"
+	"github.com/helmrdotdev/helmr/internal/sso"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -57,6 +58,9 @@ func RemoveMember(ctx context.Context, database db.TxBeginner, manager org.Manag
 		if err := slack.RetireMemberAccess(ctx, tx, manager.OrgID, memberID); err != nil {
 			return err
 		}
+		if err := sso.RetireMemberAccess(ctx, tx, manager.OrgID, memberID); err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL RETURNING id`, manager.OrgID, memberID)
 		if err != nil {
 			return err
@@ -105,6 +109,9 @@ func ChangeMemberAccess(ctx context.Context, database db.TxBeginner, manager org
 			return nil
 		}
 		if err := slack.RetireMemberAccess(ctx, tx, manager.OrgID, id); err != nil {
+			return err
+		}
+		if err := sso.RevokeMemberProofs(ctx, tx, manager.OrgID, id); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL`, manager.OrgID, id); err != nil {

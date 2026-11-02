@@ -37,6 +37,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/sso"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -100,6 +101,8 @@ type Server struct {
 	authKeys                   auth.Keys
 	appOrigin                  *url.URL
 	authProvider               AuthProvider
+	ssoStore                   *sso.Store
+	ssoHTTP                    *http.Client
 	mailer                     email.Sender
 	emailCodeDelivery          *EmailCodeDelivery
 	identity                   identity.Config
@@ -149,6 +152,10 @@ type ServerConfig struct {
 	Mailer            email.Sender
 	EmailCodeDelivery *EmailCodeDelivery
 	AuthProvider      AuthProvider
+	// SSO stores organization SSO connections; nil disables SSO. SSOHTTPClient
+	// makes the outbound requests to organizations' identity providers.
+	SSO           *sso.Store
+	SSOHTTPClient *http.Client
 
 	WorkerHostCredentialSigningKey []byte
 	WorkerHostCredentialTTL        time.Duration
@@ -311,6 +318,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		authKeys:                   authKeys,
 		appOrigin:                  cfg.AppOrigin,
 		authProvider:               cfg.AuthProvider,
+		ssoStore:                   cfg.SSO,
+		ssoHTTP:                    cfg.SSOHTTPClient,
 		mailer:                     mailer,
 		emailCodeDelivery:          cfg.EmailCodeDelivery,
 		identity:                   identity.NewConfig(authKeys, cfg.AuditPolicy),
@@ -499,9 +508,18 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.Post("/auth/email/{id}/verify", s.emailVerify)
 	r.Post("/auth/passkey/options", s.passkeyOptions)
 	r.Post("/auth/passkey/verify", s.passkeyVerify)
-	r.With(s.requireAccount).Get("/me", s.me)
-	r.With(s.requireAccount).Post("/account/activity", s.accountActivity)
-	r.With(s.requireAccount).Get("/organizations", s.organizations)
+	r.Post("/auth/sso/start", s.ssoStart)
+	r.Post("/auth/sso/oidc/finish", s.ssoOIDCFinish)
+	r.Post("/auth/sso/saml/{connectionID}/acs", s.ssoSAMLACS)
+	r.Get("/auth/sso/saml/{connectionID}/metadata", s.ssoSAMLMetadata)
+	r.Post("/auth/sso/saml/finish", s.ssoSAMLFinish)
+	r.Get("/auth/sso/link", s.ssoLink)
+	r.With(s.requireAccount).Post("/auth/sso/link/confirm", s.ssoLinkConfirm)
+	r.With(s.requireAccount).Post("/account/sso/link", s.accountSSOLinkStart)
+	r.With(s.requireAccount).Get("/account/sso/bindings", s.accountSSOBindings)
+	r.With(s.requireAccountShell).Get("/me", s.me)
+	r.With(s.requireAccountShell).Post("/account/activity", s.accountActivity)
+	r.With(s.requireAccountShell).Get("/organizations", s.organizations)
 	r.With(s.requireAccount).Post("/organizations", s.createOrganization)
 	r.With(s.requireSession).Get("/organization", s.organizationContext)
 	r.With(s.requireAccount).Get("/account/credentials", s.accountCredentials)

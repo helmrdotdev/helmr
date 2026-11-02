@@ -27,7 +27,11 @@ type Principal struct {
 	IdentityID        uuid.UUID
 	PasskeyID         uuid.UUID
 	AuthenticatedAt   time.Time
-	Channel           string
+	// SSOProofID and SSOAuthenticatedAt are the browser session's live SSO
+	// proof for OrgID, when it holds one.
+	SSOProofID         uuid.UUID
+	SSOAuthenticatedAt time.Time
+	Channel            string
 
 	OrgID         uuid.UUID
 	UserID        uuid.UUID

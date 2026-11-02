@@ -151,7 +151,22 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 
 type accountOnlyContextKey struct{}
 
+// requireAccount admits a browser account with an ordinary source. A session
+// signed in through SSO alone reaches only its organizations and the shell.
 func (s *Server) requireAccount(next http.Handler) http.Handler {
+	return s.requireAccountShell(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := principalFromContext(r.Context())
+		if p.IdentityID == uuid.Nil() && p.PasskeyID == uuid.Nil() {
+			writeError(w, identityError(identity.ErrOrdinarySignInRequired))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+// requireAccountShell admits any browser account, including one signed in
+// through SSO alone, so the Console shell can render.
+func (s *Server) requireAccountShell(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := bearerToken(r.Header.Get("Authorization")); ok {
 			writeError(w, forbidden(errors.New("account cookie is required")))

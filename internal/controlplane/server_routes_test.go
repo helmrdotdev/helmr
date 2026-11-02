@@ -81,10 +81,13 @@ GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /agent-setup/{harness}.md
 GET /api/account/credentials
+GET /api/account/sso/bindings
 GET /api/audit-events
 GET /api/audit-events/actions
 GET /api/auth/config
 GET /api/auth/device/status
+GET /api/auth/sso/link
+GET /api/auth/sso/saml/{connectionID}/metadata
 GET /api/groups
 GET /api/groups/{id}
 GET /api/groups/{id}/members
@@ -233,6 +236,7 @@ POST /api/account/email-change/verify
 POST /api/account/passkeys/complete
 POST /api/account/passkeys/options
 POST /api/account/providers/github/link
+POST /api/account/sso/link
 POST /api/auth/device/approve
 POST /api/auth/device/deny
 POST /api/auth/device/start
@@ -248,6 +252,11 @@ POST /api/auth/invitations/resolve
 POST /api/auth/logout
 POST /api/auth/passkey/options
 POST /api/auth/passkey/verify
+POST /api/auth/sso/link/confirm
+POST /api/auth/sso/oidc/finish
+POST /api/auth/sso/saml/finish
+POST /api/auth/sso/saml/{connectionID}/acs
+POST /api/auth/sso/start
 POST /api/groups
 POST /api/invitations
 POST /api/members/{memberID}/resume

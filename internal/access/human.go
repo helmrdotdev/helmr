@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"errors"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -38,6 +39,28 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	return p, nil
 }
 
+// loadSSOProof reads a browser session's live SSO proof for its organization:
+// unrevoked, unexpired under the organization's lifetime, and derived from a
+// live binding through an active connection.
+func loadSSOProof(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, uuid.UUID, error) {
+	p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
+	if p.Channel != "browser" || p.SlackLinkID != uuid.Nil() {
+		return p, uuid.Nil(), nil
+	}
+	var member uuid.UUID
+	err := q.QueryRow(ctx, `SELECT p.id,p.authenticated_at,p.member_id FROM browser_sso_proofs p
+ JOIN org_sso_member_bindings b ON b.id=p.binding_id AND b.retired_at IS NULL
+ JOIN org_sso_identities i ON i.id=b.identity_id
+ JOIN org_sso_connections c ON c.id=i.connection_id AND c.state='active'
+ JOIN organizations o ON o.id=p.org_id
+ WHERE p.session_id=$1 AND p.org_id=$2 AND p.user_id=$3 AND p.revoked_at IS NULL
+ AND p.authenticated_at+make_interval(secs=>COALESCE(o.sso_session_seconds,86400))>clock_timestamp()`, p.SessionID, p.OrgID, p.UserID).Scan(&p.SSOProofID, &p.SSOAuthenticatedAt, &member)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, uuid.Nil(), nil
+	}
+	return p, member, err
+}
+
 func nullableID(id pgtype.UUID) uuid.UUID {
 	if !id.Valid {
 		return uuid.Nil()
@@ -51,6 +74,9 @@ func humanReadError(err error) error {
 	return err
 }
 
+// attachMembership admits a principal to its organization. A browser is
+// admitted by its ordinary proof or by its live SSO proof for that
+// organization; the member's cutoff applies to whichever admits it.
 func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, error) {
 	var id uuid.UUID
 	var cutoff pgtype.Timestamptz
@@ -62,7 +88,15 @@ func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Pr
 	if p.MemberID != uuid.Nil() && p.MemberID != id {
 		return p, ErrDenied
 	}
-	if cutoff.Valid && !p.AuthenticatedAt.After(cutoff.Time) {
+	p, proofMember, err := loadSSOProof(ctx, q, p)
+	if err != nil {
+		return p, err
+	}
+	if proofMember != uuid.Nil() && proofMember != id {
+		p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
+	}
+	after := func(at time.Time) bool { return !at.IsZero() && (!cutoff.Valid || at.After(cutoff.Time)) }
+	if !after(p.AuthenticatedAt) && !after(p.SSOAuthenticatedAt) {
 		return p, ErrDenied
 	}
 	p.MemberID = id
@@ -79,7 +113,7 @@ func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Pr
 
 // currentMember checks current account and organization access for a new human operation.
 func currentMember(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Principal, error) {
-	if prior.Kind != auth.PrincipalKindSession || prior.UserID == uuid.Nil() || prior.MemberID == uuid.Nil() || prior.AuthenticatedAt.IsZero() {
+	if prior.Kind != auth.PrincipalKindSession || prior.UserID == uuid.Nil() || prior.MemberID == uuid.Nil() || (prior.AuthenticatedAt.IsZero() && prior.SSOAuthenticatedAt.IsZero()) {
 		return auth.Principal{}, ErrDenied
 	}
 	var locked uuid.UUID

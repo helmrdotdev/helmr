@@ -8,30 +8,31 @@ import (
 	"time"
 
 	"github.com/beevik/etree"
+	"github.com/helmrdotdev/helmr/internal/sso/ssotest"
 )
 
 const attacker = "mallory@evil.test"
 
 func TestSAMLAcceptsEachIdPSigningStyle(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	idp := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
 	for _, tc := range []struct {
 		name string
 		edit func(*responseOptions)
 	}{
-		{"assertion signed (Entra, Google default)", func(o *responseOptions) { o.sign = signAssertion }},
-		{"response signed (ADFS style)", func(o *responseOptions) { o.sign = signResponse }},
-		{"both signed (Keycloak default)", func(o *responseOptions) { o.sign = signAssertion | signResponse }},
-		{"SHA-1 signature (Entra option)", func(o *responseOptions) { o.sha1 = true }},
+		{"assertion signed (Entra, Google default)", func(o *responseOptions) { o.Sign = signAssertion }},
+		{"response signed (ADFS style)", func(o *responseOptions) { o.Sign = signResponse }},
+		{"both signed (Keycloak default)", func(o *responseOptions) { o.Sign = signAssertion | signResponse }},
+		{"SHA-1 signature (Entra option)", func(o *responseOptions) { o.SHA1 = true }},
 		{"persistent NameID with email attribute (Okta, Entra pairwise)", func(o *responseOptions) {
-			o.nameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
-			o.nameID = "00u1abcd"
-			o.attributes = map[string]string{"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "alice@example.test"}
+			o.NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"
+			o.NameID = "00u1abcd"
+			o.Attributes = map[string]string{"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "alice@example.test"}
 		}},
-		{"email NameID without attributes (minimal Okta app)", func(o *responseOptions) { o.attributes = nil }},
+		{"email NameID without attributes (minimal Okta app)", func(o *responseOptions) { o.Attributes = nil }},
 		{"unspecified NameID holding a UPN (Entra default)", func(o *responseOptions) {
-			o.nameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
-			o.attributes = map[string]string{"email": "alice@example.test"}
+			o.NameIDFormat = "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"
+			o.Attributes = map[string]string{"email": "alice@example.test"}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,14 +43,14 @@ func TestSAMLAcceptsEachIdPSigningStyle(t *testing.T) {
 			}
 			o := defaultOptions(sp, requestID, now)
 			tc.edit(&o)
-			got, err := sp.Validate(encode(t, idp.response(t, o)), requestID)
+			got, err := sp.Validate(ssotest.Encode(t, idp.Response(t, o)), requestID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Subject != o.nameID || got.Email != "alice@example.test" || got.ID != o.assertionID {
+			if got.Subject != o.NameID || got.Email != "alice@example.test" || got.ID != o.AssertionID {
 				t.Fatalf("assertion = %+v", got)
 			}
-			if want, _ := time.Parse(time.RFC3339, o.authnInstant); !got.AuthenticatedAt.Equal(want) {
+			if want, _ := time.Parse(time.RFC3339, o.AuthnInstant); !got.AuthenticatedAt.Equal(want) {
 				t.Fatalf("authenticated at %v, want IdP AuthnInstant %v", got.AuthenticatedAt, want)
 			}
 		})
@@ -58,33 +59,33 @@ func TestSAMLAcceptsEachIdPSigningStyle(t *testing.T) {
 
 func TestSAMLRefusesInvalidResponses(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	idp := newTestIdP(t)
-	other := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
+	other := ssotest.NewIdP(t)
 	for _, tc := range []struct {
 		name    string
 		edit    func(*responseOptions)
-		signer  *testIdP
+		signer  *ssotest.IdP
 		request string
 		want    error
 	}{
 		{name: "answers another request", request: "_other", want: ErrSAMLWrongRequest},
 		{name: "transient NameID", edit: func(o *responseOptions) {
-			o.nameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
+			o.NameIDFormat = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient"
 		}, want: ErrTransientNameID},
-		{name: "another audience", edit: func(o *responseOptions) { o.audience = "https://other.example.test" }, want: ErrSAMLResponse},
-		{name: "another recipient", edit: func(o *responseOptions) { o.recipient = "https://other.example.test/acs" }, want: ErrSAMLResponse},
-		{name: "another issuer", edit: func(o *responseOptions) { o.issuer = "https://other-idp.example.test" }, want: ErrSAMLResponse},
+		{name: "another audience", edit: func(o *responseOptions) { o.Audience = "https://other.example.test" }, want: ErrSAMLResponse},
+		{name: "another recipient", edit: func(o *responseOptions) { o.Recipient = "https://other.example.test/acs" }, want: ErrSAMLResponse},
+		{name: "another issuer", edit: func(o *responseOptions) { o.Issuer = "https://other-idp.example.test" }, want: ErrSAMLResponse},
 		{name: "expired", edit: func(o *responseOptions) {
-			o.notBefore, o.notOnOrAfter = now.Add(-time.Hour), now.Add(-30*time.Minute)
+			o.NotBefore, o.NotOnOrAfter = now.Add(-time.Hour), now.Add(-30*time.Minute)
 		}, want: ErrSAMLResponse},
-		{name: "not yet valid", edit: func(o *responseOptions) { o.notBefore = now.Add(time.Hour) }, want: ErrSAMLResponse},
-		{name: "no AuthnInstant", edit: func(o *responseOptions) { o.authnInstant = "" }, want: ErrSAMLResponse},
+		{name: "not yet valid", edit: func(o *responseOptions) { o.NotBefore = now.Add(time.Hour) }, want: ErrSAMLResponse},
+		{name: "no AuthnInstant", edit: func(o *responseOptions) { o.AuthnInstant = "" }, want: ErrSAMLResponse},
 		{name: "signed by an unknown key", signer: &other, want: ErrSAMLResponse},
-		{name: "signed assertion answers another request", edit: func(o *responseOptions) { o.scdRequestID = "_other" }, want: ErrSAMLWrongRequest},
-		{name: "signed assertion has no request ID (IdP-initiated)", edit: func(o *responseOptions) { o.scdRequestID = "-" }, want: ErrSAMLWrongRequest},
-		{name: "no audience restriction", edit: func(o *responseOptions) { o.noAudience = true }, want: ErrSAMLResponse},
-		{name: "AuthnInstant in the future", edit: func(o *responseOptions) { o.authnInstant = now.Add(time.Hour).Format(time.RFC3339) }, want: ErrSAMLResponse},
-		{name: "unsigned", edit: func(o *responseOptions) { o.sign = 0 }, want: ErrSAMLResponse},
+		{name: "signed assertion answers another request", edit: func(o *responseOptions) { o.SCDRequestID = "_other" }, want: ErrSAMLWrongRequest},
+		{name: "signed assertion has no request ID (IdP-initiated)", edit: func(o *responseOptions) { o.SCDRequestID = "-" }, want: ErrSAMLWrongRequest},
+		{name: "no audience restriction", edit: func(o *responseOptions) { o.NoAudience = true }, want: ErrSAMLResponse},
+		{name: "AuthnInstant in the future", edit: func(o *responseOptions) { o.AuthnInstant = now.Add(time.Hour).Format(time.RFC3339) }, want: ErrSAMLResponse},
+		{name: "unsigned", edit: func(o *responseOptions) { o.Sign = 0 }, want: ErrSAMLResponse},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sp := testSP(t, idp, now)
@@ -104,7 +105,7 @@ func TestSAMLRefusesInvalidResponses(t *testing.T) {
 			if tc.request != "" {
 				expected = tc.request
 			}
-			if _, err := sp.Validate(encode(t, signer.response(t, o)), expected); !errors.Is(err, tc.want) {
+			if _, err := sp.Validate(ssotest.Encode(t, signer.Response(t, o)), expected); !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
 		})
@@ -115,17 +116,17 @@ func TestSAMLRefusesInvalidResponses(t *testing.T) {
 // so its InResponseTo must not stand in for the signed one.
 func TestSAMLIgnoresForgedEnvelopeRequestID(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	idp := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
 	sp := testSP(t, idp, now)
 	_, requestID, err := sp.AuthnRequest(false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o := defaultOptions(sp, "_unsolicited", now)
-	o.scdRequestID = "-"
-	doc := idp.response(t, o)
+	o.SCDRequestID = "-"
+	doc := idp.Response(t, o)
 	doc.Root().CreateAttr("InResponseTo", requestID)
-	if _, err := sp.Validate(encode(t, doc), requestID); !errors.Is(err, ErrSAMLWrongRequest) {
+	if _, err := sp.Validate(ssotest.Encode(t, doc), requestID); !errors.Is(err, ErrSAMLWrongRequest) {
 		t.Fatalf("forged envelope err = %v", err)
 	}
 }
@@ -134,7 +135,7 @@ func TestSAMLIgnoresForgedEnvelopeRequestID(t *testing.T) {
 // must be refused, or at worst still yield the legitimate subject.
 func TestSAMLRefusesSignatureWrapping(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	idp := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
 	attacks := []struct {
 		name string
 		fn   func(*etree.Document)
@@ -192,10 +193,10 @@ func TestSAMLRefusesSignatureWrapping(t *testing.T) {
 					t.Fatal(err)
 				}
 				o := defaultOptions(sp, requestID, now)
-				o.sign = mode.sign
-				doc := idp.response(t, o)
+				o.Sign = mode.sign
+				doc := idp.Response(t, o)
 				a.fn(doc)
-				got, err := sp.Validate(encode(t, doc), requestID)
+				got, err := sp.Validate(ssotest.Encode(t, doc), requestID)
 				if err == nil && strings.Contains(got.Subject+got.Email, "evil") {
 					t.Fatalf("accepted as %+v", got)
 				}
@@ -208,7 +209,7 @@ func TestSAMLRefusesSignatureWrapping(t *testing.T) {
 }
 
 func TestSAMLAuthnRequest(t *testing.T) {
-	idp := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
 	sp := testSP(t, idp, time.Now())
 	for _, force := range []bool{false, true} {
 		redirect, requestID, err := sp.AuthnRequest(force)
