@@ -29,10 +29,12 @@ type ReadSigner interface {
 }
 
 // WriteSigner authorizes create-only writes into the content store. Multipart
-// creation, completion, whole-object verification and abort stay with it.
+// creation, completion with whole-object verification, and abort stay with it.
+// StatDescriptor finds an object already at a digest key; every such object
+// was authenticated when it was written, so only its metadata is checked.
 type WriteSigner interface {
 	ReadSigner
-	VerifyDescriptor(ctx context.Context, expected cas.Descriptor) (cas.Object, error)
+	StatDescriptor(ctx context.Context, expected cas.Descriptor) (cas.Object, error)
 	// UploadLayout is the deterministic multipart layout of a descriptor, or
 	// false when it is published by one request.
 	UploadLayout(expected cas.Descriptor) (cas.Upload, bool)
@@ -371,8 +373,8 @@ func releaseFinishedUploads(ctx context.Context, tx pgx.Tx, org uuid.UUID, diges
 }
 
 // Write grants one create-only publication of exactly the descriptor's bytes
-// into the organization's keyspace. An object already stored is verified rather
-// than replaced. Finding it records no receipt, so it grants no read: a later
+// into the organization's keyspace. An object already stored is reused rather
+// than replaced when its metadata matches. Finding it records no receipt, so it grants no read: a later
 // read still requires the object to be in the authority's graph. Save and
 // checkpoint publishers register membership before uploading, which keeps the
 // object's lifetime available through certification. A request that fails or only
@@ -383,7 +385,7 @@ func (b *StorageBroker) Write(ctx context.Context, host workergroup.HostPrincipa
 		return StorageWrite{}, err
 	}
 	objects := b.objects(a.org)
-	switch _, err := objects.VerifyDescriptor(ctx, object); {
+	switch _, err := objects.StatDescriptor(ctx, object); {
 	case err == nil:
 		return StorageWrite{Exists: true}, nil
 	case errors.Is(err, cas.ErrRemoteIntegrity):

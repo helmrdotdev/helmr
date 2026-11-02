@@ -54,7 +54,7 @@ func (testStorageSigner) SignGet(context.Context, string, time.Time) (cas.Signed
 func (testStorageSigner) SignHead(context.Context, string, time.Time) (cas.SignedRequest, error) {
 	return cas.SignedRequest{}, errTestQuarantine
 }
-func (testStorageSigner) VerifyDescriptor(context.Context, cas.Descriptor) (cas.Object, error) {
+func (testStorageSigner) StatDescriptor(context.Context, cas.Descriptor) (cas.Object, error) {
 	return cas.Object{}, errTestQuarantine
 }
 func (testStorageSigner) UploadLayout(cas.Descriptor) (cas.Upload, bool) { return cas.Upload{}, false }

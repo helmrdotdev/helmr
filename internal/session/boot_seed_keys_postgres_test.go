@@ -99,7 +99,7 @@ func (nullSigner) SignGet(_ context.Context, digest string, expiresAt time.Time)
 func (nullSigner) SignHead(_ context.Context, digest string, expiresAt time.Time) (cas.SignedRequest, error) {
 	return cas.SignedRequest{Method: "HEAD", URL: "https://storage.test/" + digest, ExpiresAt: expiresAt}, nil
 }
-func (nullSigner) VerifyDescriptor(context.Context, cas.Descriptor) (cas.Object, error) {
+func (nullSigner) StatDescriptor(context.Context, cas.Descriptor) (cas.Object, error) {
 	return cas.Object{}, os.ErrNotExist
 }
 func (nullSigner) UploadLayout(cas.Descriptor) (cas.Upload, bool) { return cas.Upload{}, false }

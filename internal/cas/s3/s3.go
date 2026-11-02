@@ -73,7 +73,6 @@ type Store struct {
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
-	copyObjectMaxBytes      int64
 	readBackRangeBytes      int64
 	copyPartBytes           int64
 }

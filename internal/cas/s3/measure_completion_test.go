@@ -136,11 +136,7 @@ func TestMeasureMultipartCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := "server-side checksum"
-	if size > s3CopyObjectMaxBytes {
-		path = "read back through the Control Plane"
-	}
-	t.Logf("object %s, %d bytes in %d parts (%s): parts uploaded in %s, completion took %s of a %s limit", object.Key, size, upload.Parts, path, uploaded.Round(time.Millisecond), completed.Round(time.Millisecond), limit)
+	t.Logf("object %s, %d bytes in %d parts: parts uploaded in %s, completion took %s of a %s limit", object.Key, size, upload.Parts, uploaded.Round(time.Millisecond), completed.Round(time.Millisecond), limit)
 	if completed >= limit {
 		t.Fatalf("completion took %s, at or beyond the %s limit", completed, limit)
 	}

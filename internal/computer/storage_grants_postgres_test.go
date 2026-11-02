@@ -81,7 +81,7 @@ func (s *grantSigner) SignGet(_ context.Context, digest string, expiresAt time.T
 func (s *grantSigner) SignHead(_ context.Context, digest string, expiresAt time.Time) (cas.SignedRequest, error) {
 	return s.request("HEAD", digest, expiresAt), nil
 }
-func (s *grantSigner) VerifyDescriptor(ctx context.Context, expected cas.Descriptor) (cas.Object, error) {
+func (s *grantSigner) StatDescriptor(ctx context.Context, expected cas.Descriptor) (cas.Object, error) {
 	object, err := s.Stat(ctx, expected.Digest)
 	if err == nil && cas.RequireExact(object, expected) != nil {
 		err = cas.ErrRemoteIntegrity

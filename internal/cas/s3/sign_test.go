@@ -114,17 +114,14 @@ type completionClient struct {
 	deleted   []string
 	exists    bool
 	read      bool
-	inPlace   bool
 	// unversioned storage returns no version IDs; suspended returns "null".
 	unversioned bool
 	suspended   bool
 	// existingMedia is the media type of an object already at the digest key.
 	existingMedia string
-	// noChecksum storage ignores the requested checksum of a copy.
-	noChecksum  bool
-	mu          sync.Mutex
-	ranges      []string
-	pinnedReads int
+	mu            sync.Mutex
+	ranges        []string
+	pinnedReads   int
 	// Read back: inverted serves later ranges sooner, failRangeAt fails the
 	// range at that nonzero offset, and peakReads is the most reads at once.
 	inverted    bool
@@ -182,12 +179,8 @@ func (c *completionClient) AbortMultipartUpload(context.Context, *awss3.AbortMul
 	return &awss3.AbortMultipartUploadOutput{}, nil
 }
 
-// pinned holds when a copy names the version that was authenticated: the
-// storage-checksummed copy, or the version read back.
+// pinned holds when a copy names the version that was read back.
 func (c *completionClient) pinned(etag, source string) bool {
-	if c.inPlace {
-		return etag == `"verified"` && strings.HasSuffix(source, "?versionId=v2")
-	}
 	return etag == `"staged"` && strings.HasSuffix(source, "?versionId=v1")
 }
 
@@ -229,30 +222,6 @@ func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectIn
 	}, nil
 }
 
-// CopyObject computes the full checksum of an in-place copy of the staged
-// object, which becomes version v2, and publishes only a pinned verified version.
-func (c *completionClient) CopyObject(_ context.Context, input *awss3.CopyObjectInput, _ ...func(*awss3.Options)) (*awss3.CopyObjectOutput, error) {
-	if source, _ := url.PathUnescape(aws.ToString(input.CopySource)); strings.HasSuffix(source, aws.ToString(input.Key)) {
-		if input.ChecksumAlgorithm != types.ChecksumAlgorithmSha256 {
-			return nil, errors.New("in-place copy without a checksum")
-		}
-		c.inPlace = true
-		checksum, _ := descriptorChecksum(sha256sum.DigestBytes(c.staged))
-		if c.noChecksum {
-			checksum = ""
-		}
-		return &awss3.CopyObjectOutput{VersionId: c.version("v2"), CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"verified"`), ChecksumSHA256: aws.String(checksum)}}, nil
-	}
-	if !c.pinned(aws.ToString(input.CopySourceIfMatch), aws.ToString(input.CopySource)) {
-		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "copied a version other than the verified one"}
-	}
-	if c.exists || aws.ToString(input.IfNoneMatch) != "*" {
-		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed"}
-	}
-	c.copied = aws.ToString(input.Key)
-	return &awss3.CopyObjectOutput{}, nil
-}
-
 func (c *completionClient) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
 	if strings.Contains(aws.ToString(input.Key), "/staging/") {
 		return nil, errors.New("metadata read of the unpinned staging key")
@@ -270,9 +239,9 @@ func (c *completionClient) DeleteObject(_ context.Context, input *awss3.DeleteOb
 }
 
 // Parts come from a holder outside the digest namespace's trust. They are
-// assembled under the owner's staging key, and only bytes that authenticate as
-// the digest are copied create-only to the digest key; staging is removed.
-// Storage computes the checksum, so the Control Plane reads no object bytes.
+// assembled under the owner's staging key, read back in version-pinned ranges,
+// and only bytes that authenticate as the digest are copied create-only to the
+// digest key; staging is removed.
 func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 	want := make([]byte, 96)
 	for i := range want {
@@ -283,42 +252,36 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
 	hash := strings.TrimPrefix(descriptor.Digest, "sha256:")
 	staging, final := "cas/staging/019abcde-1234/sha256/"+hash, "cas/orgs/0198c0de-0000-7000-8000-000000000001/sha256/"+hash
-	for _, readBack := range []bool{false, true} {
-		for _, test := range []struct {
-			name   string
-			staged []byte
-			parts  []cas.CompletedPart
-			exists bool
-			valid  bool
-		}{
-			{"matching", want, parts, false, true},
-			{"already published", want, parts, true, true},
-			{"poisoned", bytes.Repeat([]byte{8}, 96), parts, false, false},
-			{"reordered", want, []cas.CompletedPart{parts[1], parts[0]}, false, false},
-			{"partial", want, parts[:1], false, false},
-		} {
-			t.Run(fmt.Sprintf("%s/read back %t", test.name, readBack), func(t *testing.T) {
-				client := &completionClient{staged: test.staged, exists: test.exists}
-				store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
-				if readBack {
-					// Larger than one server-side copy: read back in six ranges.
-					store.copyObjectMaxBytes, store.readBackRangeBytes = 32, 16
+	for _, test := range []struct {
+		name   string
+		staged []byte
+		parts  []cas.CompletedPart
+		exists bool
+		valid  bool
+	}{
+		{"matching", want, parts, false, true},
+		{"already published", want, parts, true, true},
+		{"poisoned", bytes.Repeat([]byte{8}, 96), parts, false, false},
+		{"reordered", want, []cas.CompletedPart{parts[1], parts[0]}, false, false},
+		{"partial", want, parts[:1], false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &completionClient{staged: test.staged, exists: test.exists}
+			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, readBackRangeBytes: 16}
+			object, err := store.CompleteUpload(t.Context(), descriptor, upload, test.parts)
+			if test.valid {
+				if err != nil || object.Digest != descriptor.Digest || object.Key != final || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || len(client.ranges) != 6 || client.pinnedReads != 5 {
+					t.Fatalf("complete = %+v, %v; completed %q copied %q deleted %v ranges %d", object, err, client.completed, client.copied, client.deleted, len(client.ranges))
 				}
-				object, err := store.CompleteUpload(t.Context(), descriptor, upload, test.parts)
-				if test.valid {
-					if err != nil || object.Digest != descriptor.Digest || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || client.read != readBack || client.inPlace == readBack || (readBack && (len(client.ranges) != 6 || client.pinnedReads != 5)) {
-						t.Fatalf("complete = %+v, %v; completed %q copied %q deleted %v", object, err, client.completed, client.copied, client.deleted)
-					}
-					return
-				}
-				if err == nil || client.copied != "" || slices.Contains(client.deleted, final) {
-					t.Fatalf("invalid completion = %+v, %v; copied %q deleted %v", object, err, client.copied, client.deleted)
-				}
-				if test.name == "poisoned" && (!errors.Is(err, cas.ErrRemoteIntegrity) || !slices.Contains(client.deleted, staging)) {
-					t.Fatalf("poisoned completion = %v, deleted %v", err, client.deleted)
-				}
-			})
-		}
+				return
+			}
+			if err == nil || client.copied != "" || slices.Contains(client.deleted, final) {
+				t.Fatalf("invalid completion = %+v, %v; copied %q deleted %v", object, err, client.copied, client.deleted)
+			}
+			if test.name == "poisoned" && (!errors.Is(err, cas.ErrRemoteIntegrity) || !slices.Contains(client.deleted, staging)) {
+				t.Fatalf("poisoned completion = %v, deleted %v", err, client.deleted)
+			}
+		})
 	}
 }
 
@@ -329,15 +292,10 @@ func TestCompleteUploadRequiresVersionedStorage(t *testing.T) {
 	staged := bytes.Repeat([]byte{7}, 96)
 	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
-	for _, readBack := range []bool{false, true} {
-		for _, client := range []*completionClient{{staged: staged, unversioned: true}, {staged: staged, suspended: true}} {
-			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
-			if readBack {
-				store.copyObjectMaxBytes = 32
-			}
-			if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || client.copied != "" {
-				t.Fatalf("read back %t, suspended %t: completion = %v, copied %q", readBack, client.suspended, err, client.copied)
-			}
+	for _, client := range []*completionClient{{staged: staged, unversioned: true}, {staged: staged, suspended: true}} {
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || client.copied != "" {
+			t.Fatalf("suspended %t: completion = %v, copied %q", client.suspended, err, client.copied)
 		}
 	}
 }
@@ -348,28 +306,10 @@ func TestCompleteUploadRefusesExistingObjectOfOtherMetadata(t *testing.T) {
 	staged := bytes.Repeat([]byte{7}, 96)
 	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
-	for _, readBack := range []bool{false, true} {
-		client := &completionClient{staged: staged, exists: true, existingMedia: "application/octet-stream"}
-		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
-		if readBack {
-			store.copyObjectMaxBytes = 32
-		}
-		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); !errors.Is(err, cas.ErrRemoteIntegrity) {
-			t.Fatalf("read back %t: completion over other metadata = %v", readBack, err)
-		}
-	}
-}
-
-// Storage that computes no checksum for the in-place copy fails the completion
-// without reporting the uploaded bytes as corrupt.
-func TestCompleteUploadWithoutStorageChecksumIsNotAnIntegrityFailure(t *testing.T) {
-	staged := bytes.Repeat([]byte{7}, 96)
-	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
-	client := &completionClient{staged: staged, noChecksum: true}
+	client := &completionClient{staged: staged, exists: true, existingMedia: "application/octet-stream"}
 	store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
-	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
-	if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || errors.Is(err, cas.ErrRemoteIntegrity) || client.copied != "" {
-		t.Fatalf("completion without a storage checksum = %v, copied %q", err, client.copied)
+	if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); !errors.Is(err, cas.ErrRemoteIntegrity) {
+		t.Fatalf("completion over other metadata = %v", err)
 	}
 }
 
@@ -386,7 +326,7 @@ func TestCompleteUploadReadBackOrdersAndBoundsRanges(t *testing.T) {
 	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
 	for _, failRangeAt := range []int64{0, 40} {
 		client := &completionClient{staged: staged, inverted: true, failRangeAt: failRangeAt}
-		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, copyObjectMaxBytes: 32, readBackRangeBytes: 4}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, readBackRangeBytes: 4}
 		_, err := store.CompleteUpload(t.Context(), descriptor, upload, parts)
 		if failRangeAt != 0 {
 			if err == nil || client.copied != "" {
@@ -409,7 +349,7 @@ func TestCompleteUploadPromotesPartsInOrderOrAborts(t *testing.T) {
 	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
 	for _, failPart := range []int32{0, 2} {
 		client := &completionClient{staged: staged, failPart: failPart}
-		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, copyObjectMaxBytes: 32, copyPartBytes: 32}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, copyPartBytes: 32}
 		_, err := store.CompleteUpload(t.Context(), descriptor, upload, parts)
 		if failPart != 0 {
 			if err == nil || client.copied != "" || !client.aborted {
