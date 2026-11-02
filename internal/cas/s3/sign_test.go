@@ -113,7 +113,8 @@ type completionClient struct {
 	copied    string
 	deleted   []string
 	exists    bool
-	read      bool
+	// digestHeads counts metadata reads of the digest key.
+	digestHeads int
 	// unversioned storage returns no version IDs; suspended returns "null".
 	unversioned bool
 	suspended   bool
@@ -188,7 +189,6 @@ func (c *completionClient) pinned(etag, source string) bool {
 // that names a version must also name its entity tag.
 func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
 	c.mu.Lock()
-	c.read = true
 	c.ranges = append(c.ranges, aws.ToString(input.Range))
 	if input.VersionId != nil {
 		c.pinnedReads++
@@ -226,6 +226,7 @@ func (c *completionClient) HeadObject(_ context.Context, input *awss3.HeadObject
 	if strings.Contains(aws.ToString(input.Key), "/staging/") {
 		return nil, errors.New("metadata read of the unpinned staging key")
 	}
+	c.digestHeads++
 	media := cas.CheckpointMemoryMediaType
 	if c.existingMedia != "" {
 		media = c.existingMedia
@@ -270,7 +271,7 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, readBackRangeBytes: 16}
 			object, err := store.CompleteUpload(t.Context(), descriptor, upload, test.parts)
 			if test.valid {
-				if err != nil || object.Digest != descriptor.Digest || object.Key != final || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || len(client.ranges) != 6 || client.pinnedReads != 5 {
+				if err != nil || object.Digest != descriptor.Digest || object.Key != final || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || len(client.ranges) != 6 || client.pinnedReads != 5 || client.digestHeads != btoi(test.exists) {
 					t.Fatalf("complete = %+v, %v; completed %q copied %q deleted %v ranges %d", object, err, client.completed, client.copied, client.deleted, len(client.ranges))
 				}
 				return
@@ -371,5 +372,35 @@ func TestPromotionPartBytesStaysWithinThePartLimit(t *testing.T) {
 		if part < s3CopyPartBytes || (size+part-1)/part > s3MultipartMaxParts || (size <= s3CopyPartBytes*s3MultipartMaxParts && part != s3CopyPartBytes) {
 			t.Fatalf("size %d: part %d", size, part)
 		}
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// A read back waits for one of the process's read back slots and gives up
+// with its context, publishing nothing.
+func TestCompleteUploadWaitsForAReadBackSlot(t *testing.T) {
+	for range s3ReadBackLimit {
+		readBackSlots <- struct{}{}
+	}
+	defer func() {
+		for range s3ReadBackLimit {
+			<-readBackSlots
+		}
+	}()
+	staged := bytes.Repeat([]byte{7}, 96)
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	client := &completionClient{staged: staged}
+	store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	if _, err := store.CompleteUpload(ctx, descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || len(client.ranges) != 0 || client.copied != "" {
+		t.Fatalf("completion without a read back slot = %v, %d ranges, copied %q", err, len(client.ranges), client.copied)
 	}
 }

@@ -31,9 +31,16 @@ const (
 	// eight 16-MiB ranges in flight or awaiting the hash, 128 MiB in all.
 	s3ReadBackRangeBytes  = 16 << 20
 	s3ReadBackConcurrency = 8
+	// s3ReadBackLimit is how many read backs one process runs at once, which
+	// bounds their buffers to 512 MiB however many completions arrive.
+	s3ReadBackLimit = 4
 	// s3CopyPartConcurrency is how many server-side part copies run at once.
 	s3CopyPartConcurrency = 8
 )
+
+// readBackSlots admits at most s3ReadBackLimit concurrent read backs in this
+// process, across every store and organization.
+var readBackSlots = make(chan struct{}, s3ReadBackLimit)
 
 type presigner interface {
 	PresignGetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.PresignOptions)) (*awsv4.PresignedHTTPRequest, error)
@@ -282,6 +289,12 @@ func (c *Store) removeStaged(ctx context.Context, staging string) {
 // ranges are hashed in order while the following ones are in flight. It returns
 // the entity tag and version of what it read.
 func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
+	select {
+	case readBackSlots <- struct{}{}:
+		defer func() { <-readBackSlots }()
+	case <-ctx.Done():
+		return "", "", storageFailure(ctx, ctx.Err())
+	}
 	rangeBytes := c.readBackRange()
 	first, etag, version, err := c.readStagedRange(ctx, staging, "", "", 0, min(rangeBytes, expected.SizeBytes), expected)
 	if err != nil {
@@ -436,7 +449,9 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		return key, false, nil
 	}
 	abortErr := c.abortMultipartUpload(ctx, key, uploadID)
-	if conditionalWriteError(err) == conditionalWriteExists && abortErr == nil {
+	if conditionalWriteError(err) == conditionalWriteExists {
+		// The caller checks the object found there. A completion of this
+		// upload whose response was lost leaves nothing to abort.
 		return key, true, nil
 	}
 	return "", false, errors.Join(storageFailure(ctx, err), abortErr)

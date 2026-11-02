@@ -269,6 +269,23 @@ func TestStorageReadsRetryUnavailableStorage(t *testing.T) {
 	if _, err := store.Stat(ctx, digest); !errors.Is(err, cas.ErrUnavailable) {
 		t.Fatalf("stat of unavailable storage = %v", err)
 	}
+	waits, g.failReads = 0, 1
+	reader, err := store.GetRange(ctx, digest, int64(len(body)), 2, 4)
+	if err != nil || waits != 1 {
+		t.Fatalf("range after a server error = %v; %d waits", err, waits)
+	}
+	if got, _ := io.ReadAll(reader); !bytes.Equal(got, body[2:6]) {
+		t.Fatalf("range = %q", got)
+	}
+	reader.Close()
+	waits, g.expired = 0, true
+	if _, err := store.Stat(ctx, digest); err != nil || waits != 0 {
+		t.Fatalf("stat after a refused grant = %v; %d waits", err, waits)
+	}
+	reads := len(g.reads)
+	if _, err := store.Stat(ctx, sha256sum.DigestBytes([]byte("missing"))); !errors.Is(err, os.ErrNotExist) || waits != 0 || len(g.reads) != reads+1 {
+		t.Fatalf("missing object = %v; %d waits, %d grant requests", err, waits, len(g.reads)-reads)
+	}
 }
 
 func publishedFile(t *testing.T, body []byte) (*os.File, cas.Descriptor) {
