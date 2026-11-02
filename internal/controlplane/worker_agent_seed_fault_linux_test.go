@@ -244,7 +244,7 @@ func verifyNativeLateSeedFault(t *testing.T, parent context.Context, pool *pgxpo
 			rows.Close()
 			t.Fatal("seed fault fixture requires at most 4 GiB RAM so index reads stay below the held range")
 		}
-		key, err := cas.ObjectKey(uri.Path, m.Memory.Digest)
+		key, err := nativeOrganizationObjectKey(ctx, pool, env, uri.Path, m.Memory.Digest)
 		if err != nil {
 			rows.Close()
 			t.Fatal(err)
