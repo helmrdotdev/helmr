@@ -1283,8 +1283,8 @@ func startableTenancyImageBuild(t *testing.T, v *tenancyVictim) {
 	dbtest.MustExec(t, t.Context(), v.f.Pool, `
  UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=(SELECT image_spec_id FROM image_builds WHERE environment_id=$1 AND id=$2);
  INSERT INTO templates(environment_id,id,key) VALUES($1,$4,'tenancy-template');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy)
- SELECT $1,$5,$4,image_spec_id,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}' FROM image_builds WHERE environment_id=$1 AND id=$2;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement)
+ SELECT $1,$5,$4,image_spec_id,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}','default' FROM image_builds WHERE environment_id=$1 AND id=$2;
  `, pgx.QueryExecModeSimpleProtocol, v.f.Environment, v.imageBuild.Identity.OwnerID, string(raw), template, v.f.Deployment)
 }
 

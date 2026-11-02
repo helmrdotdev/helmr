@@ -23,7 +23,7 @@ func fixtureBuildPlan(t *testing.T) (BuildPlan, []byte) {
 }
 func TestAgentBuildPlanCompilerContract(t *testing.T) {
 	plan, raw := fixtureBuildPlan(t)
-	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.PrepareSecrets[0].Secret != "SOURCE_TOKEN" {
+	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.PrepareSecrets[0].Secret != "SOURCE_TOKEN" || plan.Definitions[1].Template.Placement != "secure" {
 		t.Fatalf("unexpected compiler projection: %+v", plan)
 	}
 	got, err := CanonicalBuildPlan(plan)
@@ -74,7 +74,9 @@ func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 		"invalid runtime Secret": func(p *BuildPlan) {
 			p.Definitions[1].Template.Secrets[0].Secret = ""
 		},
-		"invalid image": func(p *BuildPlan) { p.Definitions[1].Template.ImageBuild.Images[0].Steps = nil },
+		"invalid image":     func(p *BuildPlan) { p.Definitions[1].Template.ImageBuild.Images[0].Steps = nil },
+		"missing placement": func(p *BuildPlan) { p.Definitions[1].Template.Placement = "" },
+		"invalid placement": func(p *BuildPlan) { p.Definitions[1].Template.Placement = "secure/eu" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

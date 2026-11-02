@@ -213,6 +213,9 @@ func validateDefinitionInput(input Input) error {
 		if err := ValidateUnusedPolicy(input.Template.DeleteAfterUnusedMs); err != nil {
 			return err
 		}
+		if err := ValidatePlacement(input.Template.Placement); err != nil {
+			return err
+		}
 		if _, _, err := ResolveTemplatePolicies(input.Template.Network, input.Template.PrepareNetwork, input.Template.Prepare, input.Template.Secrets, input.Template.PrepareSecrets); err != nil {
 			return err
 		}

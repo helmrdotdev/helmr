@@ -88,6 +88,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		RuntimeRefs          json.RawMessage `json:"runtime_refs"`
 		Every                *int64          `json:"every_ms"`
 		DeleteUnused         *int64          `json:"delete_unused_ms"`
+		Placement            string          `json:"placement"`
 	}
 	inputs := make([]input, 0, len(specs))
 	digests := make([]string, 0, len(specs))
@@ -145,7 +146,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		if m.Refresh != nil {
 			every = &m.Refresh.EveryMs
 		}
-		inputs = append(inputs, input{NetworkPolicy: networkRaw, PrepareNetworkPolicy: prepareNetworkRaw, ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, Prepare: m.Prepare, BuildRefs: buildRefs, CPUMillis: m.Resources.MilliCPU, MemoryBytes: m.Resources.MemoryMiB * (1 << 20), DiskBytes: diskBytes, RuntimeRefs: runtimeRefs, Every: every, DeleteUnused: m.DeleteAfterUnusedMs})
+		inputs = append(inputs, input{NetworkPolicy: networkRaw, PrepareNetworkPolicy: prepareNetworkRaw, ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, Prepare: m.Prepare, BuildRefs: buildRefs, CPUMillis: m.Resources.MilliCPU, MemoryBytes: m.Resources.MemoryMiB * (1 << 20), DiskBytes: diskBytes, RuntimeRefs: runtimeRefs, Every: every, DeleteUnused: m.DeleteAfterUnusedMs, Placement: m.Placement})
 		digests = append(digests, digest)
 	}
 	if len(inputs) == 0 {
@@ -281,9 +282,9 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if count != len(buildBindings) {
 		return computer.ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,network_policy,prepare_network_policy,prepare,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,delete_after_unused_ms)
- SELECT $1,$2,v.template_id,s.id,v.network_policy,v.prepare_network_policy,v.prepare,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.delete_unused_ms
- FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,network_policy jsonb,prepare_network_policy jsonb,prepare boolean,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,delete_unused_ms bigint)
+	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,network_policy,prepare_network_policy,prepare,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,delete_after_unused_ms,placement)
+ SELECT $1,$2,v.template_id,s.id,v.network_policy,v.prepare_network_policy,v.prepare,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.delete_unused_ms,v.placement
+ FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,network_policy jsonb,prepare_network_policy jsonb,prepare boolean,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,delete_unused_ms bigint,placement text)
  JOIN image_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
 	if err != nil {
 		return err

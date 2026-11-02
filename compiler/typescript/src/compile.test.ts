@@ -184,6 +184,19 @@ test("retention is written explicitly: omission is the default, never is null", 
   expect(() => compile(entry(agent({ id: "worker", template: machine(), turn: () => null, maxTurnDuration: "never" })))).toThrow()
 })
 
+test("placement is written explicitly: omission is the default placement", () => {
+  const placed = (value?: unknown) => {
+    const worker = agent({ id: "worker", template: { ...machine(), ...(value === undefined ? {} : { placement: value }) } as never, turn: () => null })
+    return compile(entry(worker)).buildPlan.definitions.find(d => d.kind === "template")!.manifest
+  }
+  expect(placed()).toMatchObject({ placement: "default" })
+  expect(placed("default")).toMatchObject({ placement: "default" })
+  expect(placed("ios-lab.v2")).toMatchObject({ placement: "ios-lab.v2" })
+  for (const value of [null, "", " secure", "-secure", "a/b", "x".repeat(129), 1, {}]) {
+    expect(() => placed(value)).toThrow("machine.placement is invalid")
+  }
+})
+
 test("structured cron uses wire JSON without executing validators and exposes input discovery", () => {
   const schema = { "~standard": { version: 1 as const, vendor: "test", validate: () => { throw new Error("validation during build") }, jsonSchema: { input: ({ target }: { target: string }) => { expect(target).toBe("draft-2020-12"); return { type: "object", properties: { count: { type: "string" } } } } } } }
   const worker = agent({ id: "worker", template: machine(), inputSchema: schema, turn: () => null,

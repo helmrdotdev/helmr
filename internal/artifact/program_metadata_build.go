@@ -36,6 +36,7 @@ func BuildProgramMetadata(plan definition.BuildPlan, runtimeIndex DefinitionInde
 				DeleteAfterUnusedMs: input.Template.DeleteAfterUnusedMs,
 				Resources:           input.Template.Resources, Prepare: input.Template.Prepare, Network: input.Template.Network, PrepareNetwork: input.Template.PrepareNetwork,
 				Refresh: input.Template.Refresh, Secrets: input.Template.Secrets, PrepareSecrets: input.Template.PrepareSecrets,
+				Placement: input.Template.Placement,
 			}
 		default:
 			return ProgramMetadata{}, fmt.Errorf("unsupported definition kind %q", input.Kind)

@@ -4,7 +4,7 @@ import { analyze } from "./compile"
 export function agentContractFixture() {
   const workspace = template({
     id: "workspace", image: image("base").from("ubuntu:24.04"),
-    resources: { cpu: 2, memory: "4GiB", disk: "16GiB" },
+    resources: { cpu: 2, memory: "4GiB", disk: "16GiB" }, placement: "secure",
     prepare: async build => { await build.exec(["true"]) },
     refresh: { every: "24h" },
     secrets: [{ secret: "API_TOKEN", env: { name: "API_TOKEN", mode: "raw" } }],
