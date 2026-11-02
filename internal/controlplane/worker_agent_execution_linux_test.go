@@ -510,7 +510,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		case <-seedTick.C:
 		}
 	}
-	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, client.ComputerScopeOptions{}); err != nil {
+	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, false, client.ComputerScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if input.RequireBootSeed || lateSeedFault {
@@ -1048,7 +1048,7 @@ func retireNativeExecution(ctx context.Context, pool *pgxpool.Pool, c *client.Cl
 	defer tick.Stop()
 	for _, id := range computers {
 		for {
-			_, err := c.DeleteComputer(ctx, id, api.DeleteComputerRequest{IdempotencyKey: "fixture-retire-" + id}, client.ComputerScopeOptions{})
+			_, err := c.DeleteComputer(ctx, id, api.DeleteComputerRequest{IdempotencyKey: "fixture-retire-" + id}, false, client.ComputerScopeOptions{})
 			if err == nil {
 				break
 			}
@@ -1127,7 +1127,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'native-proof','Native proof','#112233',100,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
 	memberID := dbtest.GrantMember(t, pool, org, user, &env, "api_keys.create")
-	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.PermissionAPIKeysCreate}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreate, auth.PermissionSessionsAnswer, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsCancel, auth.PermissionSessionsClose, auth.PermissionComputersRead, auth.PermissionCommandsReadOutput, auth.PermissionComputersExecute, auth.PermissionCommandsCancel, auth.PermissionComputersCreate, auth.PermissionComputersWake, auth.PermissionComputersHibernate, auth.PermissionComputersUpdate, auth.PermissionComputersDelete}, extraPermissions...)})
+	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.PermissionAPIKeysCreate}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreate, auth.PermissionSessionsAnswer, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsCancel, auth.PermissionSessionsClose, auth.PermissionComputersRead, auth.PermissionCommandsReadOutput, auth.PermissionComputersExecute, auth.PermissionCommandsCancel, auth.PermissionComputersCreate, auth.PermissionComputersWake, auth.PermissionComputersHibernate, auth.PermissionComputersDelete}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}

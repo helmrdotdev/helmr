@@ -90,22 +90,20 @@ func (p *nativeSeedFaultProxy) rewriteGrants(next http.Handler) http.Handler {
 		recorder := httptest.NewRecorder()
 		next.ServeHTTP(recorder, r)
 		body := recorder.Body.Bytes()
-		var grants workerapi.StorageReadResponse
-		if recorder.Code == http.StatusOK && json.Unmarshal(body, &grants) == nil {
-			for i := range grants.Grants {
-				for _, signed := range []*cas.SignedRequest{&grants.Grants[i].Get, &grants.Grants[i].Head} {
-					target, err := url.Parse(signed.URL)
-					if err != nil {
-						continue
-					}
-					p.mu.Lock()
-					p.upstream = target.Host
-					p.mu.Unlock()
-					target.Scheme, target.Host = p.proxyURL.Scheme, p.proxyURL.Host
-					signed.URL = target.String()
+		var grant workerapi.StorageReadGrant
+		if recorder.Code == http.StatusOK && json.Unmarshal(body, &grant) == nil {
+			for _, signed := range []*cas.SignedRequest{&grant.Get, &grant.Head} {
+				target, err := url.Parse(signed.URL)
+				if err != nil {
+					continue
 				}
+				p.mu.Lock()
+				p.upstream = target.Host
+				p.mu.Unlock()
+				target.Scheme, target.Host = p.proxyURL.Scheme, p.proxyURL.Host
+				signed.URL = target.String()
 			}
-			body, _ = json.Marshal(grants)
+			body, _ = json.Marshal(grant)
 		}
 		for name, values := range recorder.Header() {
 			w.Header()[name] = values
