@@ -39,6 +39,7 @@ type SSOLinkConfirmResponse struct {
 
 type AccountSSOLinkRequest struct {
 	OrganizationID string `json:"organization_id"`
+	Reauthenticate bool   `json:"reauthenticate,omitempty"`
 }
 
 type AccountSSOBinding struct {

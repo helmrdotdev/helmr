@@ -138,6 +138,9 @@ func TestSSOSignInRefusesStaleAuthentication(t *testing.T) {
 
 func TestSSOSignInWithoutBindingContinuesToAssociation(t *testing.T) {
 	f := newSSOFixture(t)
+	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("new-subject", "new@example.test", time.Now().Add(-25*time.Hour)), "", uuid.Nil()); !errors.Is(err, ErrSSOReauthenticationRequired) {
+		t.Fatalf("a stale authentication reached association: %v", err)
+	}
 	result, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("new-subject", "new@example.test", time.Now()), "", uuid.Nil())
 	if err != nil || !result.Unbound || result.Session != "" {
 		t.Fatalf("sign-in = %+v, %v", result, err)

@@ -214,6 +214,10 @@ func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
 	console := f.origin
 	browser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, alice, uuid.Nil())}}}
 
+	forced := browser.do(t, http.MethodPost, "/api/account/sso/link", `{"organization_id":"`+orgID.String()+`","reauthenticate":true}`, console, nil)
+	if q := oidcAnswer(t, issuer, forced.Body.Bytes(), "alice-oidc", time.Now()); q.Get("prompt") != "login" {
+		t.Fatalf("forced self-link query = %v", q)
+	}
 	started := browser.do(t, http.MethodPost, "/api/account/sso/link", `{"organization_id":"`+orgID.String()+`"}`, console, nil)
 	if started.Code != http.StatusOK {
 		t.Fatalf("link start = %d %s", started.Code, started.Body)

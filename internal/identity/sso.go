@@ -49,6 +49,11 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 			return err
 		}
 		result.OrgID = orgID
+		// A stale IdP authentication is refused before first association too, so
+		// the browser repeats it with a fresh one instead of linking it.
+		if err := freshSSOTime(ctx, tx, orgID, a.AuthenticatedAt); err != nil {
+			return err
+		}
 		b, err := sso.LiveBinding(ctx, tx, a.ConnectionID, a.Subject)
 		if errors.Is(err, sso.ErrNotBound) {
 			result.Unbound = true
@@ -222,11 +227,20 @@ func admitSSOProof(ctx context.Context, tx pgx.Tx, b sso.Binding, at time.Time) 
 	if err != nil {
 		return err
 	}
-	lifetime, err := sso.ProofLifetime(ctx, tx, b.OrgID)
+	if cutoff.Valid && !at.After(cutoff.Time) {
+		return ErrSSOReauthenticationRequired
+	}
+	return freshSSOTime(ctx, tx, b.OrgID, at)
+}
+
+// freshSSOTime refuses an IdP authentication already past the organization's
+// proof lifetime.
+func freshSSOTime(ctx context.Context, tx pgx.Tx, org uuid.UUID, at time.Time) error {
+	lifetime, err := sso.ProofLifetime(ctx, tx, org)
 	if err != nil {
 		return err
 	}
-	if !at.Add(lifetime).After(time.Now()) || (cutoff.Valid && !at.After(cutoff.Time)) {
+	if !at.Add(lifetime).After(time.Now()) {
 		return ErrSSOReauthenticationRequired
 	}
 	return nil

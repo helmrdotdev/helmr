@@ -1,10 +1,10 @@
 import { A } from "@solidjs/router";
 import { createSignal, onMount, Show } from "solid-js";
 import { EmailSignIn } from "../components/EmailSignIn";
-import { chooseOrganization, postJson, releasePageIdentity, setOrganization } from "../lib/api";
+import { ApiError, chooseOrganization, postJson, releasePageIdentity, setOrganization } from "../lib/api";
 import { getAccount, getAuthConfig, type Account, type AuthConfig } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, loadError, type Failure } from "../lib/error";
-import { confirmSSOLink, getSSOLink, type SSOLink } from "../lib/sso";
+import { confirmSSOLink, getSSOLink, restartSSO, type SSOLink } from "../lib/sso";
 import { AuthCopy, AuthLink, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { LinesSkeleton } from "../ui/Skeleton";
 import { Notice } from "../ui/Notice";
@@ -20,13 +20,15 @@ export function SSOLinkPage() {
   const [config, setConfig] = createSignal<AuthConfig>();
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  // The company sign-in aged out on the way; it is repeated with a fresh one.
+  const [stale, setStale] = createSignal(false);
   async function refresh() {
     try { setAccount(await getAccount()); } catch { setAccount(undefined); }
     setLink(await getSSOLink());
   }
   async function run(fn: () => Promise<void>) {
     setBusy(true); setError("");
-    try { await fn(); } catch (cause) { setError(loadError(cause, "Unable to continue. Try again.", AUTH_MESSAGES)); } finally { setBusy(false); }
+    try { await fn(); } catch (cause) { setStale(cause instanceof ApiError && cause.code === "sso_reauthentication_required"); setError(loadError(cause, "Unable to continue. Try again.", AUTH_MESSAGES)); } finally { setBusy(false); }
   }
   onMount(() => void (async () => {
     try { setConfig(await getAuthConfig()); await refresh(); }
@@ -51,6 +53,7 @@ export function SSOLinkPage() {
             <AuthTitle>Link your company account</AuthTitle>
             <p class="m-0 text-body">Your company identity provider signed you in as <strong>{pending().asserted_email}</strong> for {pending().organization_name}. Confirm that email once to link it to your Helmr account.</p>
             <Show when={error()}><Notice tone="danger">{error()}</Notice></Show>
+            <Show when={stale()}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { if (!await restartSSO()) window.location.assign("/login"); })}>Sign in again with single sign-on</button></Show>
             <Show when={pending().asserted_email} fallback={<Notice tone="danger">Your identity provider did not send an email address. Ask an owner of {pending().organization_name} to configure it.</Notice>}>
               <Show when={account()} fallback={
                 <Show when={config()?.methods.includes("email")} fallback={<Notice tone="warning">Email sign-in is not available on this server. Sign in to your account, then link company single sign-on from Sign-in and security.</Notice>}>

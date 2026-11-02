@@ -471,7 +471,7 @@ func (s *Server) accountSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.writeSSOStart(w, r, connection, browserAuthFlow{Kind: browserAuthSSOSelfLink, MemberID: member.MemberID.String(), UserID: p.UserID.String()}, false)
+	s.writeSSOStart(w, r, connection, browserAuthFlow{Kind: browserAuthSSOSelfLink, MemberID: member.MemberID.String(), UserID: p.UserID.String()}, request.Reauthenticate)
 }
 
 func (s *Server) accountSSOBindings(w http.ResponseWriter, r *http.Request) {
