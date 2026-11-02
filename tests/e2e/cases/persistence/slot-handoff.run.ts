@@ -13,6 +13,11 @@ await verify("checkpoint-slot-handoff", async ({ computer, startAgent, marker, o
   assert.equal(hosts.length, 1)
   assert.equal(hosts[0].max_vm_slots, 1)
   const path = (id: string) => hostObservation("computer-path", { computer_id: id })
+  async function workerLog(since: string) {
+    const { stdout } = await promisify(execFile)("sudo", ["-n", "journalctl", "-u", "helmr-worker",
+      "--no-pager", "-o", "cat", "--since", `@${Math.floor(Date.parse(since) / 1000) - 1}`], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 })
+    return stdout.split("\n")
+  }
   async function waitRetained(id: string) {
     const signal = deadline(180_000)
     for (;;) {
@@ -23,10 +28,8 @@ await verify("checkpoint-slot-handoff", async ({ computer, startAgent, marker, o
         const source = state.leases.find((l: any) => l.epoch === checkpoint.source_lease_epoch)
         assert.equal(source.worker_host_id, hosts[0].id)
         assert.equal(source.fenced_at, null, "source already released before competing work arrived")
-        const { stdout } = await promisify(execFile)("sudo", ["-n", "journalctl", "-u", "helmr-worker",
-          "--no-pager", "-o", "cat", "--since", `@${Math.floor(Date.parse(checkpoint.ready_at) / 1000) - 1}`], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 })
-        if (stdout.split("\n").some(line => ["Computer checkpoint source retained", id, source.computer_instance_id, checkpoint.id].every(value => line.includes(value)))) {
-          return { checkpointId: checkpoint.id, saveId: checkpoint.disk_save_id, sourceEpoch: source.epoch, sourceAllocation: source.computer_instance_id }
+        if ((await workerLog(checkpoint.ready_at)).some(line => ["Computer checkpoint source retained", id, source.computer_instance_id, checkpoint.id].every(value => line.includes(value)))) {
+          return { readyAt: checkpoint.ready_at, checkpointId: checkpoint.id, saveId: checkpoint.disk_save_id, sourceEpoch: source.epoch, sourceAllocation: source.computer_instance_id }
         }
       }
       await delay(250, undefined, { signal })
@@ -60,5 +63,10 @@ await verify("checkpoint-slot-handoff", async ({ computer, startAgent, marker, o
   const aLease = state.leases.find((l: any) => l.epoch === parked.sourceEpoch)
   assert(aLease.fenced_at && bLease.delivered_at && Date.parse(aLease.fenced_at) <= Date.parse(bLease.delivered_at))
   assert(bLease.fenced_at && target.delivered_at && Date.parse(bLease.fenced_at) <= Date.parse(target.delivered_at))
+  const log = await workerLog(parked.readyAt)
+  for (const [retained, waiting] of [[aLease, bLease], [bLease, target]]) {
+    assert(log.some(line => ["Requested checkpoint source release for waiting allocation", retained.computer_instance_id, waiting.computer_instance_id]
+      .every(value => line.includes(value))), "missing release request for the competing allocation")
+  }
   return { before, bResult, after, parked, parkedB, aLease, bLease, target, host: hosts[0].id }
 })

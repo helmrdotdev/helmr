@@ -452,3 +452,23 @@ func TestOneSlotParkedOwnerYieldsToAnotherComputer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRediscoveryKeepsCheckpointReleaseTarget(t *testing.T) {
+	a, b, waiting := allocationTestIdentity("computer"), allocationTestIdentity("computer"), allocationTestIdentity("computer")
+	first := &parkedAllocationOwner{yield: make(chan struct{})}
+	second := &parkedAllocationOwner{retained: true, yield: make(chan struct{})}
+	c := AllocationConsumer{entries: map[workerapi.AllocationIdentity]AllocationOwner{a: first, b: second}}
+	c.requestCheckpointRelease(waiting)
+	first.retained = true
+	c.requestCheckpointRelease(waiting)
+	select {
+	case <-first.yield:
+		t.Fatal("one waiting assignment displaced two retained Computers")
+	default:
+	}
+	select {
+	case <-second.yield:
+	default:
+		t.Fatal("the originally retained Computer never yielded")
+	}
+}
