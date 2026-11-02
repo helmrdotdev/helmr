@@ -176,7 +176,7 @@ func TestWorkerGroupOwnerIsImmutableForRuntimePostgres(t *testing.T) {
 	if err := runtime.QueryRow(t.Context(), `SELECT
 		bool_or(has_column_privilege('computers', c, 'UPDATE')),
 		has_column_privilege('computers', 'unused_since', 'UPDATE')
-		FROM unnest(ARRAY['worker_group_org_id','worker_group_project_id','worker_group_region_id','worker_group_id']) AS c`).Scan(&pinUpdatable, &computerUpdatable); err != nil {
+		FROM unnest(ARRAY['pin_org_id','pin_project_id','pin_region_id','worker_group_id']) AS c`).Scan(&pinUpdatable, &computerUpdatable); err != nil {
 		t.Fatal(err)
 	}
 	if pinUpdatable || !computerUpdatable {

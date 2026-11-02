@@ -14,9 +14,9 @@ ALTER TABLE boot_seed_builds DROP COLUMN worker_group_id;
 ALTER TABLE image_builds DROP COLUMN worker_group_id;
 ALTER TABLE computers
     DROP COLUMN worker_group_id,
-    DROP COLUMN worker_group_region_id,
-    DROP COLUMN worker_group_project_id,
-    DROP COLUMN worker_group_org_id;
+    DROP COLUMN pin_region_id,
+    DROP COLUMN pin_project_id,
+    DROP COLUMN pin_org_id;
 
 DROP TABLE environment_placements;
 

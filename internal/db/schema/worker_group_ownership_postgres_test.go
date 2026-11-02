@@ -122,7 +122,7 @@ func TestWorkerGroupOwnershipMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var owner int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('owner_org_id','worker_group_id','worker_group_org_id','worker_group_project_id','worker_group_region_id') AND table_name IN ('worker_groups','computers','image_builds','boot_seed_builds')`).Scan(&owner); err != nil || owner != 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name IN ('owner_org_id','worker_group_id','pin_org_id','pin_project_id','pin_region_id') AND table_name IN ('worker_groups','computers','image_builds','boot_seed_builds')`).Scan(&owner); err != nil || owner != 0 {
 		t.Fatalf("downgraded columns = %d, %v", owner, err)
 	}
 }

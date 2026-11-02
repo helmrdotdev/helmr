@@ -36,21 +36,22 @@ CREATE TABLE environment_placements (
 
 CREATE INDEX environment_placements_worker_group ON environment_placements(worker_group_id) WHERE worker_group_id IS NOT NULL;
 
--- The organization group a Computer runs on, or NULL when it runs on the
--- deployment capacity of its project's region. A Computer never moves between
--- groups; runtime privileges exclude updating the pin. A pin records the
--- Computer's organization, project and region so the keys below admit only a
--- group its organization owns in that region.
+-- worker_group_id is the organization group a Computer runs on, or NULL when
+-- it runs on the deployment capacity of its project's region. A pinned Computer
+-- also copies its own organization, project and region into the pin_ columns,
+-- which exist only so the keys below admit a group its organization owns in
+-- that region. A Computer never moves between groups; runtime privileges
+-- exclude updating the pin.
 ALTER TABLE computers
-    ADD COLUMN worker_group_org_id uuid,
-    ADD COLUMN worker_group_project_id uuid,
-    ADD COLUMN worker_group_region_id text,
+    ADD COLUMN pin_org_id uuid,
+    ADD COLUMN pin_project_id uuid,
+    ADD COLUMN pin_region_id text,
     ADD COLUMN worker_group_id uuid,
-    ADD CONSTRAINT computers_worker_group_pin_check CHECK (num_nonnulls(worker_group_id, worker_group_org_id, worker_group_project_id, worker_group_region_id) IN (0, 4)),
-    ADD FOREIGN KEY (worker_group_org_id, worker_group_project_id, environment_id) REFERENCES environments(org_id, project_id, id),
-    ADD FOREIGN KEY (worker_group_org_id, worker_group_project_id, worker_group_region_id) REFERENCES projects(org_id, id, default_region_id),
+    ADD CONSTRAINT computers_pin_check CHECK (num_nonnulls(worker_group_id, pin_org_id, pin_project_id, pin_region_id) IN (0, 4)),
+    ADD FOREIGN KEY (pin_org_id, pin_project_id, environment_id) REFERENCES environments(org_id, project_id, id),
+    ADD FOREIGN KEY (pin_org_id, pin_project_id, pin_region_id) REFERENCES projects(org_id, id, default_region_id),
     ADD CONSTRAINT computers_worker_group_fkey
-        FOREIGN KEY (worker_group_id, worker_group_org_id, worker_group_region_id) REFERENCES worker_groups(id, owner_org_id, region_id);
+        FOREIGN KEY (worker_group_id, pin_org_id, pin_region_id) REFERENCES worker_groups(id, owner_org_id, region_id);
 
 CREATE INDEX computers_worker_group ON computers(worker_group_id) WHERE worker_group_id IS NOT NULL;
 

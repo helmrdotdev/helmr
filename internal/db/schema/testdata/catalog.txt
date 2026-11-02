@@ -352,6 +352,9 @@ column computers.next_control_version bigint not null default 1
 column computers.next_save_seq bigint not null default 1
 column computers.origin_deployment_id uuid not null
 column computers.origin_template_id uuid not null
+column computers.pin_org_id uuid
+column computers.pin_project_id uuid
+column computers.pin_region_id text
 column computers.preparation_deadline_at timestamp with time zone
 column computers.preparation_failed_at timestamp with time zone
 column computers.proxy_ca_certificate bytea
@@ -364,9 +367,6 @@ column computers.storage_reservation_bytes bigint
 column computers.unused_since timestamp with time zone
 column computers.updated_at timestamp with time zone not null default clock_timestamp()
 column computers.worker_group_id uuid
-column computers.worker_group_org_id uuid
-column computers.worker_group_project_id uuid
-column computers.worker_group_region_id text
 column deployment_events.accepted_at timestamp with time zone not null default clock_timestamp()
 column deployment_events.deployment_id uuid not null
 column deployment_events.environment_id uuid not null
@@ -1625,7 +1625,7 @@ constraint computers c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigi
 constraint computers c CHECK (next_control_version > 0)
 constraint computers c CHECK (next_save_seq > 0)
 constraint computers c CHECK (num_nonnulls(proxy_ca_certificate, proxy_ca_not_after, proxy_ca_private_key_nonce, proxy_ca_private_key_ciphertext) = ANY (ARRAY[0, 4]))
-constraint computers c CHECK (num_nonnulls(worker_group_id, worker_group_org_id, worker_group_project_id, worker_group_region_id) = ANY (ARRAY[0, 4]))
+constraint computers c CHECK (num_nonnulls(worker_group_id, pin_org_id, pin_project_id, pin_region_id) = ANY (ARRAY[0, 4]))
 constraint computers c CHECK (octet_length(initial_root_digest) = 32)
 constraint computers c CHECK (preparation_failed_at IS NULL OR initial_root_digest IS NULL AND preparation_deadline_at IS NOT NULL)
 constraint computers c CHECK (proxy_ca_certificate IS NULL OR octet_length(proxy_ca_certificate) >= 1 AND octet_length(proxy_ca_certificate) <= 16384 AND octet_length(proxy_ca_private_key_nonce) = 12 AND octet_length(proxy_ca_private_key_ciphertext) > 0)
@@ -1638,9 +1638,9 @@ constraint computers f FOREIGN KEY (environment_id, image_spec_id, image_build_i
 constraint computers f FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id)
 constraint computers f FOREIGN KEY (environment_id, initial_root_id) REFERENCES disk_roots(environment_id, id)
 constraint computers f FOREIGN KEY (environment_id, origin_template_id, origin_deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
-constraint computers f FOREIGN KEY (worker_group_id, worker_group_org_id, worker_group_region_id) REFERENCES worker_groups(id, owner_org_id, region_id)
-constraint computers f FOREIGN KEY (worker_group_org_id, worker_group_project_id, environment_id) REFERENCES environments(org_id, project_id, id)
-constraint computers f FOREIGN KEY (worker_group_org_id, worker_group_project_id, worker_group_region_id) REFERENCES projects(org_id, id, default_region_id)
+constraint computers f FOREIGN KEY (pin_org_id, pin_project_id, environment_id) REFERENCES environments(org_id, project_id, id)
+constraint computers f FOREIGN KEY (pin_org_id, pin_project_id, pin_region_id) REFERENCES projects(org_id, id, default_region_id)
+constraint computers f FOREIGN KEY (worker_group_id, pin_org_id, pin_region_id) REFERENCES worker_groups(id, owner_org_id, region_id)
 constraint computers p PRIMARY KEY (environment_id, id)
 constraint deployment_events c CHECK (length(kind) > 0)
 constraint deployment_events f FOREIGN KEY (environment_id) REFERENCES environments(id)

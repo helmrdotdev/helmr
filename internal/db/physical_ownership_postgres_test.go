@@ -115,7 +115,7 @@ func TestSchemaComputerPinNamesOwnOrganizationGroupInRegion(t *testing.T) {
 		return id
 	}
 	own, west, foreign, deployment := group(&org, region), group(&org, otherRegion), group(&otherOrg, region), group(nil, region)
-	const pin = `UPDATE computers SET worker_group_org_id=$3, worker_group_project_id=$4, worker_group_region_id=$5, worker_group_id=$6 WHERE environment_id=$1 AND id=$2`
+	const pin = `UPDATE computers SET pin_org_id=$3, pin_project_id=$4, pin_region_id=$5, worker_group_id=$6 WHERE environment_id=$1 AND id=$2`
 	// A pin names a group of another organization, another region or the
 	// deployment never; deployment capacity is the absence of a pin.
 	for _, group := range []uuid.UUID{foreign, west, deployment, uuid.NewV7()} {

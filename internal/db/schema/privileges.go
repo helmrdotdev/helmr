@@ -11,7 +11,7 @@ import (
 // update. An organization worker group's owner is fixed at creation, and a
 // Computer never moves between groups.
 var immutableColumns = map[string][]string{
-	"computers":     {"worker_group_org_id", "worker_group_project_id", "worker_group_region_id", "worker_group_id"},
+	"computers":     {"pin_org_id", "pin_project_id", "pin_region_id", "worker_group_id"},
 	"worker_groups": {"owner_org_id"},
 }
 
