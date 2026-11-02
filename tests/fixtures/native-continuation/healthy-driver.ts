@@ -12,7 +12,7 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 // PostgreSQL observations are written by the surrounding qualification process.
 // They only observe checkpoint readiness and ordinary Worker physical-stop
 // receipts; the driver never manufactures an allocation or a source fence.
-export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; evidence: string; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
+export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; evidence: string; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
  const soakMS = Number(process.env["HELMR_NATIVE_PERFORMANCE_SOAK_MS"] ?? "0")
  assert(Number.isSafeInteger(soakMS) && soakMS >= 0 && soakMS <= 900000, "performance soak must be 0–900000 milliseconds")
  assert(!soakMS || options.performanceKind === "no-op", "performance soak uses the no-op native workload")
@@ -398,55 +398,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const idleMs = performance.now() - idleStarted
    const idleFinishedAt = new Date().toISOString()
    process.stderr.write(JSON.stringify({ healthyIdle: { cycle, checkpointId: checkpoint.checkpointId, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples } }) + "\n")
-   let keyFault: Record<string, unknown> | undefined
    let resumeTiming: { requestStartedAt: string; requestStartedMS: number; ackMS: number; turnId: string; firstOutputObservedMS?: number; outputSequence?: number } | undefined
-   if (options.checkpointKeyMismatch && cycle === 1) {
-    async function requestKeyPhase(phase: string) {
-     const path = options.checkpointObservations + ".key-" + phase
-     await writeFile(path + ".new", JSON.stringify({ checkpointId: checkpoint.checkpointId }), { flag: "wx", mode: 0o600 })
-     await rename(path + ".new", path)
-    }
-    async function keyReceipt(phase: string): Promise<Record<string, unknown>> {
-     for (;;) {
-      try {
-       const receipt = JSON.parse(await readFile(options.checkpointObservations + ".key-" + phase, "utf8")) as Record<string, unknown>
-       assert.equal(receipt["checkpointId"], checkpoint.checkpointId)
-       return receipt
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
-      await delay(100, undefined, { signal })
-     }
-    }
-    await requestKeyPhase("request")
-    await keyReceipt("wrong-ready")
-    holding = await peer.session.enqueue(fixtureInput(options.performanceKind ? "hold-performance" : "hold"), undefined, { signal })
-    keyFault = await keyReceipt("fault")
-    const pausedAt = performance.now()
-    for (let sample = 0; sample < 20; sample++) {
-     assert.equal((await holding.get({ signal })).status, "queued")
-     for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds, [])
-     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
-     // The pause receipt and checkpoint sampler are independent readers. Require
-     // a sample taken after this check starts, then assert its state unchanged.
-     const sampleStarted = Date.now()
-     let current: typeof checkpoint | undefined
-     for (;;) {
-      const rows: typeof checkpoint[] = JSON.parse(await readFile(options.checkpointObservations, "utf8"))
-      current = rows.find(row => row.checkpointId === checkpoint.checkpointId)
-      if (current && Date.parse(current.observedAt) >= sampleStarted) break
-      await delay(50, undefined, { signal })
-     }
-     assert(current.status === "ready" && current.sourceFenced && current.unfencedLeases === 0)
-     assert.deepEqual(current.runtimeObjects.toSorted((a, b) => a.role.localeCompare(b.role)), checkpoint.runtimeObjects.toSorted((a, b) => a.role.localeCompare(b.role)))
-     await delay(1000, undefined, { signal })
-    }
-    keyFault["pausedMs"] = performance.now() - pausedAt
-    await requestKeyPhase("repair-request")
-    keyFault["repaired"] = await keyReceipt("repaired")
-   } else {
-    const started = performance.now(), at = new Date().toISOString()
-    holding = await peer.session.enqueue(fixtureInput(options.performanceKind ? "hold-performance" : "hold"), undefined, { signal })
-    resumeTiming = { requestStartedAt: at, requestStartedMS: started, ackMS: performance.now() - started, turnId: holding.id }
-   }
+   const started = performance.now(), at = new Date().toISOString()
+   holding = await peer.session.enqueue(fixtureInput(options.performanceKind ? "hold-performance" : "hold"), undefined, { signal })
+   resumeTiming = { requestStartedAt: at, requestStartedMS: started, ackMS: performance.now() - started, turnId: holding.id }
    const resumedOutput = await progress()
    if (resumeTiming) {
     resumeTiming.firstOutputObservedMS = performance.now() - resumeTiming.requestStartedMS
@@ -476,7 +431,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    modelTurns.push(modelTurn.id)
    for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
    assert.equal(restoredModel["count"], cycle + 1)
-   const evidence = { cycle, checkpoint, keyFault, releaseRequestToCheckpointObservedMS, resumeTiming, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples, idleAndResumeMs: performance.now() - idleStarted, before,
+   const evidence = { cycle, checkpoint, releaseRequestToCheckpointObservedMS, resumeTiming, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples, idleAndResumeMs: performance.now() - idleStarted, before,
     after: Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous])), model: restoredModel }
    continuations.push(evidence)
    process.stderr.write(JSON.stringify({ healthyContinuation: evidence }) + "\n")

@@ -128,7 +128,7 @@ func TestS3StreamQuarantineConditionalWrite(t *testing.T) {
 			if mode == "concurrent conflict" {
 				client.putObjectErr = &smithy.GenericAPIError{Code: "ConditionalRequestConflict"}
 			}
-			store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 			err := store.StreamQuarantine(t.Context(), "owner", expected, struct{ io.Reader }{bytes.NewReader(payload)})
 			switch mode {
 			case "existing":
@@ -159,5 +159,5 @@ func testStreamingQuarantineStore(server *httptest.Server) *Store {
 			return aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}, nil
 		}),
 	})
-	return &Store{client: client, bucket: "bucket", prefix: "cas"}
+	return &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 }

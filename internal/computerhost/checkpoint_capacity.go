@@ -17,7 +17,7 @@ type checkpointStagingLimits struct {
 	config  int64
 }
 
-func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor) (checkpointStagingLimits, error) {
+func checkpointStagingSize(shape vm.SnapshotLimits) (checkpointStagingLimits, error) {
 	if shape.ComputerBytes <= 0 || shape.MemoryBytes <= 0 || shape.ScratchBytes <= 0 || shape.StateBytes <= 0 || shape.ConfigBytes <= 0 {
 		return checkpointStagingLimits{}, errors.New("incomplete checkpoint capture limits")
 	}
@@ -34,7 +34,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 	// raw state, packed scratch and all ciphertexts may coexist here.
 	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memoryEncoded, scratch}
 	for _, n := range []int64{scratch, shape.StateBytes, shape.ConfigBytes} {
-		encoded, err := cipher.EncryptedSize(n)
+		encoded, err := encryptedCheckpointSize(n)
 		if err != nil {
 			return checkpointStagingLimits{}, err
 		}

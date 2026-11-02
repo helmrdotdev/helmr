@@ -140,10 +140,7 @@ func TestCheckpointMemoryRejectsTampering(t *testing.T) {
 			if err == nil {
 				t.Fatal("accepted altered memory")
 			}
-			if test == "key" && !errors.Is(err, ErrCheckpointKeyUnavailable) {
-				t.Fatalf("wrong key classification: %v", err)
-			}
-			if test != "key" && test != "size" && test != "truncated" && !errors.Is(err, errInvalidCheckpoint) {
+			if test != "size" && test != "truncated" && !errors.Is(err, errInvalidCheckpoint) {
 				t.Fatalf("missing integrity classification: %v", err)
 			}
 		})
@@ -278,13 +275,13 @@ func TestCheckpointMemoryOpenedSourceRetainsItsKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The allocation's derived cipher remains usable after configured key removal.
-	clear(cipher.key)
+	// The pager's derived cipher remains usable after the data key is closed.
+	cipher.Close()
 	rotated, err := NewCheckpointEncryptor(bytes.Repeat([]byte{3}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openCheckpointMemory(t.Context(), ranges, rotated, descriptor, header, "environment/computer/checkpoint/memory", 4096); !errors.Is(err, ErrCheckpointKeyUnavailable) {
+	if _, err := openCheckpointMemory(t.Context(), ranges, rotated, descriptor, header, "environment/computer/checkpoint/memory", 4096); !errors.Is(err, errInvalidCheckpoint) {
 		t.Fatal(err)
 	}
 	got := make([]byte, len(raw))

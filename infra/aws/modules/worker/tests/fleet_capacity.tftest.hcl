@@ -32,18 +32,12 @@ variables {
   subnet_ids                 = ["subnet-00000000000000000"]
   ami_id                     = "ami-00000000000000000"
   worker_controlplane_url    = "https://controlplane.example.test"
-  cas_uri                    = "s3://helmr-test-cas"
-  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
   kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri         = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
   min_size                   = 0
   max_size                   = 1
   root_volume_size_gb        = 120
   secret_arns = {
-    checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
-    worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
+    worker_enrollment_token = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
   }
 }
 
@@ -105,20 +99,6 @@ run "execution_worker_is_immutable_and_launch_gated" {
         {
           Effect = "Allow"
           Action = [
-            "s3:GetObject",
-            "s3:PutObject",
-            "s3:PutObjectTagging",
-            "s3:AbortMultipartUpload",
-            "s3:ListBucket"
-          ]
-          Resource = [
-            var.cas_bucket_arn,
-            "${var.cas_bucket_arn}/*"
-          ]
-        },
-        {
-          Effect = "Allow"
-          Action = [
             "autoscaling:CompleteLifecycleAction",
             "autoscaling:RecordLifecycleActionHeartbeat"
           ]
@@ -127,17 +107,12 @@ run "execution_worker_is_immutable_and_launch_gated" {
         {
           Effect = "Allow"
           Action = [
-            "kms:Decrypt",
-            "kms:Encrypt",
-            "kms:GenerateDataKey"
+            "kms:Decrypt"
           ]
           Resource = var.kms_key_arn
           Condition = {
             StringEquals = {
-              "kms:ViaService" = [
-                "s3.us-east-1.amazonaws.com",
-                "secretsmanager.us-east-1.amazonaws.com"
-              ]
+              "kms:ViaService" = "secretsmanager.us-east-1.amazonaws.com"
             }
           }
         },
@@ -147,35 +122,12 @@ run "execution_worker_is_immutable_and_launch_gated" {
             "secretsmanager:GetSecretValue"
           ]
           Resource = [
-            var.secret_arns.checkpoint_encryption_key,
             var.secret_arns.worker_enrollment_token,
           ]
         },
-        ], [
-        {
-          Sid    = "ReadPlatformObjects"
-          Effect = "Allow"
-          Action = [
-            "s3:GetObject"
-          ]
-          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
-        },
-        {
-          Sid    = "DecryptPlatformObjects"
-          Effect = "Allow"
-          Action = [
-            "kms:Decrypt"
-          ]
-          Resource = var.platform_store_kms_key_arn
-          Condition = {
-            StringEquals = {
-              "kms:ViaService" = "s3.us-east-1.amazonaws.com"
-            }
-          }
-        },
       ]) : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))])
     )
-    error_message = "execution workers must have read-only Platform Artifact authority"
+    error_message = "execution workers must hold no storage or checkpoint-key authority"
   }
 }
 

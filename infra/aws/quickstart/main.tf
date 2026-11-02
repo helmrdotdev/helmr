@@ -175,16 +175,10 @@ module "worker_group" {
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
   computer_staging_mib                            = local.worker_generations[each.key].computer_staging_mib
   worker_controlplane_url                         = local.worker_controlplane_url
-  cas_uri                                         = "s3://${aws_s3_bucket.cas.bucket}"
-  cas_bucket_arn                                  = aws_s3_bucket.cas.arn
   kms_key_arn                                     = aws_kms_key.helmr.arn
-  platform_store_uri                              = local.worker_generations[each.key].generation_inputs.supply.platform_store.uri
-  platform_store_bucket_arn                       = local.worker_generations[each.key].generation_inputs.supply.platform_store.bucket_arn
-  platform_store_kms_key_arn                      = local.worker_generations[each.key].generation_inputs.supply.platform_store.kms_key_arn
 
   secret_arns = {
-    checkpoint_encryption_key = aws_secretsmanager_secret.helmr["checkpoint_encryption_key"].arn
-    worker_enrollment_token   = aws_secretsmanager_secret.helmr["worker_enrollment_token"].arn
+    worker_enrollment_token = aws_secretsmanager_secret.helmr["worker_enrollment_token"].arn
   }
 
   tags = local.tags

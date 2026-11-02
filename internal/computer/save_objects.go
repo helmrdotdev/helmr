@@ -163,7 +163,7 @@ func (s saveObjectScope) registerObject(ctx context.Context, tx pgx.Tx, inspecti
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, object.digest, object.size); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.orgID, object.digest, object.size); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,'application/octet-stream',$6,$7,$8) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, s.orgID, s.projectID, object.size, object.kind, object.rank, object.encoded); err != nil {
@@ -215,6 +215,9 @@ func (s saveObjectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspectio
 		return err
 	}
 	if !row.Certified.Bool {
+		if err = releaseFinishedUploads(ctx, tx, pgvalue.MustUUIDValue(s.orgID), uploaded.Digest); err != nil {
+			return err
+		}
 		q := db.New(tx)
 		if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: s.orgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
 			return err

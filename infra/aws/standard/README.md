@@ -52,11 +52,11 @@ common release index; common releases do not publish the resolver's default AWS 
 Required secret value formats:
 
 - `database_url`: Postgres connection URL for the `helmr_app` application role and `helmr` database with SSL required
-- `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`: base64-encoded 32-byte keys
+- `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `computer_fencing_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_host_credential_signing_key`, `auth_key`, `encryption_key`,
-`computer_fencing_key` and `checkpoint_encryption_key` locally and writes them
+and `computer_fencing_key` locally and writes them
 directly to Secrets Manager:
 
 ```sh

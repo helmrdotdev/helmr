@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"io"
 	"io/fs"
@@ -127,7 +128,8 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	cfg.DB, cfg.TX, cfg.DiagnosticDB, cfg.ReadinessDB = q, pool, pool, pool
 	cfg.Auth, cfg.Allocator, cfg.Log = identity.NewAPIKeyAuthenticator(pool), allocator, log
 	cfg.ComputerKeys = keys
-	cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission = nativeFaultStore{store}, platform, bundle.Admission{Runtime: runtime}
+	cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission = func(org uuid.UUID) cas.UploadStore { return nativeFaultStore{store.Organization(org)} }, platform, bundle.Admission{Runtime: runtime}
+	cfg.StorageObjects, cfg.StoragePlatform = func(org uuid.UUID) computer.WriteSigner { return store.Organization(org) }, platform
 	cfg.Secrets, cfg.SecretDelivery, cfg.SecretProxy = secrets, secrets, secrets
 	if os.Getenv("HELMR_NATIVE_SDK_PROOF") == "1" || (os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1") {
 		cfg.TelemetryReader = nativeSDKCommandLogReader{pool: pool}
@@ -147,7 +149,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	}
 	server := &http.Server{Handler: observer.Handler(nativeStorageFaultHandler(handler)), ReadHeaderTimeout: 10 * time.Second}
 	var jobs sync.WaitGroup
-	reclaimer, err := computer.NewCASReclaimer(pool, store, log)
+	reclaimer, err := computer.NewCASReclaimer(pool, func(org uuid.UUID) computer.ReclamationStore { return store.Organization(org) }, log)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -48,20 +49,32 @@ type s3Client interface {
 	CopyObject(context.Context, *awss3.CopyObjectInput, ...func(*awss3.Options)) (*awss3.CopyObjectOutput, error)
 	CreateMultipartUpload(context.Context, *awss3.CreateMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error)
 	UploadPart(context.Context, *awss3.UploadPartInput, ...func(*awss3.Options)) (*awss3.UploadPartOutput, error)
+	UploadPartCopy(context.Context, *awss3.UploadPartCopyInput, ...func(*awss3.Options)) (*awss3.UploadPartCopyOutput, error)
 	CompleteMultipartUpload(context.Context, *awss3.CompleteMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error)
 	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
+// Store is a content store. Every object lives in one organization's keyspace
+// under <prefix>/orgs/<org>/sha256/, so the same digest in two organizations is
+// two independent objects. A Store addresses objects only once scoped with
+// Organization; quarantine and staging keys stay at the prefix root.
 type Store struct {
 	client     s3Client
+	presign    presigner
 	bucket     string
 	prefix     string
 	tempDir    string
 	sharded    bool
 	httpClient aws.HTTPClient
+	org        uuid.UUID
+	// global addresses the release-only platform keyspace, which belongs to
+	// no organization.
+	global bool
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
+	readBackRangeBytes      int64
+	copyPartBytes           int64
 }
 
 type ImmutableStore struct {
@@ -115,6 +128,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		}
 	})
 	store.client = client
+	store.presign = awss3.NewPresignClient(client)
 	return store, nil
 }
 
@@ -257,9 +271,11 @@ func (c *Store) PromoteQuarantine(
 	if err != nil {
 		return cas.Object{}, err
 	}
-	if err := c.verifyKey(ctx, key, expected); err == nil {
-		return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
-	} else if !isObjectNotFound(err) {
+	// An object already at the digest key was authenticated when it was
+	// written, possibly by a multipart promotion that stores no full checksum.
+	if object, err := c.StatDescriptor(ctx, expected); err == nil {
+		return object, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return cas.Object{}, fmt.Errorf("verify existing immutable object: %w", err)
 	}
 	_, err = c.client.CopyObject(ctx, &awss3.CopyObjectInput{
@@ -273,21 +289,33 @@ func (c *Store) PromoteQuarantine(
 		Tagging:           aws.String(objectTagging()),
 		TaggingDirective:  types.TaggingDirectiveReplace,
 	})
-	if err != nil && conditionalWriteError(err) != conditionalWriteExists {
+	switch {
+	case err == nil:
+		return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
+	case conditionalWriteError(err) == conditionalWriteExists:
+		return c.StatDescriptor(ctx, expected)
+	default:
 		return cas.Object{}, err
 	}
-	if err := c.verifyKey(ctx, key, expected); err != nil {
-		return cas.Object{}, fmt.Errorf("verify promoted immutable object: %w", err)
-	}
-	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
 }
 
+// NewImmutable opens the release-only platform store, whose keyspace belongs to
+// no organization.
 func NewImmutable(ctx context.Context, rawURI string, opts ...Option) (*ImmutableStore, error) {
 	store, err := New(ctx, rawURI, opts...)
 	if err != nil {
 		return nil, err
 	}
+	store.global = true
 	return &ImmutableStore{store: store}, nil
+}
+
+// Organization returns the store scoped to one organization's keyspace. It
+// shares the client and configuration of c.
+func (c *Store) Organization(org uuid.UUID) *Store {
+	scoped := *c
+	scoped.org = org
+	return &scoped
 }
 
 func ValidateDistinctS3Stores(firstURI, secondURI string) error {
@@ -839,11 +867,19 @@ func (c *ImmutableStore) Get(ctx context.Context, digest string) (io.ReadCloser,
 
 var _ cas.ImmutableStore = (*ImmutableStore)(nil)
 
+// objectKey fails closed for a store not scoped to an organization.
 func (c *Store) objectKey(digest string) (string, error) {
-	if c.sharded {
-		return cas.ShardedObjectKey(c.prefix, digest)
+	prefix := strings.Trim(c.prefix, "/")
+	if !c.global {
+		if c.org == uuid.Nil() {
+			return "", errors.New("content store is not scoped to an organization")
+		}
+		prefix = strings.TrimPrefix(prefix+"/orgs/"+c.org.String(), "/")
 	}
-	return cas.ObjectKey(c.prefix, digest)
+	if c.sharded {
+		return cas.ShardedObjectKey(prefix, digest)
+	}
+	return cas.ObjectKey(prefix, digest)
 }
 
 func (c *Store) quarantineKey(owner, digest string) (string, error) {

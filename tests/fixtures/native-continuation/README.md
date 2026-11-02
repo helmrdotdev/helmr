@@ -368,38 +368,6 @@ The driver, case and outer runner bounds are 130, 135 and 139 minutes respective
 This mode requires a separately qualified live run; adding it is not runtime proof.
 Synthetic providers do not establish real provider credential expiry behavior.
 
-## Checkpoint key mismatch
-
-`HELMR_NATIVE_CHECKPOINT_KEY_MISMATCH_PROOF=1` selects
-`TestWorkerAgentCheckpointKeyMismatch`, exclusive with the other modes. After
-the healthy fixture's first ready checkpoint and physical source fence, the
-fixture joins its original Worker and starts the same retained host identity
-with a different fixture checkpoint key. A new peer Turn requests restoration.
-The production Worker must identify one key mismatch, close failed allocation
-resources, remain running with both admission reasons set to
-`checkpoint_key_unavailable`, and preserve the ready checkpoint's four retained object references.
-For twenty seconds, the peer input remains queued, Sessions have no recovery hold,
-prior Completed Turns stay unchanged and no additional lease is allocated.
-New allocations may occur before the next ordinary Worker observation reports
-the pause to the Control Plane. Each must physically close before the stable
-interval starts; the fixture records their count and final epoch.
-
-The fixture then joins that Worker and restarts it with the original key through
-ordinary startup. No database mutation clears the pause or changes checkpoint
-state. Both native harnesses complete the retained healthy continuation checks,
-including setup count one and managed MCP operations, followed by a second normal
-release/restore. Final SQL binds every failed lease to the original disk Save,
-requires physical closure without guest initialization, and checks the corrected
-Worker's next lease consumed the original RAM cut. Worker replacement and fault
-receipts are fixture-owned; logs never include the key bytes. Driver/case/outer
-bounds are 15/20/24 minutes, with normal retirement and physical audit required.
-If the driver fails while the wrong-key Worker remains paused, normal retirement
-may be unable to restore and close retained Sessions. Preserve that failure and
-complete the explicit operator physical audit, fixture cleanup and host stop;
-operator closure does not turn the test or normal retirement into a pass.
-This case needs live qualification. It does not qualify hot rotation, permanent
-key loss, mixed-key fleet availability or real provider credential expiry.
-
 ## Lost checkpoint qualification
 
 `HELMR_NATIVE_CORRUPT_CHECKPOINT_PROOF=1` selects

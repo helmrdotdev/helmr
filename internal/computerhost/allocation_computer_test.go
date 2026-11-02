@@ -1,7 +1,6 @@
 package computerhost
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -213,12 +212,8 @@ func allocationOwnerFixture(t *testing.T) (*ComputerAllocationOwner, *allocation
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := NewCheckpointEncryptor(make([]byte, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	machines := &PreparedMachines{CheckpointCipher: cipher, ComputerObjects: preparationOwnerStore{ranges}, ComputerRanges: ranges, ComputerHelper: "/test/nbd-helper", ComputerDevices: []string{"/dev/nbd-test"}, Backend: backend, Reservations: ledger, ComputerStagingBytes: 1 << 20, TempDir: t.TempDir()}
-	owner, err := NewComputerAllocationOwner(machines, client, identity, uuid.NewV7().String(), 7, func(context.Context) error { return nil }, func() {}, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
+	machines := &PreparedMachines{ObjectKeys: newTestObjectKeys(), ComputerObjects: preparationOwnerStore{ranges}, ComputerRanges: ranges, ComputerHelper: "/test/nbd-helper", ComputerDevices: []string{"/dev/nbd-test"}, Backend: backend, Reservations: ledger, ComputerStagingBytes: 1 << 20, TempDir: t.TempDir()}
+	owner, err := NewComputerAllocationOwner(machines, client, identity, uuid.NewV7().String(), 7, func(context.Context) error { return nil }, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +340,7 @@ func TestComputerAllocationRejectsMissingDeviceConfigurationBeforeDelivery(t *te
 			case "source":
 				o.machines.ComputerRanges = nil
 			}
-			if _, err := NewComputerAllocationOwner(o.machines, client, o.identity, o.hostID, o.hostEpoch, o.admitStart, o.checkpointKeyUnavailable, o.observe); err == nil || client.deliveries.Load() != 0 || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
+			if _, err := NewComputerAllocationOwner(o.machines, client, o.identity, o.hostID, o.hostEpoch, o.admitStart, o.observe); err == nil || client.deliveries.Load() != 0 || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
 				t.Fatal("invalid device configuration accepted allocation custody")
 			}
 		})
@@ -415,7 +410,7 @@ func TestComputerAllocationAdmissionPrecedesPhysicalEffects(t *testing.T) {
 		if backend.starts.Load() != 0 || client.stops.Load() != 0 || o.closing || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
 			t.Fatal("denied startup acquired physical custody")
 		}
-		if _, err := NewComputerAllocationOwner(o.machines, client, o.identity, o.hostID, o.hostEpoch, nil, o.checkpointKeyUnavailable, o.observe); err == nil {
+		if _, err := NewComputerAllocationOwner(o.machines, client, o.identity, o.hostID, o.hostEpoch, nil, o.observe); err == nil {
 			t.Fatal("missing admission accepted")
 		}
 	})
@@ -573,29 +568,6 @@ func TestComputerAllocationStopsOnProcessDiscoveryClosure(t *testing.T) {
 
 func (c *allocationOwnerTestClient) BeginAgentComputerCapture(context.Context, workerapi.AgentComputerCaptureRequest) (workerapi.AgentComputerCaptureResponse, error) {
 	return workerapi.AgentComputerCaptureResponse{}, &httpclient.Error{StatusCode: http.StatusConflict, Code: workerapi.AgentComputerNotReady}
-}
-
-func TestComputerAllocationKeyFaultReleasesUnstartedOwners(t *testing.T) {
-	for _, afterDelivery := range []bool{false, true} {
-		t.Run(fmt.Sprint(afterDelivery), func(t *testing.T) {
-			o, client, backend := allocationOwnerFixture(t)
-			if !afterDelivery {
-				client.deliveryError = &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerNotReady}
-			}
-			o.admitStart = func(context.Context) error {
-				if !afterDelivery || client.deliveries.Load() > 0 {
-					return ErrCheckpointKeyUnavailable
-				}
-				return nil
-			}
-			if err := o.Run(t.Context()); !errors.Is(err, ErrCheckpointKeyUnavailable) {
-				t.Fatalf("fault: %v", err)
-			}
-			if !o.Finished() || client.stops.Load() != 1 || backend.starts.Load() != 0 || len(o.machines.Reservations.Snapshot().Reservations) != 0 {
-				t.Fatal("unstarted assignment remained held or started")
-			}
-		})
-	}
 }
 
 func TestComputerAllocationRetainsRequestDuringCaptureAmbiguity(t *testing.T) {
@@ -770,7 +742,7 @@ func (b *allocationOwnerTestBackend) BootSeedMatches(vm.MaterializeRequest, []by
 }
 
 func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) {
-	for _, fault := range []string{"materialize", "readiness", "key", "missing", "late", "none"} {
+	for _, fault := range []string{"materialize", "readiness", "key", "key-refused", "missing", "late", "none"} {
 		t.Run(fault, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				o, client, backend := allocationOwnerFixture(t)
@@ -788,13 +760,13 @@ func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) 
 					VMState:     file("state", cas.BootSeedVMStateMediaType, []byte("state")),
 					ScratchDisk: file("scratch", cas.BootSeedScratchMediaType, []byte("scratch")),
 					Memory:      file("memory", cas.BootSeedMemoryMediaType, make([]byte, 1<<20))}
-				manifest, err := o.machines.publishBootSeed(t.Context(), t.TempDir(), uuid.MustParse(o.identity.EnvironmentID), uuid.NewV7(), artifact, 1<<20, o.machines.ComputerObjects)
+				keys := o.machines.ObjectKeys.(*testObjectKeys)
+				build := uuid.NewV7()
+				manifest, err := o.machines.publishBootSeed(t.Context(), keys.bootSeedEncryptor(t, build), t.TempDir(), uuid.MustParse(o.identity.EnvironmentID), build, artifact, 1<<20, o.machines.ComputerObjects)
 				if err != nil {
 					t.Fatal(err)
 				}
 				client.source.BootSeed = &manifest
-				var paused bool
-				o.checkpointKeyUnavailable = func() { paused = true }
 				lateFailure := make(chan error, 1)
 				if fault == "late" {
 					backend.machine.waitFailure = lateFailure
@@ -809,10 +781,9 @@ func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) 
 				case "readiness":
 					client.readinessError = &httpclient.Error{StatusCode: http.StatusBadRequest}
 				case "key":
-					o.machines.CheckpointCipher, err = NewCheckpointEncryptor(bytes.Repeat([]byte{21}, 32))
-					if err != nil {
-						t.Fatal(err)
-					}
+					keys.rotateBootSeed(build)
+				case "key-refused":
+					keys.fail(errors.New("boot seed key refused"))
 				}
 				backend.failCleanup.Store(true)
 				ctx, cancel := context.WithCancel(t.Context())
@@ -841,22 +812,22 @@ func TestComputerBootSeedFailureIsLocalAndWaitsForPhysicalClosure(t *testing.T) 
 				if client.stops.Load() != 0 {
 					t.Fatal("reported seed failure before physical closure")
 				}
-				if paused != (fault == "key") {
-					t.Fatalf("admission pause=%v", paused)
+				if fault == "key-refused" && len(keys.bootSeeds) == 0 {
+					t.Fatal("boot seed key was not requested")
 				}
 				backend.failCleanup.Store(false)
 				if err := o.Run(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				want := ""
-				if fault == "materialize" || fault == "readiness" || fault == "missing" || fault == "late" {
+				if fault == "materialize" || fault == "readiness" || fault == "key" || fault == "missing" || fault == "late" {
 					want = manifest.BuildID.String()
 				}
 				if client.stopped.FailedBootSeedID != want {
 					t.Fatalf("failed seed=%q want=%q", client.stopped.FailedBootSeedID, want)
 				}
 				starts := int64(1)
-				if fault == "key" || fault == "missing" {
+				if fault == "key" || fault == "key-refused" || fault == "missing" {
 					starts = 0
 				}
 				if backend.starts.Load() != starts {

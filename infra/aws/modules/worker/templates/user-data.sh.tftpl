@@ -25,7 +25,6 @@ umask 077
 
 export AWS_REGION='${aws_region}'
 export AWS_DEFAULT_REGION="$AWS_REGION"
-checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
 metadata_token="$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')"
 worker_resource_id="$(curl -fsS -H "X-aws-ec2-metadata-token: $metadata_token" http://169.254.169.254/latest/meta-data/instance-id)"
 env_tmp="$(mktemp /etc/helmr/worker.env.XXXXXX)"
@@ -33,13 +32,11 @@ cat /etc/helmr/worker-base.env >"$env_tmp"
 {
   printf 'AWS_REGION=%s\n' "$AWS_REGION"
   printf 'AWS_DEFAULT_REGION=%s\n' "$AWS_REGION"
-  printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
   printf 'WORKER_ENROLLMENT_TOKEN_FILE=%s\n' /run/helmr/worker-enrollment-token
   printf 'WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
 } >>"$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
-unset checkpoint_key
 
 token="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_token_secret_arn}' --query SecretString --output text)"
 install -d -m 0700 -o root -g root /run/helmr

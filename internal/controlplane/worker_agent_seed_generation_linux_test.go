@@ -259,7 +259,7 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 			t.Fatal(err)
 		}
 		wait(func() (bool, error) {
-			_, err := c.DeleteComputer(ctx, computer, api.DeleteComputerRequest{IdempotencyKey: phase + "-delete"}, client.ComputerScopeOptions{})
+			_, err := c.DeleteComputer(ctx, computer, api.DeleteComputerRequest{IdempotencyKey: phase + "-delete"}, false, client.ComputerScopeOptions{})
 			var apiErr *httpclient.Error
 			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict && apiErr.Code == "computer_busy" {
 				return false, nil

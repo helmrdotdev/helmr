@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -145,10 +146,12 @@ func memoryTransportChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Worker-wide client/cipher construction is outside per-restore accounting.
-	store, err := cass3.New(t.Context(), fixture.URI)
+	unscoped, err := cass3.New(t.Context(), fixture.URI)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The fixture server serves the object at any key.
+	store := unscoped.Organization(uuid.NewV7())
 	cipher, err := NewCheckpointEncryptor(bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatal(err)

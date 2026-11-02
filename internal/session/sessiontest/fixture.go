@@ -71,7 +71,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($4,$7,$5,$5,false,'{"kind":"unrestricted"}');
       INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));
-      INSERT INTO cas_blobs(digest,size_bytes) VALUES($16,$17);
+      INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$16,$17);
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$16,$17,'application/octet-stream');
       INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) VALUES($4,$16,$1,$3,$17,'application/octet-stream','root',$18,$19,clock_timestamp());
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);

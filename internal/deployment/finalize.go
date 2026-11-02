@@ -41,7 +41,7 @@ const objectVerificationTimeout = 10 * time.Minute
 // the platform store and verifies one object at a time.
 type Finalizer struct {
 	networkInstallation networkpolicy.Installation
-	uploads             cas.UploadStore
+	uploads             func(org uuid.UUID) cas.UploadStore
 	platform            cas.Reader
 	admission           bundle.Admission
 	log                 *slog.Logger
@@ -50,7 +50,9 @@ type Finalizer struct {
 
 // NewFinalizer returns a Finalizer over the upload and platform stores that
 // admits bundles by admission and logs to log.
-func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle.Admission, log *slog.Logger, installation networkpolicy.Installation) *Finalizer {
+// NewFinalizer takes the content store of each organization's keyspace and
+// the release-only platform store.
+func NewFinalizer(uploads func(org uuid.UUID) cas.UploadStore, platform cas.Reader, admission bundle.Admission, log *slog.Logger, installation networkpolicy.Installation) *Finalizer {
 	return &Finalizer{
 		uploads: uploads, platform: platform, admission: admission, log: log, networkInstallation: installation.Canonical(),
 		verifierSlots: make(chan struct{}, 1),
@@ -102,7 +104,7 @@ func (f *Finalizer) ResolveUploadDescriptor(ctx context.Context, principal auth.
 	if _, _, err := scopeIDs(scope); err != nil {
 		return cas.Descriptor{}, invalidInput(err)
 	}
-	prepared, err := f.prepareBundle(ctx, bundleDigest)
+	prepared, err := f.prepareBundle(ctx, principal.OrgID, bundleDigest)
 	if err != nil {
 		return cas.Descriptor{}, err
 	}
@@ -128,7 +130,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 	if strings.TrimSpace(idempotencyKey) == "" || len(idempotencyKey) > 512 || !utf8.ValidString(idempotencyKey) || strings.ContainsFunc(idempotencyKey, unicode.IsControl) {
 		return Finalization{}, invalidInput(errors.New("finalization idempotency key must contain 1 to 512 bytes without control characters"))
 	}
-	prepared, err := f.prepareBundle(ctx, bundleDigest)
+	prepared, err := f.prepareBundle(ctx, principal.OrgID, bundleDigest)
 	if err != nil {
 		return Finalization{}, err
 	}
@@ -168,7 +170,7 @@ func (f *Finalizer) available(ctx context.Context, database db.DBTX, request Fin
 		return false, err
 	}
 	for _, descriptor := range request.bundle.objects {
-		object, err := f.uploads.Stat(ctx, descriptor.Digest)
+		object, err := f.uploads(request.orgID).Stat(ctx, descriptor.Digest)
 		if err != nil || cas.RequireExact(object, descriptor) != nil {
 			return false, nil
 		}
@@ -251,11 +253,12 @@ type objectSourceError struct{ err error }
 func (e objectSourceError) Error() string { return e.err.Error() }
 func (e objectSourceError) Unwrap() error { return e.err }
 
-func (f *Finalizer) prepareBundle(ctx context.Context, bundleDigest string) (preparedBundle, error) {
+func (f *Finalizer) prepareBundle(ctx context.Context, org uuid.UUID, bundleDigest string) (preparedBundle, error) {
+	uploads := f.uploads(org)
 	if _, err := artifact.RuntimeDigestBytes(bundleDigest); err != nil {
 		return preparedBundle{}, invalidInput(errors.New("deployment bundle digest is invalid"))
 	}
-	rootObject, err := f.uploads.Stat(ctx, bundleDigest)
+	rootObject, err := uploads.Stat(ctx, bundleDigest)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return preparedBundle{}, invalidInput(errors.New("deployment bundle root is missing"))
@@ -266,7 +269,7 @@ func (f *Finalizer) prepareBundle(ctx context.Context, bundleDigest string) (pre
 		rootObject.SizeBytes < 1 || rootObject.SizeBytes > bundle.MaxBytes {
 		return preparedBundle{}, invalidInput(errors.New("deployment bundle root descriptor is invalid"))
 	}
-	rootReader, err := f.uploads.Get(ctx, bundleDigest)
+	rootReader, err := uploads.Get(ctx, bundleDigest)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return preparedBundle{}, invalidInput(errors.New("deployment bundle root is missing"))
@@ -328,7 +331,7 @@ func (f *Finalizer) verifyObjects(ctx context.Context, q db.Querier, orgID uuid.
 		if err := f.requireObject(ctx, q, owner, orgID, object); err != nil {
 			return err
 		}
-		if err := f.verifyObject(ctx, prepared.bundle, object); err != nil {
+		if err := f.verifyObject(ctx, orgID, prepared.bundle, object); err != nil {
 			return err
 		}
 		if err := progress(object.Digest); err != nil {
@@ -357,7 +360,7 @@ func (f *Finalizer) requireObject(ctx context.Context, q db.Querier, owner strin
 		if owned.SizeBytes != descriptor.SizeBytes || owned.MediaType != descriptor.MediaType {
 			return InvalidObjectError{Err: errors.New("owned deployment object descriptor conflicts with bundle")}
 		}
-		stored, statErr := f.uploads.Stat(ctx, descriptor.Digest)
+		stored, statErr := f.uploads(orgID).Stat(ctx, descriptor.Digest)
 		if statErr != nil {
 			return fmt.Errorf("owned deployment object is unavailable: %w", statErr)
 		}
@@ -365,7 +368,7 @@ func (f *Finalizer) requireObject(ctx context.Context, q db.Querier, owner strin
 			return fmt.Errorf("owned deployment object is unavailable: %w", err)
 		}
 	case isNoRows(ownershipErr):
-		stored, promoteErr := f.uploads.PromoteQuarantine(ctx, owner, descriptor)
+		stored, promoteErr := f.uploads(orgID).PromoteQuarantine(ctx, owner, descriptor)
 		if promoteErr != nil {
 			return fmt.Errorf("publish deployment object %s: %w", descriptor.Digest, promoteErr)
 		}
@@ -378,7 +381,7 @@ func (f *Finalizer) requireObject(ctx context.Context, q db.Querier, owner strin
 	return nil
 }
 
-func (f *Finalizer) verifyObject(ctx context.Context, manifest bundle.Manifest, object cas.Descriptor) error {
+func (f *Finalizer) verifyObject(ctx context.Context, orgID uuid.UUID, manifest bundle.Manifest, object cas.Descriptor) error {
 	ctx, cancel := context.WithTimeout(ctx, objectVerificationTimeout)
 	defer cancel()
 	select {
@@ -387,7 +390,7 @@ func (f *Finalizer) verifyObject(ctx context.Context, manifest bundle.Manifest, 
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	reader, err := f.uploads.Get(ctx, object.Digest)
+	reader, err := f.uploads(orgID).Get(ctx, object.Digest)
 	if err != nil {
 		return fmt.Errorf("read deployment object %s: %w", object.Digest, err)
 	}

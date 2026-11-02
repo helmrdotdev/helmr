@@ -305,56 +305,15 @@ variable "worker_controlplane_url" {
   type        = string
 }
 
-variable "cas_uri" {
-  description = "CAS URI for CAS_URI."
-  type        = string
-}
-
-variable "cas_bucket_arn" {
-  description = "S3 bucket ARN for CAS access."
-  type        = string
-}
-
 variable "kms_key_arn" {
-  description = "KMS key ARN for encrypted Helmr storage."
+  description = "KMS key ARN encrypting the worker enrollment token secret."
   type        = string
-}
-
-variable "platform_store_uri" {
-  description = "Dedicated immutable Platform Artifact store URI ending in /objects."
-  type        = string
-
-  validation {
-    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.platform_store_uri))
-    error_message = "platform_store_uri must be an S3 bucket URI ending exactly in /objects."
-  }
-}
-
-variable "platform_store_bucket_arn" {
-  description = "S3 bucket ARN backing platform_store_uri."
-  type        = string
-
-  validation {
-    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.platform_store_bucket_arn))
-    error_message = "platform_store_bucket_arn must be an S3 bucket ARN."
-  }
-}
-
-variable "platform_store_kms_key_arn" {
-  description = "KMS key ARN used by the dedicated Platform Artifact store."
-  type        = string
-
-  validation {
-    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
-    error_message = "platform_store_kms_key_arn must be a KMS key ARN."
-  }
 }
 
 variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
-    checkpoint_encryption_key = string
-    worker_enrollment_token   = string
+    worker_enrollment_token = string
   })
 }
 

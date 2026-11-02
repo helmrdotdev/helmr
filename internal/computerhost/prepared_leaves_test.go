@@ -44,11 +44,7 @@ func TestPreparedRootJoinsCanceledSourceBeforeReleasingCharge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := NewCheckpointEncryptor(make([]byte, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	disk, err := HostDiskPerSlot(513, 32768, 65536<<20, cipher)
+	disk, err := HostDiskPerSlot(513, 32768, 65536<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

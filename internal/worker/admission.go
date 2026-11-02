@@ -17,16 +17,15 @@ import (
 type AdmissionReason string
 
 const (
-	AdmissionAllowed                  AdmissionReason = ""
-	AdmissionOptionalCleanupFailed    AdmissionReason = "optional_cleanup_failed"
-	AdmissionDiskFloor                AdmissionReason = "disk_floor"
-	AdmissionFileDescriptorPressure   AdmissionReason = "file_descriptor_pressure"
-	AdmissionCgroupUnavailable        AdmissionReason = "cgroup_unavailable"
-	AdmissionKVMUnavailable           AdmissionReason = "kvm_unavailable"
-	AdmissionFirecrackerUnavailable   AdmissionReason = "firecracker_unavailable"
-	AdmissionProbeFailed              AdmissionReason = "host_probe_failed"
-	AdmissionDatapathUnverified       AdmissionReason = "datapath_unverified"
-	AdmissionCheckpointKeyUnavailable AdmissionReason = "checkpoint_key_unavailable"
+	AdmissionAllowed                AdmissionReason = ""
+	AdmissionOptionalCleanupFailed  AdmissionReason = "optional_cleanup_failed"
+	AdmissionDiskFloor              AdmissionReason = "disk_floor"
+	AdmissionFileDescriptorPressure AdmissionReason = "file_descriptor_pressure"
+	AdmissionCgroupUnavailable      AdmissionReason = "cgroup_unavailable"
+	AdmissionKVMUnavailable         AdmissionReason = "kvm_unavailable"
+	AdmissionFirecrackerUnavailable AdmissionReason = "firecracker_unavailable"
+	AdmissionProbeFailed            AdmissionReason = "host_probe_failed"
+	AdmissionDatapathUnverified     AdmissionReason = "datapath_unverified"
 )
 
 type HostHealth struct {
@@ -72,28 +71,9 @@ type HardAdmissionConfig struct {
 }
 
 type HardAdmission struct {
-	cfg                      HardAdmissionConfig
-	mu                       sync.RWMutex
-	last                     AdmissionDecision
-	checkpointKeyUnavailable bool
-}
-
-// The configured key is immutable for this worker's lifetime. A health probe
-// cannot repair a mismatch. Reinitialization clears this local latch but does
-// not prove compatibility with retained checkpoints.
-// Only new physical starts consult this gate. Cleanup and running work continue.
-func (a *HardAdmission) PauseForCheckpointKeyMismatch() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.checkpointKeyUnavailable = true
-	a.last.Allowed = false
-	a.last.Reason = AdmissionCheckpointKeyUnavailable
-}
-
-func (a *HardAdmission) CheckpointKeyUnavailable() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.checkpointKeyUnavailable
+	cfg  HardAdmissionConfig
+	mu   sync.RWMutex
+	last AdmissionDecision
 }
 
 func NewHardAdmission(cfg HardAdmissionConfig) (*HardAdmission, error) {
@@ -147,10 +127,6 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Allowed = true
 	}
 	a.mu.Lock()
-	if a.checkpointKeyUnavailable {
-		decision.Allowed = false
-		decision.Reason = AdmissionCheckpointKeyUnavailable
-	}
 	a.last = decision
 	a.mu.Unlock()
 	return decision

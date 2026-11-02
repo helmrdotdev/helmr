@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
@@ -40,4 +42,39 @@ func (testUploadStore) StreamQuarantine(context.Context, string, cas.Descriptor,
 
 func (testUploadStore) PromoteQuarantine(context.Context, string, cas.Descriptor) (cas.Object, error) {
 	return cas.Object{}, errTestQuarantine
+}
+
+// testStorageSigner signs nothing real; routes that reach storage grants in
+// construction-level tests only need a complete configuration.
+type testStorageSigner struct{ testUploadStore }
+
+func (testStorageSigner) SignGet(context.Context, string, time.Time) (cas.SignedRequest, error) {
+	return cas.SignedRequest{}, errTestQuarantine
+}
+func (testStorageSigner) SignHead(context.Context, string, time.Time) (cas.SignedRequest, error) {
+	return cas.SignedRequest{}, errTestQuarantine
+}
+func (testStorageSigner) StatDescriptor(context.Context, cas.Descriptor) (cas.Object, error) {
+	return cas.Object{}, errTestQuarantine
+}
+func (testStorageSigner) UploadLayout(cas.Descriptor) (cas.Upload, bool) { return cas.Upload{}, false }
+func (testStorageSigner) SignPut(context.Context, cas.Descriptor, time.Time) (cas.SignedRequest, error) {
+	return cas.SignedRequest{}, errTestQuarantine
+}
+func (testStorageSigner) CreateUpload(context.Context, string, cas.Descriptor) (cas.Upload, error) {
+	return cas.Upload{}, errTestQuarantine
+}
+func (testStorageSigner) SignPart(context.Context, cas.Descriptor, cas.Upload, int32, time.Time) (cas.SignedRequest, error) {
+	return cas.SignedRequest{}, errTestQuarantine
+}
+func (testStorageSigner) CompleteUpload(context.Context, cas.Descriptor, cas.Upload, []cas.CompletedPart) (cas.Object, error) {
+	return cas.Object{}, errTestQuarantine
+}
+func (testStorageSigner) AbortUpload(context.Context, cas.Upload, string) error {
+	return errTestQuarantine
+}
+
+// everyOrganization serves one store for every organization's keyspace.
+func everyOrganization[T any](store T) func(uuid.UUID) T {
+	return func(uuid.UUID) T { return store }
 }

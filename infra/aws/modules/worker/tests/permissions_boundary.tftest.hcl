@@ -42,18 +42,12 @@ variables {
   subnet_ids                 = ["subnet-00000000000000000"]
   ami_id                     = "ami-00000000000000000"
   worker_controlplane_url    = "https://controlplane.example.test"
-  cas_uri                    = "s3://helmr-test-cas"
-  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
   kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri         = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
   min_size                   = 0
   max_size                   = 1
   root_volume_size_gb        = 120
   secret_arns = {
-    checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
-    worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
+    worker_enrollment_token = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
   }
 }
 
@@ -101,7 +95,7 @@ run "external_boundary_is_not_module_managed" {
       aws_iam_role.worker.permissions_boundary == var.permissions_boundary_arn &&
       output.sealed_provider_definition.boundary_policy_arn == var.permissions_boundary_arn &&
       jsondecode(output.sealed_provider_definition.boundary_policy_json).Statement[0].Sid == "ExternalWorkerCeiling" &&
-      strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*")
+      strcontains(aws_iam_role_policy.worker.policy, var.secret_arns.worker_enrollment_token)
     )
     error_message = "external boundaries must attach verified policy bytes without replacing the generated inline role policy"
   }

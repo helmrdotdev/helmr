@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math"
 	"math/rand/v2"
@@ -104,12 +105,6 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 			o.closing = true
 			return o.cleanup()
 		}
-		// A permanent local fault releases undelivered assignments too. Closed
-		// allocations above still clean up without consulting startup admission.
-		if admissionErr := o.admitStart(ctx); errors.Is(admissionErr, ErrCheckpointKeyUnavailable) {
-			o.closing = true
-			return errors.Join(err, admissionErr, o.cleanup())
-		}
 		return err
 	}
 	if delivery.Identity != o.identity || len(delivery.ChannelCredential) != 32 || !delivery.ExpiresAt.After(time.Now()) {
@@ -118,6 +113,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	}
 	o.executor = workerapi.PreparationExecutor{Identity: o.identity, ChannelCredential: delivery.ChannelCredential}
 	defer func() { clear(o.executor.ChannelCredential); o.executor.ChannelCredential = nil }()
+	ctx = brokeredstore.WithScope(ctx, workerapi.StorageScope{Preparation: &o.executor})
 	ctx, cancel := context.WithCancelCause(ctx)
 	var jobs sync.WaitGroup
 	defer func() {
@@ -164,9 +160,6 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		capacity.HostDiskBytes += bytes
 	}
 	if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), capacity, &o.workWake); err != nil {
-		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			o.closing = true
-		}
 		return err
 	}
 	o.reserved = true

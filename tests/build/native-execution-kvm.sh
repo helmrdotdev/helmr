@@ -51,10 +51,6 @@ if [[ ${HELMR_NATIVE_LONG_IDLE_PROOF:-0} == 1 ]]; then
   [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
   test_case=TestWorkerAgentLongIdleContinuation
 fi
-if [[ ${HELMR_NATIVE_CHECKPOINT_KEY_MISMATCH_PROOF:-0} == 1 ]]; then
-  [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
-  test_case=TestWorkerAgentCheckpointKeyMismatch
-fi
 if [[ ${HELMR_NATIVE_FINALIZATION_CANCEL_PROOF:-0} == 1 ]]; then
   [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
   test_case=TestWorkerAgentFinalizationCancellation
@@ -299,14 +295,13 @@ if role=='target':
   assert stat.S_ISREG(meta.st_mode) and meta.st_uid==0 and stat.S_IMODE(meta.st_mode)==0o600 and meta.st_size<=16384,'bootstrap file is not root-private bounded input'
   private=json.load(f)
  assert private['targetHostId']==host_id and private['sourceHostId']!=host_id
- assert private['casUri']==config['CASURI'] and private['platformUri']==config['PlatformURI']
  url=urlparse(private['controlPlaneUrl'])
  assert url.scheme=='http' and url.hostname=='127.0.0.1' and url.port and not url.username and not url.password and url.path=='' and not url.query and not url.fragment
  token=e+'/proof/enrollment-token'
  with open(token,'x') as f:f.write(private['enrollmentToken'])
  os.chmod(token,0o600)
- worker.update({'CONTROL_PLANE_URL':private['controlPlaneUrl'],'CAS_URI':private['casUri'],'PLATFORM_STORE_URI':private['platformUri'],
-  'WORKER_ENROLLMENT_TOKEN_FILE':token,'WORKER_POOL_NAME':'native-proof','WORKER_RESOURCE_ID':host_id,'CHECKPOINT_ENCRYPTION_KEY':private['checkpointKey']})
+ worker.update({'CONTROL_PLANE_URL':private['controlPlaneUrl'],
+  'WORKER_ENROLLMENT_TOKEN_FILE':token,'WORKER_POOL_NAME':'native-proof','WORKER_RESOURCE_ID':host_id})
  with open(e+'/proof/target-start.json.new','x') as f:json.dump({'checkpointId':private['checkpointId'],'sourceResourceId':private['sourceHostId'],'targetResourceId':host_id,'freshWorkroot':True,'workerPid':os.getpid(),'bootstrapWaitMs':(time.monotonic()-waiting)*1000,'startedAt':datetime.now(timezone.utc).isoformat()},f)
  os.rename(e+'/proof/target-start.json.new',e+'/proof/target-start.json')
  os.unlink(bootstrap)
@@ -325,7 +320,7 @@ if [[ ${HELMR_CODEX_STARTER_PROOF:-0} == 1 || ${HELMR_CLAUDE_STARTER_PROOF:-0} =
 if [[ ${HELMR_PROTECTED_STARTER_PROOF:-0} == 1 ]]; then test_timeout=55m; fi
 if [[ "$test_case" == TestWorkerAgentPerformance ]]; then test_timeout=42m; fi
 if [[ "$test_case" == TestWorkerAgentPerformance && ${HELMR_NATIVE_BOOT_SEED_PROOF:-0} == 1 ]]; then test_timeout=52m; fi
-if [[ "$test_case" == TestWorkerAgentCheckpointKeyMismatch || "$test_case" == TestWorkerAgentSessionDiscoveryContinuation ]]; then test_timeout=24m; fi
+if [[ "$test_case" == TestWorkerAgentSessionDiscoveryContinuation ]]; then test_timeout=24m; fi
 if [[ "$test_case" == TestWorkerAgentLongIdleContinuation ]]; then test_timeout=139m; fi
 if [[ "$test_case" == TestWorkerAgentCrossHostContinuation ]]; then test_timeout=57m; fi
 if [[ "$test_case" == TestWorkerAgentRetainedNetworkRecovery ]]; then test_timeout=27m; fi

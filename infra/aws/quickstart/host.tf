@@ -18,7 +18,6 @@ locals {
     dispatcher_environment   = var.dispatcher_environment
     secret_arns = {
       for key, secret in aws_secretsmanager_secret.helmr : key => secret.arn
-      if key != "checkpoint_encryption_key"
     }
   }
   cloud_config = {

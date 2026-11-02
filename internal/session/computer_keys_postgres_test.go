@@ -276,7 +276,7 @@ func TestComputerDiskSourceRestoredClosureOpensMultipleKeys(t *testing.T) {
 	// Certification and restoration selection are fixture state. This test
 	// exercises exact restored source/key delivery and actual encrypted reads.
 	dbtest.MustExec(t, t.Context(), f.pool, `
- INSERT INTO cas_blobs(digest,size_bytes) VALUES($3,$4);
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$3,$4 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$3,$4,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$3,org_id,project_id,$4,'application/octet-stream','root',$5,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$3,$6,false),($1,$3,$7,true);

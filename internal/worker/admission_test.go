@@ -183,36 +183,6 @@ func TestAllocatedStartPreservesDrainContinuationAndHardHealthFences(t *testing.
 	}
 }
 
-func TestCheckpointKeyMismatchSurvivesHealthReevaluation(t *testing.T) {
-	cfg := HardAdmissionConfig{Probe: &staticHealthProbe{health: healthyHost(time.Now())}, DiskFloorBytes: 1, FDHeadroom: 1}
-	admission, err := NewHardAdmission(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := AdmissionCheck{Consumer: "instance", Status: StatusActive, DrainContinuation: true}
-	if !admission.Evaluate(t.Context(), check).Allowed {
-		t.Fatal("healthy worker did not admit")
-	}
-	admission.PauseForCheckpointKeyMismatch()
-	for range 3 {
-		observation := admission.Observation()
-		if observation.AdmissionPausedReason != string(AdmissionCheckpointKeyUnavailable) {
-			t.Fatalf("key fault not visible: %+v", observation)
-		}
-		decision := admission.Evaluate(t.Context(), check)
-		if decision.Allowed || decision.Reason != AdmissionCheckpointKeyUnavailable {
-			t.Fatalf("health cleared key fault: %+v", decision)
-		}
-	}
-	restarted, err := NewHardAdmission(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !restarted.Evaluate(t.Context(), check).Allowed {
-		t.Fatal("reinitialized worker retained previous key fault")
-	}
-}
-
 func TestHardAdmissionPausesPlacementUntilOptionalCleanupRecovers(t *testing.T) {
 	var cleanupErr error
 	a, err := NewHardAdmission(HardAdmissionConfig{

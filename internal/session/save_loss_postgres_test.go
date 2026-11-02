@@ -154,7 +154,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(t.Context())
-				first, err := computer.NewSavePublisher(tx, storage.remote)
+				first, err := computer.NewSavePublisher(tx, everyOrganization[computer.SaveObjectStore](storage.remote))
 				if err != nil {
 					t.Fatal(err)
 				}

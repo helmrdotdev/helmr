@@ -40,7 +40,7 @@ func TestS3CancelledBodyDoesNotReportContentMismatch(t *testing.T) {
 				UsePathStyle: true, Credentials: aws.AnonymousCredentials{},
 				HTTPClient: server.Client(),
 			})
-			store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 			var body io.ReadCloser
 			var err error
 			if ranged {

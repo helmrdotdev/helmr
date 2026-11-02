@@ -96,7 +96,7 @@ func TestComputerMembershipCollectionDoesNotExpireUnrelatedUploads(t *testing.T)
 	digest := graphRetentionObject(t, f, 302, 0)
 	// A separate accepted tenant membership is not a Computer-owned orphan.
 	standalone := "sha256:0000000000000000000000000000000000000000000000000000000000000303"
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($2,1);
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,1 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$2,1,'application/octet-stream' FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, standalone)
 	if err := reclaimComputerObject(t.Context(), f.pool, f.env, digest); err != nil {
 		t.Fatal(err)
@@ -107,13 +107,14 @@ func TestComputerMembershipCollectionDoesNotExpireUnrelatedUploads(t *testing.T)
 	}
 }
 
-func TestComputerMembershipReleasePreservesOtherOrganization(t *testing.T) {
+func TestComputerMembershipReleaseLeavesOtherOrganizationIndependent(t *testing.T) {
 	f := newFixture(t)
 	digest := graphRetentionObject(t, f, 304, 0)
 	org, project, env := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations(id,name,slug) VALUES($2,'Other','other');
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$2,'test','other','Other');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($4,$2,$3,'other','Other','#112233',1000000,clock_timestamp());
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT $2,digest,size_bytes FROM disk_objects WHERE environment_id=$1 AND digest=$5;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT $2,digest,size_bytes,media_type FROM disk_objects WHERE environment_id=$1 AND digest=$5;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
  SELECT $4,digest,$2,$3,size_bytes,media_type,kind,rank,inspection,certified_at FROM disk_objects WHERE environment_id=$1 AND digest=$5`, pgx.QueryExecModeSimpleProtocol, f.env, org, project, env, digest)
@@ -124,8 +125,13 @@ func TestComputerMembershipReleasePreservesOtherOrganization(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM cas_objects WHERE digest=$1)=1 AND EXISTS(SELECT 1 FROM cas_objects WHERE org_id=$2 AND digest=$1) AND EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$3 AND digest=$1)`, digest, org, env).Scan(&correct); err != nil || !correct {
 		t.Fatalf("cross-organization owner lost: %v %v", correct, err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE digest=$1`, digest); err == nil {
-		t.Fatal("other organization no longer pinned physical availability")
+	// The same digest in the other organization is a separate lifetime: it stays
+	// pinned while the released one can retire.
+	if _, err := f.pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE org_id=$2 AND digest=$1`, digest, org); err == nil {
+		t.Fatal("other organization no longer pinned its own availability")
+	}
+	if _, err := f.pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE org_id<>$2 AND digest=$1`, digest, org); err != nil {
+		t.Fatalf("released lifetime stayed pinned by another organization: %v", err)
 	}
 	if err := reclaimComputerObject(t.Context(), f.pool, env, digest); err != nil {
 		t.Fatal(err)

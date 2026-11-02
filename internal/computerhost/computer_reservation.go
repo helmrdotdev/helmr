@@ -17,11 +17,11 @@ func (p *PreparedMachines) computerReservation(shape workerapi.AllocationShape, 
 		return reservation.Vector{}, reservation.ErrOverflow
 	}
 	request.HostDiskBytes += p.ComputerStagingBytes
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: shape.MemoryBytes, ScratchBytes: shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, p.CheckpointCipher)
+	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: shape.MemoryBytes, ScratchBytes: shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit})
 	if err != nil {
 		return reservation.Vector{}, err
 	}
-	state, err := p.CheckpointCipher.EncryptedSize(vm.SnapshotStateLimit)
+	state, err := encryptedCheckpointSize(vm.SnapshotStateLimit)
 	if err != nil {
 		return reservation.Vector{}, err
 	}

@@ -55,7 +55,7 @@ func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.Environment, f.Session)
 				}
 			}
-			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store }))
+			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = everyOrganization[cas.UploadStore](store) }))
 			defer server.Close()
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			session := runtimeTestSession(f)
@@ -146,7 +146,11 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET proxy_ca_certificate=$3,proxy_ca_not_after=$4,proxy_ca_private_key_nonce=$5,proxy_ca_private_key_ciphertext=$6 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer, trust.Certificate, trust.NotAfter, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext)
 	store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store; cfg.SecretDelivery = secrets; cfg.SecretProxy = secrets }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.CAS = everyOrganization[cas.UploadStore](store)
+		cfg.SecretDelivery = secrets
+		cfg.SecretProxy = secrets
+	}))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	session := runtimeTestSession(f)

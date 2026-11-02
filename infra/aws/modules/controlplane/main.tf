@@ -346,6 +346,29 @@ resource "aws_s3_bucket_lifecycle_configuration" "cas" {
     filter { prefix = "quarantine/" }
     expiration { expired_object_delete_marker = true }
   }
+  # Staging holds unverified multipart bytes until the Control Plane verifies
+  # and copies them to their digest key; leftovers of a crash expire.
+  rule {
+    id     = "expire-staging"
+    status = "Enabled"
+    filter { prefix = "staging/" }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+  rule {
+    id     = "remove-staging-delete-markers"
+    status = "Enabled"
+    filter { prefix = "staging/" }
+    expiration { expired_object_delete_marker = true }
+  }
+  # Hosts upload parts through grants and the Control Plane completes or aborts
+  # each upload; this releases uploads abandoned by a lost host or allocation.
+  rule {
+    id     = "abort-abandoned-multipart-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 1 }
+  }
 
   dynamic "rule" {
     for_each = var.cas_object_expiration_days == null && var.cas_noncurrent_version_expiration_days == null ? [] : [true]
@@ -927,6 +950,7 @@ resource "aws_iam_role_policy" "controlplane_task" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
+          "s3:GetObjectVersion",
           "s3:PutObject",
           "s3:PutObjectTagging",
           "s3:DeleteObject",
@@ -1357,13 +1381,6 @@ resource "aws_secretsmanager_secret" "resend_api_key" {
 resource "aws_secretsmanager_secret" "smtp_password" {
   count                   = var.email_provider == "smtp" && var.smtp_password_enabled ? 1 : 0
   name                    = "${local.name}/controlplane/smtp-password"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
-  name                    = "${local.name}/worker/checkpoint-encryption-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

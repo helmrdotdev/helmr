@@ -18,17 +18,6 @@ func newAllocationConsumer(machines *computerhost.PreparedMachines, client *work
 		return nil, errors.New("allocation machines and authenticated client are required")
 	}
 	return worker.NewAllocationConsumer(client, limit, poll, func(identity workerapi.AllocationIdentity, admitStart func(context.Context) error) (worker.AllocationOwner, error) {
-		underlyingAdmission := admitStart
-		admitStart = func(ctx context.Context) error {
-			if admission.CheckpointKeyUnavailable() {
-				return computerhost.ErrCheckpointKeyUnavailable
-			}
-			err := underlyingAdmission(ctx)
-			if admission.CheckpointKeyUnavailable() {
-				return computerhost.ErrCheckpointKeyUnavailable
-			}
-			return err
-		}
 		// The supervisor authenticates, recovers and activates before discovery.
 		host, epoch, err := client.HostIdentity()
 		if err != nil {
@@ -36,7 +25,7 @@ func newAllocationConsumer(machines *computerhost.PreparedMachines, client *work
 		}
 		switch identity.Kind {
 		case "computer":
-			return computerhost.NewComputerAllocationOwner(machines, client, identity, host, epoch, admitStart, admission.PauseForCheckpointKeyMismatch, unexpectedAllocationEvent)
+			return computerhost.NewComputerAllocationOwner(machines, client, identity, host, epoch, admitStart, unexpectedAllocationEvent)
 		case "seed":
 			return computerhost.NewBootSeedAllocationOwner(machines, client, identity, epoch, admitStart)
 		case "preparation":

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,15 +20,17 @@ type ReclamationStore interface {
 }
 
 // CASReclaimer owns physical deletion and durable retry for unreferenced CAS
-// blobs. Domain collectors release eligible attachments before this sweep;
-// availability FKs prevent retirement while any owner still pins the bytes.
+// blobs. Each blob lifetime belongs to one organization's keyspace and is swept
+// in that keyspace's store. Domain collectors release eligible attachments
+// before this sweep; availability FKs prevent retirement while any owner still
+// pins the bytes.
 type CASReclaimer struct {
 	queries *db.Queries
-	store   ReclamationStore
+	store   func(org uuid.UUID) ReclamationStore
 	log     *slog.Logger
 }
 
-func NewCASReclaimer(pool *pgxpool.Pool, store ReclamationStore, log *slog.Logger) (*CASReclaimer, error) {
+func NewCASReclaimer(pool *pgxpool.Pool, store func(org uuid.UUID) ReclamationStore, log *slog.Logger) (*CASReclaimer, error) {
 	if pool == nil || store == nil || log == nil {
 		return nil, errors.New("CAS reclamation requires database, storage and logger")
 	}

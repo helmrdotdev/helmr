@@ -44,7 +44,12 @@ func (p *PreparedMachines) openPreparedBootSeed(ctx context.Context, directory s
 	if err := cas.RequireExact(object, m.Memory); err != nil {
 		return nil, err
 	}
-	seed, err := p.openBootSeedFrom(ctx, directory, m, memoryBytes, scratchBytes, p.OptionalComputerObjects, local)
+	cipher, err := p.bootSeedCipher(ctx, m.BuildID)
+	if err != nil {
+		return nil, err
+	}
+	defer cipher.Close()
+	seed, err := p.openBootSeedFrom(ctx, cipher, directory, m, memoryBytes, scratchBytes, p.OptionalComputerObjects, local)
 	if err != nil {
 		return nil, err
 	}

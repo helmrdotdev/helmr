@@ -14,7 +14,7 @@ import (
 // including retained prepared RAM ciphertext and a subsequent checkpoint. The
 // host reserve is withheld separately. Immutable publication uploads these
 // files directly; it does not spool another copy.
-func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *CheckpointEncryptor) (int64, error) {
+func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64) (int64, error) {
 	if memoryMiB <= 0 || scratchMiB <= 0 || memoryMiB > math.MaxInt64/mebibyte || scratchMiB > math.MaxInt64/mebibyte || computerStagingBytes <= 0 {
 		return 0, errors.New("invalid worker lifecycle disk shape")
 	}
@@ -23,11 +23,11 @@ func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *
 	if err != nil {
 		return 0, err
 	}
-	capture, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: disk.SeedCapacity, MemoryBytes: memory, ScratchBytes: scratch, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, cipher)
+	capture, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: disk.SeedCapacity, MemoryBytes: memory, ScratchBytes: scratch, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit})
 	if err != nil {
 		return 0, err
 	}
-	state, err := cipher.EncryptedSize(vm.SnapshotStateLimit)
+	state, err := encryptedCheckpointSize(vm.SnapshotStateLimit)
 	if err != nil {
 		return 0, err
 	}

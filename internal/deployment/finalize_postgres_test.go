@@ -158,7 +158,7 @@ func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 	for _, object := range f.request.bundle.objects {
 		store.objects[object.Digest] = object
 	}
-	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
+	finalizer := NewFinalizer(everyOrganization[cas.UploadStore](store), store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
 	result, err := finalizer.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request, func(string) error { t.Fatal("replay should not verify"); return nil })
 	if err != nil || result.ID != first.ID {
 		t.Fatalf("replay: %+v %v", result, err)

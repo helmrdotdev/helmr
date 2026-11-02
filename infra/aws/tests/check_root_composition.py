@@ -204,7 +204,7 @@ private_inputs = next(event['test_plan']['variables'] for event in private_event
                       if event.get('type') == 'test_plan' and event['@testrun'] == 'diagnostic_environment')
 endpoint = json.loads(resources['module.controlplane_network.aws_vpc_endpoint.s3[0]']['policy'])
 task_policy = json.loads(resources['module.controlplane.aws_iam_role_policy.controlplane_task']['policy'])
-required = {'s3:PutObject', 's3:PutObjectTagging', 's3:GetObject', 's3:ListBucketVersions', 's3:DeleteObjectVersion'}
+required = {'s3:PutObject', 's3:PutObjectTagging', 's3:GetObject', 's3:GetObjectVersion', 's3:ListBucketVersions', 's3:DeleteObjectVersion'}
 endpoint_cas = [statement for statement in endpoint['Statement'] if cas_bucket in statement['Resource']]
 task_cas = [statement for statement in task_policy['Statement'] if cas_bucket in statement['Resource']]
 assert len(endpoint_cas) == len(task_cas) == 1
@@ -235,7 +235,6 @@ config = json.loads(files['/etc/helmr/quickstart.json']['content'])
 assert config['cas_uri'].startswith('s3://')
 assert config['blocked_ipv4_cidrs'] == ['3.112.1.2/32', '10.80.0.0/16', '169.254.0.0/16']
 assert all(value.startswith('arn:aws:secretsmanager:') for value in config['secret_arns'].values())
-assert 'checkpoint_encryption_key' not in config['secret_arns']
 assert 'database-bootstrap' in files['/usr/local/sbin/helmr-quickstart-start']['content']
 assert 'migrate' in files['/usr/local/sbin/helmr-quickstart-start']['content']
 assert 'reverse_proxy 127.0.0.1:8080' in files['/etc/helmr/Caddyfile']['content']
@@ -246,7 +245,7 @@ statements = json.loads(quick['aws_iam_role_policy.control']['policy'])['Stateme
 secret_statements = [item for item in statements if 'secretsmanager:GetSecretValue' in item['Action']]
 assert len(secret_statements) == 1
 assert sorted(secret_statements[0]['Resource']) == sorted(config['secret_arns'].values())
-assert len(secret_statements[0]['Resource']) == sum(r['type'] == 'aws_secretsmanager_secret' for r in quick_resources) - 1
+assert len(secret_statements[0]['Resource']) == sum(r['type'] == 'aws_secretsmanager_secret' for r in quick_resources)
 assert all(not action.startswith(('ec2:', 'autoscaling:')) for item in statements for action in item['Action'])
 assert not any(r['type'] == 'aws_secretsmanager_secret_version' for r in quick_resources)
 quick_plan = next(event['test_plan'] for event in quick_events

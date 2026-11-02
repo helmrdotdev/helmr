@@ -488,7 +488,7 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 	if err != nil {
 		return m, nil, err
 	}
-	limits, err := checkpointStagingSize(shape, o.machines.CheckpointCipher)
+	limits, err := checkpointStagingSize(shape)
 	if err != nil {
 		return m, nil, err
 	}
@@ -511,9 +511,14 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 			_ = os.RemoveAll(directory)
 		}
 	}()
+	cipher, err := o.machines.checkpointCipher(ctx, o.identity, capture.GetCheckpointId())
+	if err != nil {
+		return m, nil, err
+	}
+	defer cipher.Close()
 	var files []string
 	var path string
-	m.VMConfig, path, err = encryptCheckpointObject(ctx, o.machines.CheckpointCipher, directory, capture.GetCheckpointId(), "vm_config", cas.CheckpointVMConfigMediaType, bytes.NewReader(a.Manifest), limits.config)
+	m.VMConfig, path, err = encryptCheckpointObject(ctx, cipher, directory, capture.GetCheckpointId(), "vm_config", cas.CheckpointVMConfigMediaType, bytes.NewReader(a.Manifest), limits.config)
 	if err != nil {
 		return m, nil, err
 	}
@@ -531,9 +536,9 @@ func (o *ComputerAllocationOwner) encryptCheckpoint(ctx context.Context, capture
 		var path string
 		if item.role == "memory" {
 			purpose := o.identity.EnvironmentID + "/" + o.identity.OwnerID + "/" + capture.GetCheckpointId() + "/memory"
-			object, path, m.MemoryHeaderDigest, err = encryptCheckpointMemory(ctx, o.machines.CheckpointCipher, directory, purpose, source, shape.MemoryBytes)
+			object, path, m.MemoryHeaderDigest, err = encryptCheckpointMemory(ctx, cipher, directory, purpose, source, shape.MemoryBytes)
 		} else {
-			object, path, err = encryptCheckpointObject(ctx, o.machines.CheckpointCipher, directory, capture.GetCheckpointId(), item.role, item.media, source, item.limit)
+			object, path, err = encryptCheckpointObject(ctx, cipher, directory, capture.GetCheckpointId(), item.role, item.media, source, item.limit)
 		}
 		err = errors.Join(err, source.Close())
 		if err != nil {

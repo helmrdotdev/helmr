@@ -34,8 +34,6 @@ type CheckpointEncryptor struct {
 	rand  io.Reader
 }
 
-var ErrCheckpointKeyUnavailable = errors.New("checkpoint encryption key is unavailable")
-
 var errInvalidCheckpoint = errors.New("checkpoint contents are invalid")
 
 func invalidCheckpoint(err error) error { return fmt.Errorf("%w: %w", errInvalidCheckpoint, err) }
@@ -47,7 +45,11 @@ func checkpointCipherReadError(err error) error {
 	return err
 }
 
+// NewCheckpointEncryptor copies one object set's 256-bit data key.
 func NewCheckpointEncryptor(key []byte) (*CheckpointEncryptor, error) {
+	if len(key) != 32 {
+		return nil, errors.New("checkpoint data key must be 256 bits")
+	}
 	if _, err := aes.NewCipher(key); err != nil {
 		return nil, fmt.Errorf("configure checkpoint encryption key: %w", err)
 	}
@@ -55,6 +57,14 @@ func NewCheckpointEncryptor(key []byte) (*CheckpointEncryptor, error) {
 	c := &CheckpointEncryptor{key: append([]byte(nil), key...), rand: rand.Reader}
 	copy(c.keyID[:], fingerprint[:keyIDSize])
 	return c, nil
+}
+
+// Close clears the data key. A closed encryptor refuses further use.
+func (c *CheckpointEncryptor) Close() {
+	if c != nil {
+		clear(c.key)
+		c.key = nil
+	}
 }
 
 // KeyID is a non-secret, domain-separated fingerprint for operational diagnosis.
@@ -78,9 +88,9 @@ func (c *CheckpointEncryptor) objectCipher(header []byte, purpose string) (ciphe
 	return cipher.NewGCM(block)
 }
 
-// EncryptedSize includes the header, data frames and authenticated end record.
-func (c *CheckpointEncryptor) EncryptedSize(plaintextBytes int64) (int64, error) {
-	if c == nil || len(c.key) == 0 || plaintextBytes < 0 {
+// encryptedCheckpointSize includes the header, data frames and authenticated end record.
+func encryptedCheckpointSize(plaintextBytes int64) (int64, error) {
+	if plaintextBytes < 0 {
 		return 0, errors.New("invalid checkpoint encryption size request")
 	}
 	records := plaintextBytes / chunkSize
@@ -156,7 +166,7 @@ func (c *CheckpointEncryptor) Decrypt(ctx context.Context, ciphertext io.Reader,
 		return invalidCheckpoint(errors.New("unsupported checkpoint encryption format"))
 	}
 	if !bytes.Equal(header[len(magic):len(magic)+keyIDSize], c.keyID[:]) {
-		return fmt.Errorf("%w: configured key id %x, checkpoint key id %x", ErrCheckpointKeyUnavailable, c.keyID[:], header[len(magic):len(magic)+keyIDSize])
+		return invalidCheckpoint(errors.New("checkpoint was encrypted with a different data key"))
 	}
 	aead, err := c.objectCipher(header, purpose)
 	if err != nil {

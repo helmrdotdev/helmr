@@ -51,7 +51,7 @@ func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*prepara
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher, err := computer.NewImageBuildPublisher(f.pool, remote)
+	publisher, err := computer.NewImageBuildPublisher(f.pool, everyOrganization[computer.SaveObjectStore](remote))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	if err = p.RegisterBatch(t.Context(), []blockformat.ObjectInspection{inspection}); err != nil {
 		t.Fatal(err)
 	}
-	guarded, _ := computer.NewImageBuildPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	guarded, _ := computer.NewImageBuildPublisher(p.f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		// A separate transaction must complete while Stat is in flight.
 		expireCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -254,7 +254,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 			return cas.Object{}, err
 		}
 		return p.remote.Stat(ctx, digest)
-	}))
+	})))
 	if err = guarded.CertifyBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{inspection}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("certified after executor authority loss: %v", err)
 	}

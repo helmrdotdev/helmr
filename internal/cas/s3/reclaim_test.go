@@ -31,7 +31,7 @@ func (c *reclaimS3Client) DeleteObject(_ context.Context, in *awss3.DeleteObject
 
 func TestReclaimVersionsOnlyDeletesExactKeyVersions(t *testing.T) {
 	client := &reclaimS3Client{}
-	store := &Store{client: client, bucket: "test", prefix: "cas"}
+	store := &Store{org: testOrg, client: client, bucket: "test", prefix: "cas"}
 	digest := sha256sum.DigestBytes([]byte("retired ciphertext"))
 	key, err := store.objectKey(digest)
 	if err != nil {
@@ -66,7 +66,7 @@ func TestReclaimVersionsRetainsFailureAndNeverDeletesCurrentKey(t *testing.T) {
 	for _, scenario := range []string{"list", "delete", "missing-version", "cancelled"} {
 		t.Run(scenario, func(t *testing.T) {
 			client := &reclaimS3Client{}
-			store := &Store{client: client, bucket: "test"}
+			store := &Store{org: testOrg, client: client, bucket: "test"}
 			key, _ := store.objectKey(digest)
 			version := aws.String("version")
 			if scenario == "missing-version" {
@@ -119,7 +119,7 @@ func (c *multipartReclaimClient) ListParts(_ context.Context, in *awss3.ListPart
 
 func TestReclaimMultipartKeepsExactIdentityAndReportsLateParts(t *testing.T) {
 	c := &multipartReclaimClient{}
-	store := &Store{client: c, bucket: "bucket", prefix: "cas"}
+	store := &Store{org: testOrg, client: c, bucket: "bucket", prefix: "cas"}
 	digest := sha256sum.DigestBytes([]byte("retired multipart"))
 	key, _ := store.objectKey(digest)
 	c.uploads = &awss3.ListMultipartUploadsOutput{IsTruncated: aws.Bool(true), Uploads: []types.MultipartUpload{
@@ -185,7 +185,7 @@ func (c *versionPages) DeleteObject(_ context.Context, in *awss3.DeleteObjectInp
 }
 func TestReclaimVersionsMakesBoundedProgressAcrossPages(t *testing.T) {
 	c := &versionPages{}
-	store := &Store{client: c, bucket: "bucket"}
+	store := &Store{org: testOrg, client: c, bucket: "bucket"}
 	digest := sha256sum.DigestBytes([]byte("many versions"))
 	c.key, _ = store.objectKey(digest)
 	for i := range 205 {

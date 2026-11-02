@@ -25,7 +25,7 @@ import (
 func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	f := sessiontest.New(t)
 	store := newTestUploadStore(t)
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = store }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = everyOrganization[cas.UploadStore](store) }))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
@@ -49,7 +49,7 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	}
 	defer candidate.Close()
 	save := workerapi.AgentSave{EnvironmentID: request.EnvironmentID, SaveID: result.SaveID, LeaseEpoch: 1}
-	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: save, store: store})
+	locator, err := candidate.Publish(t.Context(), saveHTTPPublication{client: client, save: save, store: store, pool: f.Pool})
 	if err != nil {
 		t.Fatal(err)
 	}
