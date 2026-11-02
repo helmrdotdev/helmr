@@ -28,8 +28,6 @@ func waitAllocationCapacity(ctx context.Context, admit func(context.Context) err
 			if !errors.Is(err, reservation.ErrCapacityExceeded) {
 				return err
 			}
-		} else if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			return err
 		}
 		timer := time.NewTimer(15 * time.Second)
 		select {

@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -472,10 +471,9 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	for key, value := range input.WorkerEnv {
 		workerEnv[key] = value
 	}
-	workerEnv["CONTROL_PLANE_URL"], workerEnv["CAS_URI"], workerEnv["PLATFORM_STORE_URI"] = server.URL, input.CASURI, input.PlatformURI
+	workerEnv["CONTROL_PLANE_URL"] = server.URL
 	workerEnv["WORKER_ENROLLMENT_TOKEN_FILE"], workerEnv["WORKER_POOL_NAME"] = tokenPath, "native-proof"
 	workerEnv["WORKER_RESOURCE_ID"] = "loss-proof-" + uuid.NewV7().String()
-	workerEnv["CHECKPOINT_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(keyBytes)
 	if pressure || recoverComputer {
 		workerEnv["WORKER_COMPUTER_STAGING_MIB"] = "256"
 	}

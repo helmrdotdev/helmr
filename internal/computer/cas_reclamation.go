@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -14,13 +15,16 @@ import (
 // Reconcile retires abandoned CAS blobs, then sweeps retired blobs'
 // remote storage. Retirement always commits before any remote I/O.
 func (r *CASReclaimer) Reconcile(ctx context.Context) error {
+	if _, err := r.queries.DeleteEndedUploadReceipts(ctx); err != nil {
+		return err
+	}
 	candidates, err := r.queries.ListAbandonedCasBlobs(ctx, 100)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	for _, digest := range candidates {
-		if _, err := r.queries.RetireAbandonedCasBlob(ctx, digest); err != nil {
+	for _, candidate := range candidates {
+		if _, err := r.queries.RetireAbandonedCasBlob(ctx, db.RetireAbandonedCasBlobParams(candidate)); err != nil {
 			// An adopter or registered owner won the race. The FK, not the
 			// candidate list's earlier snapshot, is the final deletion barrier.
 			var pgErr *pgconn.PgError
@@ -33,24 +37,24 @@ func (r *CASReclaimer) Reconcile(ctx context.Context) error {
 	// Claim just before work, not a large batch that can expire while queued
 	// locally. Storage work is bounded below the five-minute recovery interval.
 	for range 100 {
-		digests, err := r.queries.ClaimRetiredCasBlobs(ctx, 1)
+		claimed, err := r.queries.ClaimRetiredCasBlobs(ctx, 1)
 		if err != nil {
 			return errors.Join(append(failures, err)...)
 		}
-		if len(digests) == 0 {
+		if len(claimed) == 0 {
 			break
 		}
-		digest := digests[0]
+		blob := claimed[0]
 		sweepCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-		err = r.sweep(sweepCtx, digest)
+		err = r.sweep(sweepCtx, blob.OrgID, blob.Digest)
 		cancel()
 		recorded := pgtype.Text{}
 		if err != nil {
 			recorded = pgtype.Text{String: err.Error(), Valid: true}
-			failures = append(failures, fmt.Errorf("reclaim %s: %w", digest, err))
+			failures = append(failures, fmt.Errorf("reclaim %s of organization %s: %w", blob.Digest, pgvalue.MustUUIDValue(blob.OrgID), err))
 		}
 		if recordErr := r.queries.RecordCasBlobReclamation(ctx, db.RecordCasBlobReclamationParams{
-			Digest: digest, LastError: recorded,
+			OrgID: blob.OrgID, Digest: blob.Digest, LastError: recorded,
 		}); recordErr != nil {
 			failures = append(failures, recordErr)
 		}
@@ -58,27 +62,28 @@ func (r *CASReclaimer) Reconcile(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (r *CASReclaimer) sweep(ctx context.Context, digest string) error {
+func (r *CASReclaimer) sweep(ctx context.Context, org pgtype.UUID, digest string) error {
+	store := r.store(pgvalue.MustUUIDValue(org))
 	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, 15*time.Second)
-	discovered, discoveryErr := r.store.RetiredUploads(discoveryCtx, digest)
+	discovered, discoveryErr := store.RetiredUploads(discoveryCtx, digest)
 	cancelDiscovery()
 	var failures []error
 	if discoveryErr != nil {
 		failures = append(failures, discoveryErr)
 	}
 	for _, id := range discovered {
-		if err := r.queries.RegisterRetiredCasUpload(ctx, db.RegisterRetiredCasUploadParams{Digest: digest, UploadID: id}); err != nil {
+		if err := r.queries.RegisterRetiredCasUpload(ctx, db.RegisterRetiredCasUploadParams{OrgID: org, Digest: digest, UploadID: id}); err != nil {
 			// Never abort an upload whose ID could be forgotten after a crash.
 			return errors.Join(append(failures, err)...)
 		}
 	}
-	retained, err := r.queries.ClaimRetiredCasUploads(ctx, db.ClaimRetiredCasUploadsParams{Digest: digest, RowLimit: 10})
+	retained, err := r.queries.ClaimRetiredCasUploads(ctx, db.ClaimRetiredCasUploadsParams{OrgID: org, Digest: digest, RowLimit: 10})
 	if err != nil {
 		return errors.Join(append(failures, err)...)
 	}
 	for _, id := range retained {
 		uploadCtx, cancelUpload := context.WithTimeout(ctx, 10*time.Second)
-		err := r.store.ReclaimUpload(uploadCtx, digest, id)
+		err := store.ReclaimUpload(uploadCtx, digest, id)
 		cancelUpload()
 		if err != nil {
 			failures = append(failures, err)
@@ -87,7 +92,7 @@ func (r *CASReclaimer) sweep(ctx context.Context, digest string) error {
 	// A multipart completion can race abort and appear here or on a later pass.
 	versionCtx, cancelVersions := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelVersions()
-	if err := r.store.ReclaimVersions(versionCtx, digest); err != nil {
+	if err := store.ReclaimVersions(versionCtx, digest); err != nil {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)

@@ -84,7 +84,7 @@ func graphRetentionObject(t *testing.T, f fixture, digit int, rank int) string {
 	if rank == 0 {
 		kind = "segment"
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1);
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$1,1 FROM environments WHERE id=$2;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$1,1,'application/octet-stream' FROM environments WHERE id=$2;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$1,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',clock_timestamp() FROM environments WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, digest, f.env, kind, rank)
 	return digest

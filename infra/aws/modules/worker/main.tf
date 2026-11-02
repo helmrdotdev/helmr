@@ -30,8 +30,6 @@ locals {
     WORKER_COMPUTER_STAGING_MIB           = tostring(var.computer_staging_mib)
     WORKER_COMPUTER_DEVICES               = join(" ", var.computer_devices)
     CONTROL_PLANE_URL                     = var.worker_controlplane_url
-    CAS_URI                               = var.cas_uri
-    PLATFORM_STORE_URI                    = var.platform_store_uri
     FIRECRACKER_PATH                      = "/usr/local/bin/firecracker"
     CPU_TEMPLATE_HELPER_PATH              = "/usr/local/bin/cpu-template-helper"
     JAILER_PATH                           = "/usr/local/bin/jailer"
@@ -69,7 +67,6 @@ locals {
   reserved_worker_environment_keys = setunion(toset(keys(local.worker_environment_values)), toset([
     "AWS_REGION",
     "AWS_DEFAULT_REGION",
-    "CHECKPOINT_ENCRYPTION_KEY",
     "WORKER_ENROLLMENT_TOKEN_FILE",
     "WORKER_RESOURCE_ID",
   ]))
@@ -80,7 +77,6 @@ locals {
     computer_devices                     = var.computer_devices
     computer_device_count                = max([for device in var.computer_devices : tonumber(trimprefix(device, "/dev/nbd"))]...) + 1
     environment                          = local.base_worker_environment
-    checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
@@ -105,21 +101,10 @@ locals {
 
   worker_permission_policy = {
     Version = "2012-10-17"
+    # Workers hold no storage credential: the Control Plane signs each
+    # object read and write for one live allocation, and delivers checkpoint
+    # data keys through its key broker.
     Statement = concat([
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:PutObjectTagging",
-          "s3:AbortMultipartUpload",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          var.cas_bucket_arn,
-          "${var.cas_bucket_arn}/*"
-        ]
-      },
       {
         Effect = "Allow"
         Action = [
@@ -131,17 +116,12 @@ locals {
       {
         Effect = "Allow"
         Action = [
-          "kms:Decrypt",
-          "kms:Encrypt",
-          "kms:GenerateDataKey"
+          "kms:Decrypt"
         ]
         Resource = var.kms_key_arn
         Condition = {
           StringEquals = {
-            "kms:ViaService" = [
-              "s3.${data.aws_region.current.region}.amazonaws.com",
-              "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
-            ]
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
           }
         }
       },
@@ -151,31 +131,8 @@ locals {
           "secretsmanager:GetSecretValue"
         ]
         Resource = [
-          var.secret_arns.checkpoint_encryption_key,
           var.secret_arns.worker_enrollment_token,
         ]
-      },
-      ], [
-      {
-        Sid    = "ReadPlatformObjects"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject"
-        ]
-        Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
-      },
-      {
-        Sid    = "DecryptPlatformObjects"
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt"
-        ]
-        Resource = var.platform_store_kms_key_arn
-        Condition = {
-          StringEquals = {
-            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
-          }
-        }
       },
     ])
   }
@@ -398,23 +355,12 @@ resource "terraform_data" "network_preconditions" {
       translation_pool       = var.network_translation_pool
     })
     reserved_env_conflicts = local.worker_environment_conflicts
-    platform_store_uri     = var.platform_store_uri
   }
 
   lifecycle {
     precondition {
       condition     = length(local.worker_environment_conflicts) == 0
       error_message = "worker_environment must not set module-managed Worker variables. Remove conflicting entries and use typed inputs where available."
-    }
-
-    precondition {
-      condition     = var.platform_store_uri == "s3://${trimprefix(var.platform_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
-      error_message = "platform_store_uri must identify the bucket supplied by platform_store_bucket_arn and end in /objects."
-    }
-
-    precondition {
-      condition     = var.platform_store_bucket_arn != var.cas_bucket_arn
-      error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
     }
 
     precondition {

@@ -18,10 +18,11 @@ import (
 
 type BootSeedPublisher struct {
 	database db.TxBeginner
-	objects  cas.Reader
+	objects  func(org uuid.UUID) cas.Reader
 }
 
-func NewBootSeedPublisher(database db.TxBeginner, objects cas.Reader) (*BootSeedPublisher, error) {
+// NewBootSeedPublisher takes the content store of each organization's keyspace.
+func NewBootSeedPublisher(database db.TxBeginner, objects func(org uuid.UUID) cas.Reader) (*BootSeedPublisher, error) {
 	if database == nil || objects == nil {
 		return nil, errors.New("boot seed publication requires database and immutable storage")
 	}
@@ -55,6 +56,9 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 	}
 	check := func(tx pgx.Tx) (bool, error) {
 		if err := LockHost(ctx, tx, host); err != nil {
+			return false, err
+		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
 			return false, err
 		}
 		build, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID)
@@ -110,15 +114,21 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 		return false, nil
 	}
 	var done bool
+	var org uuid.UUID
 	if err := db.RunTx(ctx, p.database, func(tx pgx.Tx) error {
 		var err error
-		done, err = check(tx)
-		return err
+		if done, err = check(tx); err != nil || done {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, ref.EnvironmentID).Scan(&org)
 	}); err != nil || done {
 		return hideMissing(err)
 	}
+	// An object at the organization's key was written only under that
+	// organization's authority, so storage confirms its admission.
+	objects := p.objects(org)
 	for _, object := range m.Objects() {
-		actual, err := p.objects.Stat(ctx, object.Digest)
+		actual, err := objects.Stat(ctx, object.Digest)
 		if err != nil {
 			return err
 		}
@@ -131,16 +141,15 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 		if err != nil || done {
 			return err
 		}
-		var org uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, ref.EnvironmentID).Scan(&org); err != nil {
-			return err
-		}
 		for _, object := range m.Objects() {
+			if err := releaseFinishedUploads(ctx, tx, org, object.Digest); err != nil {
+				return err
+			}
 			if _, err := db.New(tx).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO boot_seed_objects(environment_id,boot_seed_build_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`,
-				ref.EnvironmentID, ref.BuildID, object.Role, object.Digest, object.SizeBytes, object.MediaType); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO boot_seed_objects(org_id,environment_id,boot_seed_build_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+				org, ref.EnvironmentID, ref.BuildID, object.Role, object.Digest, object.SizeBytes, object.MediaType); err != nil {
 				return err
 			}
 		}

@@ -340,7 +340,8 @@ export function Members() {
   };
 
   // A suspended member has no live access left to end, so resuming needs no
-  // confirmation; they sign in again afterwards.
+  // confirmation dialog; it restores access, so the server asks for a recent
+  // sign-in. The member signs in again afterwards.
   const resume = async (member: OrganizationMember) => {
     setResumeError(undefined);
     try {

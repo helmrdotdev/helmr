@@ -29,6 +29,9 @@ func PrepareComputerSourceAbort(ctx context.Context, limits executionlimit.Limit
 	}
 	var result *agentv1.ComputerSessionInstallation
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
+			return err
+		}
 		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
 			return err
 		}

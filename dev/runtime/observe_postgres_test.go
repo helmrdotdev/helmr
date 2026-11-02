@@ -231,8 +231,8 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 	}
 	for _, role := range []string{"vm_config", "vm_state", "memory", "scratch_disk"} {
 		digest := "sha256:" + strings.Repeat("2", 64)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1) ON CONFLICT DO NOTHING`, digest)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoint_objects(environment_id,checkpoint_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,1,'application/octet-stream')`, f.Environment, checkpoint, role, digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,1 FROM environments WHERE id=$1 ON CONFLICT DO NOTHING`, f.Environment, digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoint_objects(org_id,environment_id,checkpoint_id,role,digest,size_bytes,media_type) SELECT org_id,id,$2,$3,$4,1,'application/octet-stream' FROM environments WHERE id=$1`, f.Environment, checkpoint, role, digest)
 	}
 	path := observe(t, f.Pool, "computer-path", map[string]any{"computer_id": f.Computer.String()}).(map[string]any)
 	cp := path["checkpoints"].([]any)[0].(map[string]any)

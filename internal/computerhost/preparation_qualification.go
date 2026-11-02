@@ -55,9 +55,6 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 		if err == nil {
 			break
 		}
-		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			return err
-		}
 		if waitErr := waitAllocationWake(waitCtx, wake, 15*time.Second); waitErr != nil {
 			return fmt.Errorf("qualification waited for host health: %w", errors.Join(err, waitErr))
 		}

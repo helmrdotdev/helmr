@@ -60,7 +60,7 @@ func TestGetRange(t *testing.T) {
 				output = nil
 			}
 			client := &rangeClient{output: output}
-			store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+			store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 			got, err := store.GetRange(t.Context(), digest, 10, 2, 3)
 			if client.calls != 1 || aws.ToString(client.input.Range) != "bytes=2-4" || aws.ToString(client.input.Bucket) != "bucket" {
 				t.Fatal("wrong range request")
@@ -92,7 +92,7 @@ func TestGetRange(t *testing.T) {
 		})
 	}
 	client := &rangeClient{}
-	store := &Store{client: client}
+	store := &Store{org: testOrg, client: client}
 	for _, bounds := range [][3]int64{{0, 0, 1}, {10, -1, 1}, {10, 0, 0}, {10, 9, 2}, {math.MaxInt64, math.MaxInt64, 1}} {
 		if _, err := store.GetRange(t.Context(), digest, bounds[0], bounds[1], bounds[2]); err == nil {
 			t.Fatal("invalid bounds")
@@ -108,7 +108,7 @@ func TestGetRange(t *testing.T) {
 func TestGetRangeMissingClassification(t *testing.T) {
 	for _, cause := range []error{&types.NoSuchKey{}, &types.NoSuchBucket{}, context.DeadlineExceeded, errors.New("access denied")} {
 		client := &rangeClient{err: cause}
-		store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
 		_, err := store.GetRange(t.Context(), sha256sum.DigestBytes([]byte("root")), 10, 0, 1)
 		_, missing := cause.(*types.NoSuchKey)
 		if errors.Is(err, fs.ErrNotExist) != missing || !errors.Is(err, cause) {
@@ -119,7 +119,7 @@ func TestGetRangeMissingClassification(t *testing.T) {
 
 func TestGetRangeTemporaryProviderFailure(t *testing.T) {
 	for _, cause := range []error{&smithy.GenericAPIError{Code: "SlowDown"}, &smithy.GenericAPIError{Code: "InternalError", Fault: smithy.FaultServer}} {
-		store := &Store{client: &rangeClient{err: cause}, bucket: "bucket", prefix: "cas"}
+		store := &Store{org: testOrg, client: &rangeClient{err: cause}, bucket: "bucket", prefix: "cas"}
 		_, err := store.GetRange(t.Context(), sha256sum.DigestBytes([]byte("root")), 10, 0, 1)
 		if !errors.Is(err, cas.ErrUnavailable) || !errors.Is(err, cause) || errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("temporary read classification: %v", err)

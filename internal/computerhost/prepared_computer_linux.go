@@ -5,6 +5,7 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 
 	"os"
 	"path/filepath"
@@ -22,6 +23,8 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 }
 
 func (p *PreparedMachines) prepareAllocationDeviceFrom(ctx context.Context, identity workerapi.AllocationIdentity, source workerapi.ComputerAllocationSource, ranges blockformat.RangeSource) (vm.ComputerDevice, error) {
+	// The device serves guest reads after this call returns.
+	ranges = brokeredstore.BindRanges(ctx, ranges)
 	material := source.Disk
 	if err := material.Root.Validate(material.Root.LogicalBytes); err != nil {
 		return nil, err

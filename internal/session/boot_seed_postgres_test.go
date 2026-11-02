@@ -103,7 +103,7 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher, err := computer.NewBootSeedPublisher(f.pool, p.remote)
+	publisher, err := computer.NewBootSeedPublisher(f.pool, everyOrganization[cas.Reader](p.remote))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -272,7 +272,7 @@ func verifyNativeConcurrentRestores(t *testing.T, parent context.Context, pool *
 		t.Fatal(err)
 	}
 	if err := wait(func() (bool, error) {
-		_, err := c.DeleteComputer(ctx, samples[1].Computer, api.DeleteComputerRequest{IdempotencyKey: "delete-preparation-peer"}, client.ComputerScopeOptions{})
+		_, err := c.DeleteComputer(ctx, samples[1].Computer, api.DeleteComputerRequest{IdempotencyKey: "delete-preparation-peer"}, false, client.ComputerScopeOptions{})
 		var apiErr *httpclient.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict && apiErr.Code == "computer_busy" {
 			return false, nil

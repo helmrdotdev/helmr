@@ -146,7 +146,7 @@ func (s *Server) uploadDeploymentBundleObject(w http.ResponseWriter, r *http.Req
 		return
 	}
 	owner := strings.ToLower(principal.OrgID.String())
-	exists, err := s.cas.HasExactQuarantine(preflightCtx, owner, descriptor)
+	exists, err := s.cas(principal.OrgID).HasExactQuarantine(preflightCtx, owner, descriptor)
 	if preflightCtx.Err() != nil {
 		writeError(w, unavailable(errors.New("deployment upload preflight stopped")))
 		return
@@ -167,7 +167,7 @@ func (s *Server) uploadDeploymentBundleObject(w http.ResponseWriter, r *http.Req
 	}
 	defer stream.close()
 	releaseSecurityAdmission(r)
-	err = s.cas.StreamQuarantine(stream.ctx, owner, descriptor, stream)
+	err = s.cas(principal.OrgID).StreamQuarantine(stream.ctx, owner, descriptor, stream)
 	if err != nil {
 		switch {
 		case errors.Is(err, cas.ErrDigestMismatch):

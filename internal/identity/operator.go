@@ -156,6 +156,19 @@ func operatorFromSession(ctx context.Context, q db.DBTX, id uuid.UUID) (auth.Pri
 // its live sessions and that it proved itself recently. It returns the session
 // as it is now.
 func requireRecentOperator(ctx context.Context, tx pgx.Tx, p auth.Principal) (auth.Principal, error) {
+	current, err := liveOperator(ctx, tx, p)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if !auth.ProvedRecently(current.AuthenticatedAt, time.Now()) {
+		return auth.Principal{}, ErrRecentProofRequired
+	}
+	return current, nil
+}
+
+// liveOperator locks the operator and returns p's session as it is now, if it
+// is still one of the operator's live sessions.
+func liveOperator(ctx context.Context, tx pgx.Tx, p auth.Principal) (auth.Principal, error) {
 	if p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() {
 		return auth.Principal{}, ErrInvalidToken
 	}
@@ -168,9 +181,6 @@ func requireRecentOperator(ctx context.Context, tx pgx.Tx, p auth.Principal) (au
 	}
 	if current.OperatorID != p.OperatorID {
 		return auth.Principal{}, ErrInvalidToken
-	}
-	if !auth.ProvedRecently(current.AuthenticatedAt, time.Now()) {
-		return auth.Principal{}, ErrRecentProofRequired
 	}
 	return current, nil
 }
@@ -264,12 +274,16 @@ func FinishOperatorKey(ctx context.Context, database db.TxBeginner, cfg Config, 
 
 func RemoveOperatorKey(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		current, err := requireRecentOperator(ctx, tx, p)
+		current, err := liveOperator(ctx, tx, p)
 		if err != nil {
 			return err
 		}
-		// The key this session signed in with cannot remove itself.
+		// The key this session signed in with cannot remove itself, however
+		// recently it was used.
 		if current.PasskeyID == id {
+			return ErrCurrentOperatorKey
+		}
+		if !auth.ProvedRecently(current.AuthenticatedAt, time.Now()) {
 			return ErrRecentProofRequired
 		}
 		tag, err := tx.Exec(ctx, `UPDATE passkey_credentials SET revoked_at=clock_timestamp() WHERE id=$1 AND operator_id=$2 AND revoked_at IS NULL`, id, p.OperatorID)

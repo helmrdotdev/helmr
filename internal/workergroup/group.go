@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
@@ -126,7 +127,9 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 }
 
 // RotateGroupToken replaces a worker group's enrollment token and returns the
-// new raw token.
+// new raw token. The previous token stops enrolling hosts at once. Hosts that
+// already enrolled keep their host secrets and keep running; revoke them with
+// RevokeGroupHostCredentials.
 func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID) (string, error) {
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
@@ -150,4 +153,47 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditp
 	}
 
 	return token.Raw, nil
+}
+
+// RevokeGroupHostCredentials fences every registering, active and draining
+// host of a worker group as lost and revokes every host secret the group has
+// issued, then returns the fenced host IDs. Each host's claim version
+// advances, so every later authorization check of their host credentials,
+// allocations and Secret proxy grants fails; a request whose authorization
+// committed before the revocation may still complete. Their allocations are
+// reconciled as host loss. A fenced machine can return only by enrolling again with the
+// group's enrollment token, which this operation does not change.
+func RevokeGroupHostCredentials(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID) ([]uuid.UUID, error) {
+	var fenced []uuid.UUID
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
+			return fmt.Errorf("lock worker group lifecycle: %w", err)
+		}
+		if _, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID)); errors.Is(err, pgx.ErrNoRows) {
+			return ErrGroupNotFound
+		} else if err != nil {
+			return fmt.Errorf("lock worker group: %w", err)
+		}
+		rows, err := q.RevokeWorkerGroupHostCredentials(ctx, pgvalue.UUID(groupID))
+		if err != nil {
+			return fmt.Errorf("revoke worker group host credentials: %w", err)
+		}
+		fenced = make([]uuid.UUID, 0, len(rows))
+		for _, row := range rows {
+			hostID := pgvalue.MustUUIDValue(row)
+			fenced = append(fenced, hostID)
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+				return err
+			}
+		}
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.host_credentials_revoked", TargetKind: "worker_group", TargetID: groupID}); err != nil {
+			return err
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return fenced, nil
 }

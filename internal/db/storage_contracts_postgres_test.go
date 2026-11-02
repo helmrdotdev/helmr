@@ -17,12 +17,12 @@ func TestSchemaCanonicalContentAndRequestDigests(t *testing.T) {
 	defer tx.Rollback(t.Context())
 	turn := schemaTurn(t, f, tx)
 	for _, value := range []string{"", "digest", "sha256:abc", "sha256:" + strings.Repeat("A", 64), "sha512:" + strings.Repeat("a", 64)} {
-		rejectSchemaRow(t, tx, "23514", `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1)`, value)
+		rejectSchemaRow(t, tx, "23514", `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,1 FROM environments WHERE id=$1`, f.Environment, value)
 	}
 	for _, size := range []int{0, 1, 31, 33} {
 		rejectSchemaRow(t, tx, "23514", `UPDATE turns SET request_digest=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, turn, make([]byte, size))
 	}
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,1)`, dbtest.Digest("content"))
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$2,1 FROM environments WHERE id=$1`, f.Environment, dbtest.Digest("content"))
 	for _, value := range []string{`null`, `[]`, `1`, `"text"`, `true`, `{"a":1}`} {
 		dbtest.MustExec(t, t.Context(), tx, `UPDATE turns SET input=$3::bytea WHERE environment_id=$1 AND id=$2`, f.Environment, turn, value)
 	}

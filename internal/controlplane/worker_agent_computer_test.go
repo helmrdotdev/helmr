@@ -488,7 +488,7 @@ func seedWorkerAgentRestoreTarget(t *testing.T, f sessiontest.Fixture, request w
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($4,$1,$2,'test',decode('01','hex'));
- INSERT INTO cas_blobs(digest,size_bytes) VALUES($6,64);
+ INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$6,64 FROM environments WHERE id=$1;
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,64,'application/octet-stream' FROM environments WHERE id=$1;
  INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,64,'application/octet-stream','root',2,'{}',clock_timestamp() FROM environments WHERE id=$1;
  INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$4,true);

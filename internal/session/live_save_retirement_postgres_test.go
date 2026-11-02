@@ -152,7 +152,7 @@ func TestLiveSaveRetirementSustainedOverwriteSweepsPhysicalCAS(t *testing.T) {
 	}
 	defer local.Close()
 	reclaims := &liveSaveReclamation{store: storage.remote}
-	reclaimer, err := computer.NewCASReclaimer(f.pool, reclaims, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reclaimer, err := computer.NewCASReclaimer(f.pool, everyOrganization[computer.ReclamationStore](reclaims), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

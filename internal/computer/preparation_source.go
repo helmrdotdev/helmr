@@ -28,6 +28,7 @@ type PreparationSource struct {
 	ExpiresAt                  time.Time
 	Manifest                   bootseed.Manifest
 	Shape                      AllocationShape
+	OrganizationID             uuid.UUID
 	DeploymentID               uuid.UUID
 	BundleDigest, RootfsDigest string
 	ImageConfig                oci.RuntimeConfig
@@ -54,6 +55,9 @@ const eligiblePreparationSourceSQL = `b.status='succeeded' AND b.payload_retired
  AND NOT EXISTS(SELECT 1 FROM template_definitions t WHERE t.environment_id=b.environment_id AND t.deployment_id=b.deployment_id
  AND t.image_spec_id=b.image_spec_id AND t.cpu_millis=b.cpu_millis AND t.memory_bytes=b.memory_bytes
  AND t.refresh_every_ms IS NOT NULL AND extract(epoch FROM statement_timestamp()-image.published_at)*1000>3*t.refresh_every_ms))`
+
+// preparationSourceLifetimeSQL bounds a preparation source and its grants.
+const preparationSourceLifetimeSQL = `interval '120 seconds'`
 
 const preparationSourceJoinsSQL = ` FROM boot_seed_builds b
  JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id
@@ -132,16 +136,26 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		// A source outside the host group's region reads exactly like a missing
+		// one and its build is never locked.
+		var reachable bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM boot_seed_builds b
+ JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id
+ JOIN worker_groups g ON g.id=$3 WHERE b.environment_id=$1 AND b.id=$2 AND project.default_region_id=g.region_id)`, key.EnvironmentID, key.BuildID, host.GroupID).Scan(&reachable); err != nil {
+			return err
+		}
+		if !reachable {
+			return pgx.ErrNoRows
+		}
 		if _, err := LockBootSeedBuild(ctx, tx, key.EnvironmentID, key.BuildID); err != nil {
 			return err
 		}
 		var manifest, seed []byte
-		var org uuid.UUID
 		s := &result.source
 		s.Key = key
 		s.HostID = host.HostID
 		s.HostEpoch = host.Epoch
-		err := tx.QueryRow(ctx, `SELECT p.resource_policy_revision,clock_timestamp()+interval '120 seconds',b.manifest,
+		err := tx.QueryRow(ctx, `SELECT p.resource_policy_revision,clock_timestamp()+`+preparationSourceLifetimeSQL+`,b.manifest,
  b.reserved_cpu_millis,b.reserved_memory_bytes,b.reserved_scratch_bytes,b.vm_platform_id,b.vm_vcpu_count,b.cpu_config_digest,
  b.deployment_id,d.bundle_digest,platform.rootfs_digest,spec.seed,e.org_id,r.id,`+DiskRootColumns+preparationSourceJoinsSQL+`
  JOIN deployments d ON (d.environment_id,d.id)=(b.environment_id,b.deployment_id)
@@ -150,7 +164,7 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
  JOIN images image ON (image.environment_id,image.id)=(b.environment_id,b.image_id)
  JOIN disk_roots r ON (r.environment_id,r.id)=(image.environment_id,image.root_id)
  WHERE b.environment_id=$4 AND b.id=$5 AND `+eligiblePreparationSourceSQL, host.HostID, host.GroupID, host.Epoch, key.EnvironmentID, key.BuildID).
-			Scan(append([]any{&s.PolicyRevision, &s.ExpiresAt, &manifest, &s.Shape.CPUMillis, &s.Shape.MemoryBytes, &s.Shape.ScratchBytes, &s.Shape.VMPlatformID, &s.Shape.VCPUCount, &s.Shape.CPUConfigDigest, &s.DeploymentID, &s.BundleDigest, &s.RootfsDigest, &seed, &org, &result.disk.rootID}, DiskRootFields(&result.disk.source.Root)...)...)
+			Scan(append([]any{&s.PolicyRevision, &s.ExpiresAt, &manifest, &s.Shape.CPUMillis, &s.Shape.MemoryBytes, &s.Shape.ScratchBytes, &s.Shape.VMPlatformID, &s.Shape.VCPUCount, &s.Shape.CPUConfigDigest, &s.DeploymentID, &s.BundleDigest, &s.RootfsDigest, &seed, &s.OrganizationID, &result.disk.rootID}, DiskRootFields(&result.disk.source.Root)...)...)
 		if err != nil {
 			return err
 		}
@@ -168,7 +182,7 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 			return err
 		}
 		s.ImageConfig = definition.Config
-		result.disk.source.Scope, err = computerkey.EncryptionScope(org.String(), key.EnvironmentID.String())
+		result.disk.source.Scope, err = computerkey.EncryptionScope(s.OrganizationID.String(), key.EnvironmentID.String())
 		if err != nil {
 			return err
 		}
@@ -211,5 +225,5 @@ func (b *KeyBroker) PreparationStart(ctx context.Context, host workergroup.HostP
 	if err != nil {
 		return BootSeedStart{}, err
 	}
-	return BootSeedStart{DeploymentID: pin.source.DeploymentID, BundleDigest: pin.source.BundleDigest, RootfsDigest: pin.source.RootfsDigest, ImageConfig: pin.source.ImageConfig}, nil
+	return BootSeedStart{OrganizationID: pin.source.OrganizationID, DeploymentID: pin.source.DeploymentID, BundleDigest: pin.source.BundleDigest, RootfsDigest: pin.source.RootfsDigest, ImageConfig: pin.source.ImageConfig}, nil
 }

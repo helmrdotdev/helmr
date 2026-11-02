@@ -27,7 +27,7 @@ type Querier interface {
 	CertifyDiskObject(ctx context.Context, arg CertifyDiskObjectParams) (int64, error)
 	// Claim only scheduling responsibility, not permission to adopt the digest.
 	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
-	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
+	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]ClaimRetiredCasBlobsRow, error)
 	// Retained upload IDs get independent, fair retry scheduling. Historical IDs
 	// must not monopolize the digest's deadline or starve completed-version cleanup.
 	ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCasUploadsParams) ([]string, error)
@@ -53,6 +53,9 @@ type Querier interface {
 	CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error)
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error)
+	// Upload receipts authorize nothing once their allocation ends. Removing them
+	// lets an upload abandoned by that allocation become a retirement candidate.
+	DeleteEndedUploadReceipts(ctx context.Context) (int64, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
 	// EnrollHost owns the deciding authority locks and physical-custody exclusion.
@@ -106,10 +109,11 @@ type Querier interface {
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeyRoleNames(ctx context.Context, arg ListAPIKeyRoleNamesParams) ([]string, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
-	// Only abandoned uploads are retirement candidates. Memberships in any org and
-	// registered owners pin availability with FKs; these NOT EXISTS clauses avoid
-	// routine conflicts but are not the concurrency barrier.
-	ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
+	// Only abandoned uploads are retirement candidates. Each lifetime belongs to one
+	// organization's keyspace; its membership and registered owners pin
+	// availability with FKs. These NOT EXISTS clauses avoid routine conflicts but
+	// are not the concurrency barrier.
+	ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]ListAbandonedCasBlobsRow, error)
 	// Physical reservations retain their pools independently of the queued demand budget.
 	ListAllocationPlanningChargedPools(ctx context.Context, workerGroupID pgtype.UUID) ([]pgtype.UUID, error)
 	// Planning counts physical Computer/preparation demand once. Session processes
@@ -170,11 +174,14 @@ type Querier interface {
 	RetainDiskRoot(ctx context.Context, arg RetainDiskRootParams) (pgtype.UUID, error)
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
-	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
+	RetireAbandonedCasBlob(ctx context.Context, arg RetireAbandonedCasBlobParams) (int64, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
+	// Fences every live host of the group as lost and revokes every unrevoked host
+	// secret. The caller holds the group's status mutation lock and row lock.
+	RevokeWorkerGroupHostCredentials(ctx context.Context, workerGroupID pgtype.UUID) ([]pgtype.UUID, error)
 	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)

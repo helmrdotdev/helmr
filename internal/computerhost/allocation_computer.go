@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"log/slog"
 	"math"
@@ -46,42 +47,41 @@ type AllocatedComputerClient interface {
 // create another owner for the same identity. Run cancellation joins transports
 // and physical cleanup; it is not a request to hibernate.
 type ComputerAllocationOwner struct {
-	machines                 *PreparedMachines
-	client                   AllocatedComputerClient
-	identity                 workerapi.AllocationIdentity
-	hostID                   string
-	admitStart               func(context.Context) error
-	checkpointKeyUnavailable func()
-	hostEpoch                int64
-	observe                  func(context.Context, *agentv1.GuestSessionMessage) error
-	operation                sync.Mutex
-	machine                  vm.CheckpointableMachine
-	prepared                 *preparedLeaf
-	bootProgram              *computercheckpoint.Program
-	saves                    *agentComputerSaves
-	saveWake                 chan struct{}
-	capturePermit            *capturePermit
-	workWake                 allocationWake
-	checkpoint               *computercheckpoint.Manifest
-	restoreMemory            *checkpointMemorySource
-	checkpointCut            disk.CapturedVersion
-	checkpointRetryAt        time.Time
-	checkpointRetryDelay     time.Duration
-	invalidCheckpointID      string
-	bootSeedID               string
-	failedBootSeedID         string
-	closing                  bool
-	finished                 atomic.Bool
+	machines             *PreparedMachines
+	client               AllocatedComputerClient
+	identity             workerapi.AllocationIdentity
+	hostID               string
+	admitStart           func(context.Context) error
+	hostEpoch            int64
+	observe              func(context.Context, *agentv1.GuestSessionMessage) error
+	operation            sync.Mutex
+	machine              vm.CheckpointableMachine
+	prepared             *preparedLeaf
+	bootProgram          *computercheckpoint.Program
+	saves                *agentComputerSaves
+	saveWake             chan struct{}
+	capturePermit        *capturePermit
+	workWake             allocationWake
+	checkpoint           *computercheckpoint.Manifest
+	restoreMemory        *checkpointMemorySource
+	checkpointCut        disk.CapturedVersion
+	checkpointRetryAt    time.Time
+	checkpointRetryDelay time.Duration
+	invalidCheckpointID  string
+	bootSeedID           string
+	failedBootSeedID     string
+	closing              bool
+	finished             atomic.Bool
 	// This typed operation allows device attachment failures to be tested without
 	// claiming that a simulated device proves Linux NBD or VMM behavior.
 	attachDevice func(context.Context, workerapi.AllocationIdentity, workerapi.ComputerAllocationSource) (vm.ComputerDevice, error)
 }
 
-func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComputerClient, identity workerapi.AllocationIdentity, hostID string, hostEpoch int64, admitStart func(context.Context) error, checkpointKeyUnavailable func(), observe func(context.Context, *agentv1.GuestSessionMessage) error) (*ComputerAllocationOwner, error) {
-	if machines == nil || machines.Backend == nil || machines.Reservations == nil || client == nil || admitStart == nil || checkpointKeyUnavailable == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || hostEpoch <= 0 || machines.ComputerStagingBytes <= 0 {
+func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComputerClient, identity workerapi.AllocationIdentity, hostID string, hostEpoch int64, admitStart func(context.Context) error, observe func(context.Context, *agentv1.GuestSessionMessage) error) (*ComputerAllocationOwner, error) {
+	if machines == nil || machines.Backend == nil || machines.Reservations == nil || client == nil || admitStart == nil || observe == nil || identity.Kind != "computer" || identity.Epoch <= 0 || hostEpoch <= 0 || machines.ComputerStagingBytes <= 0 {
 		return nil, errors.New("computer allocation requires its physical backend, capacity, client and observer")
 	}
-	if !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || machines.ComputerRanges == nil || machines.ComputerObjects == nil || machines.CheckpointCipher == nil {
+	if !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || machines.ComputerRanges == nil || machines.ComputerObjects == nil || machines.ObjectKeys == nil {
 		return nil, errors.New("computer allocation requires an explicit device helper and source")
 	}
 	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID, hostID} {
@@ -89,7 +89,7 @@ func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComp
 			return nil, errors.New("invalid Computer allocation identity")
 		}
 	}
-	return &ComputerAllocationOwner{machines: machines, client: client, identity: identity, hostID: hostID, hostEpoch: hostEpoch, admitStart: admitStart, checkpointKeyUnavailable: checkpointKeyUnavailable, observe: observe, attachDevice: machines.prepareAllocationDevice, saveWake: make(chan struct{}, 1)}, nil
+	return &ComputerAllocationOwner{machines: machines, client: client, identity: identity, hostID: hostID, hostEpoch: hostEpoch, admitStart: admitStart, observe: observe, attachDevice: machines.prepareAllocationDevice, saveWake: make(chan struct{}, 1)}, nil
 }
 
 func (o *ComputerAllocationOwner) leaseRequest() workerapi.AgentComputerLeaseRequest {
@@ -111,18 +111,14 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if o.closing {
 		return o.cleanup()
 	}
+	// Storage grants for this owner's reads and writes require this live allocation.
+	ctx = brokeredstore.WithScope(ctx, workerapi.StorageScope{Computer: &o.identity})
 	delivery, err := o.client.DeliverComputerAllocation(ctx, o.identity)
 	if err != nil {
 		var closed *httpclient.Error
 		if errors.As(err, &closed) && closed.Code == workerapi.AllocationClosed {
 			o.closing = true
 			return o.cleanup()
-		}
-		// A permanent local fault releases undelivered assignments too. Closed
-		// allocations above still clean up without consulting startup admission.
-		if admissionErr := o.admitStart(ctx); errors.Is(admissionErr, ErrCheckpointKeyUnavailable) {
-			o.closing = true
-			return errors.Join(err, admissionErr, o.cleanup())
 		}
 		return err
 	}
@@ -189,15 +185,9 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		if err != nil {
 			return err
 		}
-	} else if errors.Is(admissionErr, ErrCheckpointKeyUnavailable) {
-		o.closing = true
-		return admissionErr
 	}
 	if o.prepared == nil {
 		if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
-			if errors.Is(err, ErrCheckpointKeyUnavailable) {
-				o.closing = true
-			}
 			return err
 		}
 	}
@@ -284,9 +274,6 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 					}
 					materialize.BootSeed, err = o.machines.openBootSeed(ctx, directory, *source.BootSeed, shape.MemoryBytes, shape.ScratchBytes)
 					if err != nil {
-						if errors.Is(err, ErrCheckpointKeyUnavailable) {
-							o.checkpointKeyUnavailable()
-						}
 						if bootSeedArtifactFailure(err) {
 							o.failedBootSeedID = o.bootSeedID
 						}

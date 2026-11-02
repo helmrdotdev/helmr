@@ -36,13 +36,15 @@ import (
 
 // PreparedMachines supplies immutable artifacts and tracked devices to allocation owners.
 type PreparedMachines struct {
-	CommandLogLimits        *computerv0.CommandLogLimits
-	SessionLogLimits        *agentv1.SessionLogLimits
-	PreparationLogLimits    *computerv0.PreparationLogLimits
-	Backend                 vm.Backend
-	CAS                     cas.Store
-	ComputerObjects         cas.ImmutableStore
-	CheckpointCipher        *CheckpointEncryptor
+	CommandLogLimits     *computerv0.CommandLogLimits
+	SessionLogLimits     *agentv1.SessionLogLimits
+	PreparationLogLimits *computerv0.PreparationLogLimits
+	Backend              vm.Backend
+	CAS                  cas.Reader
+	ComputerObjects      cas.ImmutableStore
+	// ObjectKeys delivers per-checkpoint and per-boot-seed data keys under the
+	// authority of the requesting allocation or preparation source.
+	ObjectKeys              ObjectKeyClient
 	ComputerRanges          blockformat.RangeSource
 	ObjectCache             *objectcache.Cache
 	ObjectCacheCapacity     int64
@@ -77,7 +79,7 @@ type preparedMachineRef struct {
 	epoch int64
 }
 
-func NewPreparedMachines(backend vm.Backend, store cas.Store, log *slog.Logger) *PreparedMachines {
+func NewPreparedMachines(backend vm.Backend, store cas.Reader, log *slog.Logger) *PreparedMachines {
 	return &PreparedMachines{Backend: backend, CAS: store, Log: log}
 }
 

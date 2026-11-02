@@ -368,3 +368,107 @@ func TestAllocationWakeDoesNotWaitForDiscoveryLock(t *testing.T) {
 		t.Fatal("owner was not woken")
 	}
 }
+
+// The existing owner stays installed until physical cleanup is acknowledged.
+type parkedAllocationOwner struct {
+	allocationOwnerTest
+	retained bool
+	yield    chan struct{}
+}
+
+func (o *parkedAllocationOwner) RequestCheckpointRelease() bool {
+	if !o.retained {
+		return false
+	}
+	select {
+	case <-o.yield:
+	default:
+		close(o.yield)
+	}
+	return true
+}
+
+func (o *parkedAllocationOwner) Run(ctx context.Context) error {
+	select {
+	case <-o.yield:
+		o.done.Store(true)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestOneSlotParkedOwnerYieldsToAnotherComputer(t *testing.T) {
+	a, b := allocationTestIdentity("computer"), allocationTestIdentity("computer")
+	client := &allocationDiscoveryTest{items: []workerapi.AllocationIdentity{a, b}}
+	parked := &parkedAllocationOwner{yield: make(chan struct{})}
+	c, err := NewAllocationConsumer(client, 1, time.Millisecond, func(id workerapi.AllocationIdentity, _ func(context.Context) error) (AllocationOwner, error) {
+		if id == a {
+			return parked, nil
+		}
+		return &allocationOwnerTest{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discover := func() {
+		t.Helper()
+		if err := c.discoverPage(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim := func() Work {
+		t.Helper()
+		work, ok, err := c.Claim(t.Context(), allowConsumerAdmission{})
+		if !ok || err != nil {
+			t.Fatalf("claim: %v %v", ok, err)
+		}
+		return work
+	}
+	discover()
+	runA := claim()
+	discover() // B arrives before A's checkpoint is durably retained.
+	select {
+	case <-parked.yield:
+		t.Fatal("A yielded before publication")
+	default:
+	}
+	parked.retained = true
+	discover() // End of page, then rediscover A and B.
+	discover()
+	discover()
+	select {
+	case <-parked.yield:
+	default:
+		t.Fatal("B was discovered, but parked A still owns the only execution slot")
+	}
+	if _, ok, _ := c.Claim(t.Context(), allowConsumerAdmission{}); ok {
+		t.Fatal("B started before A released custody")
+	}
+	if err := runA(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim()(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRediscoveryKeepsCheckpointReleaseTarget(t *testing.T) {
+	a, b, waiting := allocationTestIdentity("computer"), allocationTestIdentity("computer"), allocationTestIdentity("computer")
+	first := &parkedAllocationOwner{yield: make(chan struct{})}
+	second := &parkedAllocationOwner{retained: true, yield: make(chan struct{})}
+	c := AllocationConsumer{entries: map[workerapi.AllocationIdentity]AllocationOwner{a: first, b: second}}
+	c.requestCheckpointRelease(waiting)
+	first.retained = true
+	c.requestCheckpointRelease(waiting)
+	select {
+	case <-first.yield:
+		t.Fatal("one waiting assignment displaced two retained Computers")
+	default:
+	}
+	select {
+	case <-second.yield:
+	default:
+		t.Fatal("the originally retained Computer never yielded")
+	}
+}

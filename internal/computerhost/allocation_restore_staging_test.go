@@ -39,7 +39,7 @@ func (s *gatedCheckpointRestoreStore) Get(ctx context.Context, digest string) (i
 		// test explicitly permits its final independent error to be observed.
 		<-s.finishCancelled
 		s.active.Add(-1)
-		return nil, ErrCheckpointKeyUnavailable
+		return nil, errCancelledStagingPeer
 	}
 	select {
 	case <-s.release:
@@ -70,6 +70,8 @@ func (b *countedCheckpointBody) Close() error {
 	return err
 }
 
+var errCancelledStagingPeer = errors.New("cancelled staging peer failed")
+
 func TestComputerCheckpointRestoreJoinsBoundedStaging(t *testing.T) {
 	for _, failure := range []bool{false, true} {
 		name := "success"
@@ -95,11 +97,9 @@ func TestComputerCheckpointRestoreJoinsBoundedStaging(t *testing.T) {
 			if failure {
 				store.failDigest, store.blockedDigest = manifest.VMConfig.Digest, manifest.VMState.Digest
 			}
-			paused := false
 			target := &ComputerAllocationOwner{
 				identity: identity, client: client,
-				checkpointKeyUnavailable: func() { paused = true },
-				machines:                 &PreparedMachines{Backend: backend, CheckpointCipher: source.machines.CheckpointCipher, ComputerObjects: store, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()},
+				machines: &PreparedMachines{Backend: backend, ObjectKeys: source.machines.ObjectKeys, ComputerObjects: store, ComputerRanges: source.machines.ComputerRanges, TempDir: t.TempDir()},
 			}
 			delivery := workerapi.ComputerAllocationDelivery{Identity: identity, BaseVersion: client.save, RestoredFrom: client.save, Shape: workerapi.AllocationShape{VMPlatformID: manifest.Runtime.RuntimeID, VCPUCount: 1, MemoryBytes: 4096, ScratchBytes: 4096}}
 			material := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{Root: manifest.Disk}}
@@ -152,11 +152,11 @@ func TestComputerCheckpointRestoreJoinsBoundedStaging(t *testing.T) {
 			select {
 			case err := <-done:
 				if failure {
-					if !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, ErrCheckpointKeyUnavailable) || !paused || backend.calls != 0 || target.invalidCheckpointID != "" {
-						t.Fatalf("restore lost joined failure identities: %v paused=%v calls=%d invalid=%q", err, paused, backend.calls, target.invalidCheckpointID)
+					if !errors.Is(err, io.ErrUnexpectedEOF) || !errors.Is(err, errCancelledStagingPeer) || backend.calls != 0 || target.invalidCheckpointID != "" {
+						t.Fatalf("restore lost joined failure identities: %v calls=%d invalid=%q", err, backend.calls, target.invalidCheckpointID)
 					}
-				} else if err != nil || paused || backend.calls != 1 || target.checkpoint == nil {
-					t.Fatalf("restore after authenticated staging: %v paused=%v calls=%d", err, paused, backend.calls)
+				} else if err != nil || backend.calls != 1 || target.checkpoint == nil {
+					t.Fatalf("restore after authenticated staging: %v calls=%d", err, backend.calls)
 				}
 			case <-ctx.Done():
 				t.Fatal("restore did not finish")

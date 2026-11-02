@@ -482,3 +482,15 @@ func TestAgentDeleteRevocationWhileWaitingReturnsPermissionRequired(t *testing.T
 		t.Fatalf("revoked delete persisted: %v %v", unchanged, err)
 	}
 }
+
+// Deleting an Agent keeps its preview and revision check but not recent proof.
+func TestAgentDeleteNeedsNoRecentProof(t *testing.T) {
+	f := newAgentDeleteFixture(t)
+	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '3 hours' WHERE channel='browser'`)
+	if preview := f.change(t, true, "", 200); !preview.CanApply {
+		t.Fatalf("preview %+v", preview)
+	}
+	if result := f.change(t, false, "1", 200); !result.Changed || result.DeletedAt == nil {
+		t.Fatalf("delete %+v", result)
+	}
+}

@@ -31,6 +31,16 @@ import (
 // fencing. No database update, product fault hook or manufactured stop receipt
 // participates in this case. Evidence retains S3 object/marker identities; normal
 // reclamation may subsequently delete the retired object versions.
+// nativeOrganizationObjectKey is the key of a worker-written object, which is
+// stored in the keyspace of the environment's organization.
+func nativeOrganizationObjectKey(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, prefix, digest string) (string, error) {
+	var org uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, env).Scan(&org); err != nil {
+		return "", err
+	}
+	return cas.ObjectKey(strings.Trim(prefix, "/")+"/orgs/"+org.String(), digest)
+}
+
 func injectNativeCheckpointFault(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, rawURI, observations string, mode nativeExecutionMode) (resultErr error) {
 	uri, err := url.Parse(rawURI)
 	if err != nil {
@@ -77,7 +87,7 @@ func injectNativeCheckpointFault(ctx context.Context, pool *pgxpool.Pool, env uu
 	if object.SizeBytes <= 0 || (mode == nativeExecutionCorruptConfig && object.SizeBytes > 1<<20) {
 		return errors.New("unexpected checkpoint object size")
 	}
-	key, err := cas.ObjectKey(uri.Path, object.Digest)
+	key, err := nativeOrganizationObjectKey(ctx, pool, env, uri.Path, object.Digest)
 	if err != nil {
 		return err
 	}

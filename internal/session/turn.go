@@ -662,7 +662,10 @@ func lockRuntimeHost(ctx context.Context, tx pgx.Tx, caller Caller) error {
 	if caller.Host == nil || caller.Host.HostID != caller.Execution.WorkerHostID || caller.Host.Epoch != caller.Execution.WorkerEpoch {
 		return ErrDenied
 	}
-	return computer.LockHost(ctx, tx, *caller.Host)
+	if err := computer.LockHost(ctx, tx, *caller.Host); err != nil {
+		return err
+	}
+	return requireHostedSession(ctx, tx, caller.Execution)
 }
 
 func loadTurnDispatch(ctx context.Context, tx pgx.Tx, environment uuid.UUID, dispatch *TurnDispatch) error {

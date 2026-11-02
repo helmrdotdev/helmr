@@ -34,6 +34,8 @@ func (server *Server) writeAgentComputerError(w http.ResponseWriter, r *http.Req
 			return
 		}
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerAuthorityUnavailable, message: "Computer continuation authority is unavailable"}))
+	case errors.Is(err, computer.ErrRetainedHostCapacity):
+		writeError(w, conflict(codedError{code: workerapi.AgentComputerSourceCapacityAssigned, message: "Retained Computer capacity is assigned to other work"}))
 	case errors.Is(err, session.ErrComputerCaptureDemand):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerCaptureDemand, message: "Computer has pending execution during capture"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady),

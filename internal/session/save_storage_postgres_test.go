@@ -73,7 +73,7 @@ func newSizedSaveStorageFixture(t *testing.T, f fixture, logicalBytes int64) *sa
 	rootID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `
       INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,NULL,'test',decode('01','hex')),($11,$2,$3,'test',decode('02','hex'));
-      INSERT INTO cas_blobs(digest,size_bytes) VALUES($4,$5);
+      INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,$4,$5 FROM environments WHERE id=$2;
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$4,$5,'application/octet-stream' FROM environments WHERE id=$2;
       INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$4,org_id,project_id,$5,'application/octet-stream','root',$6,$7,clock_timestamp() FROM environments WHERE id=$2;
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($2,$4,$1,true);
@@ -85,11 +85,11 @@ func newSizedSaveStorageFixture(t *testing.T, f fixture, logicalBytes int64) *sa
 	}
 	writer.ActiveKey = writeKeyID.String()
 	writer.Keys[writeKeyID.String()] = bytes.Repeat([]byte{6}, 32)
-	p, err := computer.NewSavePublisher(f.pool, remote)
+	p, err := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](remote))
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoints, err := session.NewCheckpointPublisher(f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, remote)
+	checkpoints, err := session.NewCheckpointPublisher(f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, everyOrganization[computer.SaveObjectStore](remote))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,15 +275,15 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	}
 	object, _ := describeStoredObject(e)
 	s.uploadObject(t, object)
-	unavailable, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	unavailable, _ := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		return cas.Object{}, errors.New("temporarily unavailable")
-	}))
+	})))
 	if err := unavailable.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrSaveStorageUnavailable) {
 		t.Fatalf("transient storage: %v", err)
 	}
-	mismatch, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	mismatch, _ := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		return cas.Object{}, cas.ErrDigestMismatch
-	}))
+	})))
 	if err := mismatch.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}); !errors.Is(err, computer.ErrSaveStorageUnavailable) || !errors.Is(err, cas.ErrDigestMismatch) {
 		t.Fatalf("remote mismatch must retain unpublished custody and its diagnostic: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	}
 	// The persistence service restarts, not the customer process or physical
 	// writer. Exact local/remote bytes, the Save and unexpired authority survive.
-	restarted, err := computer.NewSavePublisher(f.pool, s.remote)
+	restarted, err := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](s.remote))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,11 +390,11 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 	object, _ := describeStoredObject(e)
 	s.uploadObject(t, object)
 	entered, release := make(chan struct{}), make(chan struct{})
-	p, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	p, _ := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		close(entered)
 		<-release
 		return s.remote.Stat(ctx, digest)
-	}))
+	})))
 	result := make(chan error, 1)
 	go func() { result <- p.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{e}) }()
 	<-entered
@@ -468,11 +468,11 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	}
 	object, _ := describeStoredObject(rootEvidence)
 	s.uploadObject(t, object)
-	wrongStore, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	wrongStore, _ := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		obj, err := s.remote.Stat(ctx, digest)
 		obj.SizeBytes++
 		return obj, err
-	}))
+	})))
 	if err := wrongStore.CertifyBatch(t.Context(), ref, []blockformat.ObjectInspection{rootEvidence}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("mismatched remote object: %v", err)
 	}
@@ -892,7 +892,7 @@ func TestSaveBatchCertificationReconcilesPartialUploadsAndLeaseLoss(t *testing.T
 				return
 			}
 			entered, release := make(chan struct{}, len(batch)), make(chan struct{})
-			publisher, err := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+			publisher, err := computer.NewSavePublisher(f.pool, everyOrganization[computer.SaveObjectStore](saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 				entered <- struct{}{}
 				select {
 				case <-release:
@@ -900,7 +900,7 @@ func TestSaveBatchCertificationReconcilesPartialUploadsAndLeaseLoss(t *testing.T
 					return cas.Object{}, ctx.Err()
 				}
 				return s.remote.Stat(ctx, digest)
-			}))
+			})))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -928,4 +928,9 @@ func TestSaveBatchCertificationReconcilesPartialUploadsAndLeaseLoss(t *testing.T
 			assertCertified(0)
 		})
 	}
+}
+
+// everyOrganization serves one store for every organization's keyspace.
+func everyOrganization[T any](store T) func(uuid.UUID) T {
+	return func(uuid.UUID) T { return store }
 }

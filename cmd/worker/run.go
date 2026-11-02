@@ -15,14 +15,14 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/objectcache"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
@@ -49,11 +49,6 @@ func run(log *slog.Logger) error {
 	if err := validateWorkerMemoryMiB(cfg.WorkerCapacityMemoryMiB, physicalMemoryMiB); err != nil {
 		return err
 	}
-	checkpointEncryptor, err := computerhost.NewCheckpointEncryptor(cfg.CheckpointKey)
-	if err != nil {
-		return fmt.Errorf("configure checkpoint encryption: %w", err)
-	}
-	log.Info("configured checkpoint encryption", "checkpoint_key_id", checkpointEncryptor.KeyID())
 	workDir := cfg.WorkDir
 	if workDir == "" {
 		workDir = defaultWorkDir()
@@ -81,7 +76,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
-	var platformStore cas.ImmutableStore
 	phaseStarted := time.Now()
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
@@ -142,7 +136,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
-	perSlotDisk, err := computerhost.HostDiskPerSlot(vmResources.MemoryMiB, vmResources.DiskMiB, cfg.ComputerStagingMiB*(1<<20), checkpointEncryptor)
+	perSlotDisk, err := computerhost.HostDiskPerSlot(vmResources.MemoryMiB, vmResources.DiskMiB, cfg.ComputerStagingMiB*(1<<20))
 	if err != nil {
 		return fmt.Errorf("calculate worker lifecycle disk: %w", err)
 	}
@@ -246,19 +240,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("construct Worker runtime profile: %w", err)
 	}
-	runtimeScratch := filepath.Join(workDir, "tmp", "runtime")
-	if err := os.MkdirAll(runtimeScratch, 0o700); err != nil {
-		return fmt.Errorf("create runtime scratch: %w", err)
-	}
-	platformStore, err = cass3.NewImmutable(
-		ctx,
-		cfg.PlatformStoreURI,
-		cass3.WithTempDir(runtimeScratch),
-	)
+	// The worker holds no storage credentials: every object read and write uses
+	// a short-lived grant the Control Plane signs for one live allocation.
+	storageHTTP := &http.Client{Transport: platformhttp.Direct()}
+	platformStore, err := brokeredstore.New(controlPlaneClient, workerapi.StoragePlatform, storageHTTP)
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
-	store, err := cass3.New(ctx, cfg.CASURI, cass3.WithTempDir(filepath.Join(workDir, "tmp", "cas")))
+	store, err := brokeredstore.New(controlPlaneClient, workerapi.StorageCAS, storageHTTP)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
@@ -292,11 +281,11 @@ func run(log *slog.Logger) error {
 	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
 	preparedMachines.PreparationClient = controlPlaneClient
 	optionalHTTP := &http.Client{Transport: preparedMachines.OptionalTransport(http.DefaultTransport.(*http.Transport).Clone())}
-	optionalStore, err := cass3.New(ctx, cfg.CASURI, cass3.WithTempDir(filepath.Join(workDir, "tmp", "cas")), cass3.WithHTTPClient(optionalHTTP))
+	optionalStore, err := brokeredstore.New(controlPlaneClient, workerapi.StorageCAS, optionalHTTP)
 	if err != nil {
 		return fmt.Errorf("configure optional artifact transfers: %w", err)
 	}
-	optionalPlatform, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI, cass3.WithTempDir(runtimeScratch), cass3.WithHTTPClient(optionalHTTP))
+	optionalPlatform, err := brokeredstore.New(controlPlaneClient, workerapi.StoragePlatform, optionalHTTP)
 	if err != nil {
 		return fmt.Errorf("configure optional runtime transfers: %w", err)
 	}
@@ -311,7 +300,7 @@ func run(log *slog.Logger) error {
 	preparedMachines.ComputerObjects = store
 	preparedMachines.ObjectCache = objectCache
 	preparedMachines.ObjectCacheCapacity = cacheBytes
-	preparedMachines.CheckpointCipher = checkpointEncryptor
+	preparedMachines.ObjectKeys = controlPlaneClient
 	preparedMachines.ComputerRanges = store
 	preparedMachines.ComputerDevices = cfg.ComputerDevices
 	preparedMachines.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)

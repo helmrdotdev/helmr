@@ -151,3 +151,24 @@ func TestRetainedSourcePolicyAndPromotionKeepPhysicalReservation(t *testing.T) {
 		t.Fatal("reclaim released capacity before cleanup")
 	}
 }
+
+func TestWaitingAssignmentOnlyReclaimsDurablyRetainedSource(t *testing.T) {
+	machines, _, shape := optionalMachines(t)
+	owner := &ComputerAllocationOwner{machines: machines, identity: workerapi.AllocationIdentity{AllocationID: "source", Epoch: 1}}
+	key := instanceReservationKey("source", 1)
+	if _, err := machines.Reservations.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	if owner.RequestCheckpointRelease() {
+		t.Fatal("active source accepted release")
+	}
+	if err := machines.retainCheckpointSource(key); err != nil {
+		t.Fatal(err)
+	}
+	if !owner.RequestCheckpointRelease() || !machines.retainedSourceReclaimRequested(key) {
+		t.Fatal("retained owner missed release request")
+	}
+	if machines.Reservations.Snapshot().Used != shape {
+		t.Fatal("release request gave up capacity before physical cleanup")
+	}
+}

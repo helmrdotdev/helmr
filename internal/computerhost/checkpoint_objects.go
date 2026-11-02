@@ -48,7 +48,7 @@ func downloadCheckpointObject(ctx context.Context, store cas.Reader, cipher *Che
 	if err := cas.ValidateDescriptor(descriptor); err != nil {
 		return "", invalidCheckpoint(err)
 	}
-	bound, err := cipher.EncryptedSize(limit)
+	bound, err := encryptedCheckpointSize(limit)
 	if err != nil {
 		return "", err
 	}

@@ -145,9 +145,40 @@ Workers send their worker API version in the JSON `api_version` field when enrol
 Ordinary worker API calls do not require a version header. Compatible releases keep the same API version. Connection checks do not guarantee compatibility after a Control Plane replacement: drain workers before deploying an incompatible release, as described in [Upgrades](/docs/self-hosting/upgrades#worker-api-version-changes).
 
 Workers need outbound access to the Control Plane, S3, AWS APIs, and the
-destinations your agents call. They do not install dependencies or build Deployment artifacts.
+destinations your agents call. Workers hold no S3 credentials: the Control Plane
+issues short-lived signed requests for the objects of each live allocation, so the
+Worker role grants only lifecycle actions and the enrollment token secret. They do not install dependencies or build Deployment artifacts.
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
+
+## Host secrets, token rotation and revocation
+
+Enrollment returns a host secret that the worker stores in
+`worker-host-secret.json` and exchanges for 15-minute host credentials. The host
+secret stays valid until its host is fenced, for example after it stops sending
+heartbeats, or until the group's host credentials are revoked.
+
+Two Admin API operations change worker group credentials, with different effects:
+
+- **Rotate token** (`POST /admin/api/v1/worker-groups/{id}/token/rotate`) replaces
+  the group's enrollment token. The old token stops enrolling hosts immediately.
+  Enrolled hosts keep their host secrets and keep running. Propagate the new token
+  to the group's provisioning before hosts are replaced.
+- **Revoke host credentials** (`POST /admin/api/v1/worker-groups/{id}/host-credentials/revoke`)
+  fences every registering, active and draining host of the group as lost and
+  revokes every host secret the group issued. Their host credentials and Secret
+  proxy grants fail every authorization check from then on; a request already
+  authorized before the revocation may still complete. Storage requests the
+  Control Plane signed for those hosts before the revocation stay usable until
+  they expire, at most 5 minutes later. Their allocations are reconciled as host
+  loss. The response lists the fenced host IDs. The enrollment
+  token is unchanged, so a machine that still holds it can enroll again. Each fenced host is audited as `worker_host.marked_lost`.
+
+When an enrollment token or a host may be compromised, rotate the token first,
+then revoke the group's host credentials, and replace the hosts with ones
+provisioned with the new token. Revocation does not stop processes or erase data
+already on a host, including keys and Secret values it received; confirm
+physical cleanup before releasing custody.
 
 ## Drain and replace
 

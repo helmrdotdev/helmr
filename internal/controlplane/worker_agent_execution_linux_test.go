@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,7 +75,6 @@ const (
 	nativeExecutionDiscovery       nativeExecutionMode = "session-discovery"
 	nativeExecutionSecrets         nativeExecutionMode = "secret-bindings"
 	nativeExecutionLongIdle        nativeExecutionMode = "long-idle"
-	nativeExecutionKeyMismatch     nativeExecutionMode = "key-mismatch"
 	nativeExecutionCheckpointRetry nativeExecutionMode = "checkpoint-retry"
 	nativeExecutionCrossHost       nativeExecutionMode = "cross-host"
 	nativeExecutionCorruptConfig   nativeExecutionMode = "corrupt-config"
@@ -109,9 +107,6 @@ func TestWorkerAgentSecretBindingsContinuation(t *testing.T) {
 func TestWorkerAgentLongIdleContinuation(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionLongIdle)
 }
-func TestWorkerAgentCheckpointKeyMismatch(t *testing.T) {
-	runWorkerAgentNativeExecution(t, nativeExecutionKeyMismatch)
-}
 func TestWorkerAgentCrossHostContinuation(t *testing.T) {
 	runWorkerAgentNativeExecution(t, nativeExecutionCrossHost)
 }
@@ -134,12 +129,11 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	deadlineSave := mode == nativeExecutionDeadlineSave
 	cancelSave := mode == nativeExecutionCancelSave
 	crossHost := mode == nativeExecutionCrossHost
-	keyMismatch := mode == nativeExecutionKeyMismatch
 	checkpointRetry := mode == nativeExecutionCheckpointRetry
 	sessionDiscovery := mode == nativeExecutionDiscovery
 	secretBindings := mode == nativeExecutionSecrets
 	lateSeedFault := mode == nativeExecutionLateSeedFault
-	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || keyMismatch || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory || lateSeedFault
+	nativeProcessLoss, healthyRAM := mode == nativeExecutionProcessLoss, mode == nativeExecutionHealthy || performanceCase || mode == nativeExecutionLongIdle || crossHost || checkpointRetry || sessionDiscovery || secretBindings || mode == nativeExecutionMissingMemory || lateSeedFault
 	checkpointFault := ""
 	if mode == nativeExecutionCorruptConfig || mode == nativeExecutionCorruptMemory || mode == nativeExecutionMissingMemory {
 		checkpointFault = string(mode)
@@ -227,7 +221,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	longIdle := mode == nativeExecutionLongIdle
 	// Discovery includes sequential interruption, retained-process continuation and cancellation before both restores.
-	if keyMismatch || sessionDiscovery {
+	if sessionDiscovery {
 		duration, driverTimeout = 20*time.Minute, 15*60*1000
 	}
 	if longIdle {
@@ -289,7 +283,17 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	cp := startNativeControlPlane(t, cancel, nativeControlPlaneInput{DSN: database.DSN, Key: keyBytes, Config: input})
 	defer cp.close()
-	handler := cp.proxy
+	var handler http.Handler = cp.proxy
+	var seedFault *nativeSeedFaultProxy
+	if lateSeedFault {
+		proof, proxyServer, err := newNativeSeedFaultProxy(input.CASURI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer proxyServer.Close()
+		seedFault = proof
+		handler = proof.rewriteGrants(handler)
+	}
 	gate := nativePublicationGate{protectedModel: protectedModel, pool: database.Pool, environment: env, next: handler, workRoot: workRoot, cancelSave: cancelSave, deadlineSave: deadlineSave, backgroundSaves: backgroundSaves, checkpointRetry: checkpointRetry, evidence: input.Evidence}
 	if performanceCase {
 		gate.performance = &nativePerformanceGate{pool: database.Pool, environment: env, next: handler, degraded: input.Performance.Degraded}
@@ -328,20 +332,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	for k, v := range input.WorkerEnv {
 		workerEnv[k] = v
 	}
-	workerEnv["CONTROL_PLANE_URL"], workerEnv["CAS_URI"], workerEnv["PLATFORM_STORE_URI"] = server.URL, input.CASURI, input.PlatformURI
-	var seedFault *nativeSeedFaultProxy
-	if lateSeedFault {
-		proof, proxyServer, proxyURI, err := newNativeSeedFaultProxy(ctx, input.CASURI)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer proxyServer.Close()
-		seedFault = proof
-		workerEnv["CAS_URI"] = proxyURI
-	}
+	workerEnv["CONTROL_PLANE_URL"] = server.URL
 	workerEnv["WORKER_ENROLLMENT_TOKEN_FILE"], workerEnv["WORKER_POOL_NAME"] = tokenPath, "native-proof"
 	workerEnv["WORKER_RESOURCE_ID"] = "native-proof-" + uuid.NewV7().String()
-	workerEnv["CHECKPOINT_ENCRYPTION_KEY"] = base64.StdEncoding.EncodeToString(keyBytes)
 	if crossHost {
 		workerEnv["WORKER_RESOURCE_ID"] = input.SourceHostID
 	}
@@ -403,8 +396,6 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		}()
 	}
 	var expectedWorkerStop atomic.Bool
-	var stopKeyProof context.CancelFunc
-	var keyProofDone chan error
 	go func() {
 		<-worker.done
 		if !expectedWorkerStop.Load() {
@@ -426,12 +417,6 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		} else if crossHost {
 			if err := os.WriteFile(filepath.Join(input.Evidence, "retirement-complete.json"), []byte(`{"retired":true}`), 0600); err != nil {
 				t.Error(err)
-			}
-		}
-		if stopKeyProof != nil {
-			stopKeyProof()
-			if err := <-keyProofDone; err != nil {
-				t.Errorf("checkpoint key proof shutdown: %v", err)
 			}
 		}
 		expectedWorkerStop.Store(true)
@@ -525,7 +510,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		case <-seedTick.C:
 		}
 	}
-	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, client.ComputerScopeOptions{}); err != nil {
+	if _, err := deploymentClient.DeleteComputer(ctx, seedComputer.ID, api.DeleteComputerRequest{IdempotencyKey: "seed-only-proof-delete"}, false, client.ComputerScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if input.RequireBootSeed || lateSeedFault {
@@ -569,20 +554,11 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		}()
 	}
 
-	if keyMismatch {
-		var keyCtx context.Context
-		keyCtx, stopKeyProof = context.WithCancel(context.WithoutCancel(ctx))
-		keyProofDone = make(chan error, 1)
-		go func() {
-			keyProofDone <- qualifyNativeCheckpointKeyMismatch(keyCtx, database.Pool, env, input, checkpointObservations, worker, &expectedWorkerStop, workerEnv, stopDriver)
-		}()
-	}
-
 	if crossHost {
 		handoffCtx, stopHandoff := context.WithCancel(ctx)
 		handoffDone := make(chan error, 1)
 		go func() {
-			err := handoffNativeCheckpoint(handoffCtx, database.Pool, env, input, checkpointObservations, worker, &expectedWorkerStop, nativeCrossHostBootstrap{SourceHostID: input.SourceHostID, TargetHostID: input.TargetHostID, ControlPlaneURL: server.URL, EnrollmentToken: enrollment, CheckpointKey: workerEnv["CHECKPOINT_ENCRYPTION_KEY"], CASURI: input.CASURI, PlatformURI: input.PlatformURI})
+			err := handoffNativeCheckpoint(handoffCtx, database.Pool, env, input, checkpointObservations, worker, &expectedWorkerStop, nativeCrossHostBootstrap{SourceHostID: input.SourceHostID, TargetHostID: input.TargetHostID, ControlPlaneURL: server.URL, EnrollmentToken: enrollment})
 			if err != nil {
 				stopDriver(err)
 			}
@@ -595,7 +571,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			}
 		}()
 	}
-	driverConfig, err := json.Marshal(map[string]any{"protectedModel": protectedModel, "url": server.URL, "apiKey": key, "modelScript": input.Model, "timeoutMs": driverTimeout, "nativeProcessLoss": nativeProcessLoss, "cancelSave": cancelSave, "deadlineSave": deadlineSave, "evidence": input.Evidence, "healthyRAM": healthyRAM, "performanceKind": performanceKind, "sessionDiscovery": sessionDiscovery, "secretBindings": secretBindings, "longIdle": longIdle, "checkpointKeyMismatch": keyMismatch, "checkpointFault": checkpointFault, "checkpointObservations": checkpointObservations, "backgroundSaves": backgroundSaves, "crossHost": crossHost, "sourceHostId": input.SourceHostID, "targetHostId": input.TargetHostID})
+	driverConfig, err := json.Marshal(map[string]any{"protectedModel": protectedModel, "url": server.URL, "apiKey": key, "modelScript": input.Model, "timeoutMs": driverTimeout, "nativeProcessLoss": nativeProcessLoss, "cancelSave": cancelSave, "deadlineSave": deadlineSave, "evidence": input.Evidence, "healthyRAM": healthyRAM, "performanceKind": performanceKind, "sessionDiscovery": sessionDiscovery, "secretBindings": secretBindings, "longIdle": longIdle, "checkpointFault": checkpointFault, "checkpointObservations": checkpointObservations, "backgroundSaves": backgroundSaves, "crossHost": crossHost, "sourceHostId": input.SourceHostID, "targetHostId": input.TargetHostID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -815,7 +791,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		if performanceCase {
 			expectedTurns = 12
 		}
-		if err := verifyNativeHealthyContinuation(ctx, database.Pool, env, result.Bytes(), input.Evidence, longIdle, keyMismatch); err != nil {
+		if err := verifyNativeHealthyContinuation(ctx, database.Pool, env, result.Bytes(), input.Evidence, longIdle); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1072,7 +1048,7 @@ func retireNativeExecution(ctx context.Context, pool *pgxpool.Pool, c *client.Cl
 	defer tick.Stop()
 	for _, id := range computers {
 		for {
-			_, err := c.DeleteComputer(ctx, id, api.DeleteComputerRequest{IdempotencyKey: "fixture-retire-" + id}, client.ComputerScopeOptions{})
+			_, err := c.DeleteComputer(ctx, id, api.DeleteComputerRequest{IdempotencyKey: "fixture-retire-" + id}, false, client.ComputerScopeOptions{})
 			if err == nil {
 				break
 			}
@@ -1151,7 +1127,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'native-proof','Native proof','#112233',100,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
 	memberID := dbtest.GrantMember(t, pool, org, user, &env, "api_keys.create")
-	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.PermissionAPIKeysCreate}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreate, auth.PermissionSessionsAnswer, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsCancel, auth.PermissionSessionsClose, auth.PermissionComputersRead, auth.PermissionCommandsReadOutput, auth.PermissionComputersExecute, auth.PermissionCommandsCancel, auth.PermissionComputersCreate, auth.PermissionComputersWake, auth.PermissionComputersHibernate, auth.PermissionComputersUpdate, auth.PermissionComputersDelete}, extraPermissions...)})
+	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.PermissionAPIKeysCreate}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreate, auth.PermissionSessionsAnswer, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsCancel, auth.PermissionSessionsClose, auth.PermissionComputersRead, auth.PermissionCommandsReadOutput, auth.PermissionComputersExecute, auth.PermissionCommandsCancel, auth.PermissionComputersCreate, auth.PermissionComputersWake, auth.PermissionComputersHibernate, auth.PermissionComputersDelete}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}

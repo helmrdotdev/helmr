@@ -12,8 +12,9 @@ import (
 )
 
 type AllocationProgram struct {
-	DeploymentID uuid.UUID
-	BundleDigest string
+	OrganizationID uuid.UUID
+	DeploymentID   uuid.UUID
+	BundleDigest   string
 }
 
 // ReadAllocationProgram selects immutable bytes from the initial admitted cohort.
@@ -46,11 +47,12 @@ func ReadAllocationProgram(ctx context.Context, database db.TxBeginner, host wor
 			return nil
 		}
 		var program AllocationProgram
-		err := tx.QueryRow(ctx, `SELECT s.deployment_id,d.bundle_digest FROM session_processes p
+		err := tx.QueryRow(ctx, `SELECT e.org_id,s.deployment_id,d.bundle_digest FROM session_processes p
+ JOIN environments e ON e.id=p.environment_id
  JOIN sessions s ON(s.environment_id,s.id)=(p.environment_id,p.session_id)
  JOIN deployments d ON(d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.computer_lease_epoch=$3
- ORDER BY p.session_id,p.epoch LIMIT 1`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&program.DeploymentID, &program.BundleDigest)
+ ORDER BY p.session_id,p.epoch LIMIT 1`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&program.OrganizationID, &program.DeploymentID, &program.BundleDigest)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

@@ -74,6 +74,7 @@ type Server struct {
 	allocator                  *dispatch.Allocator
 	environmentExecutionLimits executionlimit.Limits
 	allocationKeys             *computer.KeyBroker
+	storageGrants              *computer.StorageBroker
 	preparationKeys            *computer.ImageBuildKeyBroker
 	preparationPublisher       *computer.ImageBuildPublisher
 	bootSeedPublisher          *computer.BootSeedPublisher
@@ -85,7 +86,7 @@ type Server struct {
 	tx                         db.TxDB
 	readinessDB                db.DBTX
 	auth                       auth.Authenticator
-	cas                        cas.UploadStore
+	cas                        func(org uuid.UUID) cas.UploadStore
 	bundleAdmission            bundle.Admission
 	platformStore              cas.Reader
 	secrets                    SecretManager
@@ -131,10 +132,16 @@ type ServerConfig struct {
 	TX          db.TxDB
 	ReadinessDB db.DBTX
 
-	Auth              auth.Authenticator
-	CAS               cas.UploadStore
-	BundleAdmission   bundle.Admission
-	PlatformStore     cas.Reader
+	Auth auth.Authenticator
+	// CAS resolves the content store of one organization's keyspace.
+	CAS             func(org uuid.UUID) cas.UploadStore
+	BundleAdmission bundle.Admission
+	PlatformStore   cas.Reader
+	// StorageObjects and StoragePlatform sign Host storage grants; Hosts hold
+	// no storage credentials. StorageObjects resolves one organization's
+	// keyspace.
+	StorageObjects    func(org uuid.UUID) computer.WriteSigner
+	StoragePlatform   computer.ReadSigner
 	Secrets           SecretManager
 	SecretDelivery    SecretDeliveryOpener
 	SecretProxy       *secret.Store
@@ -232,6 +239,11 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.EmailCodeDelivery == nil {
 		return nil, errors.New("email code delivery worker is required")
 	}
+	storageGrants, err := computer.NewStorageBroker(cfg.TX, cfg.StorageObjects, cfg.StoragePlatform)
+	diskObjects := func(org uuid.UUID) computer.SaveObjectStore { return cfg.CAS(org) }
+	if err != nil {
+		return nil, err
+	}
 	allocationKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
@@ -240,19 +252,19 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, cfg.CAS)
+	preparationPublisher, err := computer.NewImageBuildPublisher(cfg.TX, diskObjects)
 	if err != nil {
 		return nil, err
 	}
-	bootSeedPublisher, err := computer.NewBootSeedPublisher(cfg.TX, cfg.CAS)
+	bootSeedPublisher, err := computer.NewBootSeedPublisher(cfg.TX, func(org uuid.UUID) cas.Reader { return cfg.CAS(org) })
 	if err != nil {
 		return nil, err
 	}
-	savePublisher, err := computer.NewSavePublisher(cfg.TX, cfg.CAS)
+	savePublisher, err := computer.NewSavePublisher(cfg.TX, diskObjects)
 	if err != nil {
 		return nil, err
 	}
-	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.AuditPolicy, cfg.CAS)
+	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.AuditPolicy, diskObjects)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +283,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		allocator:                  cfg.Allocator,
 		environmentExecutionLimits: cfg.EnvironmentExecutionLimits,
 		allocationKeys:             allocationKeys,
+		storageGrants:              storageGrants,
 		preparationKeys:            preparationKeys,
 		preparationPublisher:       preparationPublisher,
 		bootSeedPublisher:          bootSeedPublisher,
@@ -394,6 +407,7 @@ func (s *Server) mountAdminRoutes(r chi.Router) {
 		r.Post("/worker-groups/{groupID}/drain", s.adminDrainWorkerGroup)
 		r.Post("/worker-groups/{groupID}/disable", s.adminDisableWorkerGroup)
 		r.Post("/worker-groups/{groupID}/token/rotate", s.adminRotateWorkerGroupToken)
+		r.Post("/worker-groups/{groupID}/host-credentials/revoke", s.adminRevokeWorkerGroupHostCredentials)
 		r.Get("/worker-groups/{groupID}/pools", s.adminListWorkerPools)
 		r.Post("/worker-groups/{groupID}/pools", s.adminCreateWorkerPool)
 		r.Post("/worker-groups/{groupID}/pools/{poolID}/primary", s.adminSwitchWorkerPoolPrimary)
@@ -728,6 +742,11 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Use(s.requireWorker)
 			r.With(limitRequestBody(4096)).Post("/allocations/list", s.workerListAllocations)
 			r.With(limitRequestBody(4096)).Post("/preparation-sources", s.workerPreparationSource)
+			r.With(limitRequestBody(4096)).Post("/storage/reads", s.workerStorageReads)
+			r.With(limitRequestBody(4096)).Post("/storage/writes", s.workerStorageWrite)
+			r.With(limitRequestBody(4096)).Post("/storage/writes/parts", s.workerStorageParts)
+			r.With(limitRequestBody(2<<20)).Post("/storage/writes/complete", s.workerStorageComplete)
+			r.With(limitRequestBody(4096)).Post("/storage/writes/abort", s.workerStorageAbort)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/deliver", s.workerDeliverBootSeed)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/start", s.workerBootSeedStart)
 			r.With(limitRequestBody(4096)).Post("/allocations/boot-seed/renew", s.workerRenewBootSeed)
@@ -761,6 +780,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.With(limitRequestBody(2<<20)).Post("/agent-computers/checkpoint/register", s.workerRegisterAgentCheckpoint)
 			r.With(limitRequestBody(2<<20)).Post("/agent-computers/checkpoint/complete", s.workerCompleteAgentCheckpoint)
 			r.With(limitRequestBody(4096)).Post("/agent-computers/checkpoint/read", s.workerReadAgentCheckpoint)
+			r.With(limitRequestBody(4096)).Post("/agent-computers/checkpoint/key", s.workerCheckpointKey)
+			r.With(limitRequestBody(4096)).Post("/boot-seeds/key", s.workerBootSeedKey)
 			r.With(limitRequestBody(32768)).Post("/agent-computers/capture/begin", s.workerBeginAgentComputerCapture)
 			r.With(limitRequestBody(128<<10)).Post("/agent-computers/capture/seal", s.workerSealAgentComputerCapture)
 			r.With(limitRequestBody(4096)).Post("/agent-computers/capture/cancel", s.workerCancelAgentComputerCapture)

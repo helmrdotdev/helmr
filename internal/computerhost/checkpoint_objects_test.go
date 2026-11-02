@@ -303,7 +303,7 @@ func TestCheckpointDownloadVerifiesStreamBeforeClassifyingEncryptedContents(t *t
 	if err := cipher.Encrypt(t.Context(), strings.NewReader("state"), &original, "checkpoint/memory"); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"authenticated corruption", "verified unavailable key", "unverified key", "interrupted key", "invalid header close failure"} {
+	for _, mode := range []string{"authenticated corruption", "verified different key", "unverified key", "interrupted key", "invalid header close failure"} {
 		t.Run(mode, func(t *testing.T) {
 			store, err := cas.NewFile(t.TempDir())
 			if err != nil {
@@ -314,9 +314,8 @@ func TestCheckpointDownloadVerifiesStreamBeforeClassifyingEncryptedContents(t *t
 			switch mode {
 			case "authenticated corruption":
 				raw[headerSize+8+nonceSize] ^= 1
-			case "verified unavailable key":
+			case "verified different key":
 				raw[len(magic)] ^= 1
-				want = ErrCheckpointKeyUnavailable
 			case "interrupted key":
 				want = syscall.ECONNRESET
 			case "invalid header close failure":
@@ -351,9 +350,6 @@ func TestCheckpointDownloadVerifiesStreamBeforeClassifyingEncryptedContents(t *t
 			}
 			if errors.Is(err, errInvalidCheckpoint) != errors.Is(want, errInvalidCheckpoint) {
 				t.Fatalf("invalid classification: %v", err)
-			}
-			if errors.Is(err, ErrCheckpointKeyUnavailable) != errors.Is(want, ErrCheckpointKeyUnavailable) {
-				t.Fatalf("key classification: %v", err)
 			}
 		})
 	}

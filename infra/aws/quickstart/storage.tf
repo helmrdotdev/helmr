@@ -50,12 +50,34 @@ resource "aws_s3_bucket_lifecycle_configuration" "cas" {
     filter { prefix = "quarantine/" }
     expiration { expired_object_delete_marker = true }
   }
+  # Staging holds unverified multipart bytes until the Control Plane verifies
+  # and copies them to their digest key; leftovers of a crash expire.
+  rule {
+    id     = "expire-staging"
+    status = "Enabled"
+    filter { prefix = "staging/" }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+  rule {
+    id     = "remove-staging-delete-markers"
+    status = "Enabled"
+    filter { prefix = "staging/" }
+    expiration { expired_object_delete_marker = true }
+  }
+  # Releases multipart uploads abandoned by a lost host or allocation.
+  rule {
+    id     = "abort-abandoned-multipart-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 1 }
+  }
 }
 
 resource "aws_secretsmanager_secret" "helmr" {
   for_each = toset(concat([
     "worker_host_credential_signing_key", "auth_key", "encryption_key",
-    "computer_fencing_key", "checkpoint_encryption_key", "computer_wrapping_key",
+    "computer_fencing_key", "computer_wrapping_key",
     "worker_enrollment_token", "capacity_token"
   ], var.github_oauth_client_id != "" ? ["github_oauth_client_secret"] : []))
   name                    = "${local.name}/${each.key}"

@@ -11,7 +11,7 @@ import { cx, ui } from "../ui/styles";
 const MESSAGES = {
   bad_request: "The linking request expired, or a different Helmr account is signed in.",
   unauthorized: "Your Helmr sign-in expired before linking finished.",
-  forbidden: "This Helmr account cannot link a Slack identity in this organization.",
+  forbidden: "This Helmr account cannot link Slack here. It needs membership and Agent access in this workspace, and the workspace must be connected.",
   conflict: "This Slack account or your Helmr account is already linked differently in this workspace.",
   service_unavailable: "Slack is not configured on this server.",
 };

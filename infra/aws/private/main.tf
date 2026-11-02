@@ -268,16 +268,10 @@ module "worker_group" {
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
   computer_staging_mib                            = local.worker_generations[each.key].computer_staging_mib
   worker_controlplane_url                         = local.worker_controlplane_url
-  cas_uri                                         = module.controlplane.cas_uri
-  cas_bucket_arn                                  = module.controlplane.cas_bucket_arn
   kms_key_arn                                     = module.controlplane.kms_key_arn
-  platform_store_uri                              = local.worker_generations[each.key].generation_inputs.supply.platform_store.uri
-  platform_store_bucket_arn                       = local.worker_generations[each.key].generation_inputs.supply.platform_store.bucket_arn
-  platform_store_kms_key_arn                      = local.worker_generations[each.key].generation_inputs.supply.platform_store.kms_key_arn
 
   secret_arns = {
-    checkpoint_encryption_key = module.controlplane.secret_arns.checkpoint_encryption_key
-    worker_enrollment_token   = module.controlplane.worker_enrollment_secret_arn
+    worker_enrollment_token = module.controlplane.worker_enrollment_secret_arn
   }
 
   tags = local.tags

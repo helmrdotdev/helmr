@@ -39,6 +39,15 @@ column agents.environment_id uuid not null
 column agents.id uuid not null
 column agents.key text not null
 column agents.revision bigint not null default 1
+column allocation_upload_receipts.allocation_id uuid not null
+column allocation_upload_receipts.availability_required boolean generated stored true
+column allocation_upload_receipts.digest text not null
+column allocation_upload_receipts.media_type text not null
+column allocation_upload_receipts.org_id uuid not null
+column allocation_upload_receipts.size_bytes bigint not null
+column allocation_upload_receipts.upload_id text
+column allocation_upload_receipts.worker_epoch bigint not null
+column allocation_upload_receipts.worker_host_id uuid not null
 column api_keys.created_at timestamp with time zone not null default now()
 column api_keys.created_by_member_id uuid
 column api_keys.credential_version bigint not null default 1
@@ -108,6 +117,8 @@ column boot_seed_builds.channel_credential_digest bytea
 column boot_seed_builds.cpu_config_digest text
 column boot_seed_builds.cpu_millis bigint not null
 column boot_seed_builds.created_at timestamp with time zone not null default clock_timestamp()
+column boot_seed_builds.data_key_wrapped bytea
+column boot_seed_builds.data_key_wrapping_key_id text
 column boot_seed_builds.deadline_at timestamp with time zone
 column boot_seed_builds.delivered_at timestamp with time zone
 column boot_seed_builds.deployment_id uuid not null
@@ -140,12 +151,14 @@ column boot_seed_objects.boot_seed_build_id uuid not null
 column boot_seed_objects.digest text not null
 column boot_seed_objects.environment_id uuid not null
 column boot_seed_objects.media_type text not null
+column boot_seed_objects.org_id uuid not null
 column boot_seed_objects.role text not null
 column boot_seed_objects.size_bytes bigint not null
 column cas_blobs.digest text not null
 column cas_blobs.last_reclaim_error text
 column cas_blobs.next_reclaim_at timestamp with time zone
 column cas_blobs.not_retired boolean generated stored (retired_at IS NULL)
+column cas_blobs.org_id uuid not null
 column cas_blobs.retired_at timestamp with time zone
 column cas_blobs.size_bytes bigint not null
 column cas_objects.availability_required boolean generated stored true
@@ -156,12 +169,14 @@ column cas_objects.org_id uuid not null
 column cas_objects.size_bytes bigint not null
 column cas_upload_reclaims.digest text not null
 column cas_upload_reclaims.next_reclaim_at timestamp with time zone not null default now()
+column cas_upload_reclaims.org_id uuid not null
 column cas_upload_reclaims.upload_id text not null
 column checkpoint_objects.availability_required boolean generated stored true
 column checkpoint_objects.checkpoint_id uuid not null
 column checkpoint_objects.digest text not null
 column checkpoint_objects.environment_id uuid not null
 column checkpoint_objects.media_type text not null
+column checkpoint_objects.org_id uuid not null
 column checkpoint_objects.role text not null
 column checkpoint_objects.size_bytes bigint not null
 column checkpoint_processes.checkpoint_id uuid not null
@@ -177,6 +192,8 @@ column checkpoints.computer_id uuid not null
 column checkpoints.control_version bigint not null
 column checkpoints.controls_reconciled_at timestamp with time zone
 column checkpoints.created_at timestamp with time zone not null default clock_timestamp()
+column checkpoints.data_key_wrapped bytea
+column checkpoints.data_key_wrapping_key_id text
 column checkpoints.disk_save_id uuid not null
 column checkpoints.environment_id uuid not null
 column checkpoints.id uuid not null
@@ -1335,6 +1352,15 @@ constraint agents c CHECK (revision > 0)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
+constraint allocation_upload_receipts c CHECK (btrim(media_type) <> ''::text)
+constraint allocation_upload_receipts c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint allocation_upload_receipts c CHECK (octet_length(upload_id) >= 1 AND octet_length(upload_id) <= 1024)
+constraint allocation_upload_receipts c CHECK (size_bytes > 0)
+constraint allocation_upload_receipts c CHECK (worker_epoch > 0)
+constraint allocation_upload_receipts f FOREIGN KEY (org_id) REFERENCES organizations(id)
+constraint allocation_upload_receipts f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
+constraint allocation_upload_receipts f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id) ON DELETE CASCADE
+constraint allocation_upload_receipts p PRIMARY KEY (worker_host_id, allocation_id, digest)
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
 constraint api_keys c CHECK (credential_version > 0)
@@ -1397,6 +1423,7 @@ constraint auth_identities c CHECK (btrim(subject) <> ''::text)
 constraint auth_identities f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
 constraint auth_identities p PRIMARY KEY (id)
 constraint auth_identities u UNIQUE (id, user_id)
+constraint boot_seed_builds c CHECK ((data_key_wrapping_key_id IS NULL) = (data_key_wrapped IS NULL))
 constraint boot_seed_builds c CHECK ((delivered_at IS NULL) = (executor_expires_at IS NULL))
 constraint boot_seed_builds c CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL))
 constraint boot_seed_builds c CHECK ((status <> ALL (ARRAY['queued'::text, 'running'::text, 'succeeded'::text])) OR image_id IS NOT NULL)
@@ -1410,6 +1437,8 @@ constraint boot_seed_builds c CHECK (fenced_at IS NULL OR (status = ANY (ARRAY['
 constraint boot_seed_builds c CHECK (manifest IS NULL OR octet_length(manifest) <= 1048576)
 constraint boot_seed_builds c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
 constraint boot_seed_builds c CHECK (octet_length(channel_credential_digest) = 32)
+constraint boot_seed_builds c CHECK (octet_length(data_key_wrapped) >= 1 AND octet_length(data_key_wrapped) <= 6144)
+constraint boot_seed_builds c CHECK (octet_length(data_key_wrapping_key_id) >= 1 AND octet_length(data_key_wrapping_key_id) <= 2048)
 constraint boot_seed_builds c CHECK (octet_length(qualification_evidence) >= 1 AND octet_length(qualification_evidence) <= 4096)
 constraint boot_seed_builds c CHECK (reserved_memory_bytes > 0)
 constraint boot_seed_builds c CHECK (reserved_scratch_bytes > 0)
@@ -1432,32 +1461,36 @@ constraint boot_seed_builds u UNIQUE (allocation_id)
 constraint boot_seed_builds u UNIQUE NULLS NOT DISTINCT (environment_id, deployment_id, image_spec_id, image_id, cpu_millis, memory_bytes)
 constraint boot_seed_objects c CHECK (role = ANY (ARRAY['vm_state'::text, 'memory'::text, 'scratch_disk'::text]))
 constraint boot_seed_objects c CHECK (size_bytes > 0)
-constraint boot_seed_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
 constraint boot_seed_objects f FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id)
+constraint boot_seed_objects f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
+constraint boot_seed_objects f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id)
 constraint boot_seed_objects p PRIMARY KEY (environment_id, boot_seed_build_id, role)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
-constraint cas_blobs p PRIMARY KEY (digest)
-constraint cas_blobs u UNIQUE (digest, size_bytes, not_retired)
+constraint cas_blobs f FOREIGN KEY (org_id) REFERENCES organizations(id)
+constraint cas_blobs p PRIMARY KEY (org_id, digest)
+constraint cas_blobs u UNIQUE (org_id, digest, size_bytes, not_retired)
 constraint cas_objects c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_objects c CHECK (size_bytes >= 0)
-constraint cas_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
 constraint cas_objects f FOREIGN KEY (org_id) REFERENCES organizations(id)
+constraint cas_objects f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
 constraint cas_objects p PRIMARY KEY (org_id, digest)
 constraint cas_objects u UNIQUE (org_id, digest, size_bytes, media_type)
 constraint cas_upload_reclaims c CHECK (upload_id <> ''::text)
-constraint cas_upload_reclaims f FOREIGN KEY (digest) REFERENCES cas_blobs(digest)
-constraint cas_upload_reclaims p PRIMARY KEY (digest, upload_id)
+constraint cas_upload_reclaims f FOREIGN KEY (org_id, digest) REFERENCES cas_blobs(org_id, digest)
+constraint cas_upload_reclaims p PRIMARY KEY (org_id, digest, upload_id)
 constraint checkpoint_objects c CHECK (role = ANY (ARRAY['vm_config'::text, 'vm_state'::text, 'memory'::text, 'scratch_disk'::text]))
 constraint checkpoint_objects c CHECK (size_bytes > 0)
-constraint checkpoint_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
 constraint checkpoint_objects f FOREIGN KEY (environment_id, checkpoint_id) REFERENCES checkpoints(environment_id, id)
+constraint checkpoint_objects f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
+constraint checkpoint_objects f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id)
 constraint checkpoint_objects p PRIMARY KEY (environment_id, checkpoint_id, role)
 constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, checkpoint_id) REFERENCES checkpoints(environment_id, computer_id, id)
 constraint checkpoint_processes f FOREIGN KEY (environment_id, computer_id, session_id, process_epoch) REFERENCES session_processes(environment_id, computer_id, session_id, epoch)
 constraint checkpoint_processes p PRIMARY KEY (environment_id, checkpoint_id, session_id)
 constraint checkpoints c CHECK (((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) OR controls_reconciled_at IS NOT NULL) = (capture_request IS NULL))
+constraint checkpoints c CHECK ((data_key_wrapping_key_id IS NULL) = (data_key_wrapped IS NULL))
 constraint checkpoints c CHECK ((manifest IS NULL) = (vm_platform_id IS NULL))
 constraint checkpoints c CHECK ((status <> ALL (ARRAY['ready'::text, 'restoring'::text])) OR ready_at IS NOT NULL)
 constraint checkpoints c CHECK ((status = ANY (ARRAY['cancelled'::text, 'lost'::text])) = (terminal_evidence IS NOT NULL))
@@ -1467,6 +1500,8 @@ constraint checkpoints c CHECK (controls_reconciled_at IS NULL OR (status = ANY 
 constraint checkpoints c CHECK (octet_length(abort_identity) = 32)
 constraint checkpoints c CHECK (octet_length(capture_digest) = 32)
 constraint checkpoints c CHECK (octet_length(capture_request) >= 1 AND octet_length(capture_request) <= 16777216)
+constraint checkpoints c CHECK (octet_length(data_key_wrapped) >= 1 AND octet_length(data_key_wrapped) <= 6144)
+constraint checkpoints c CHECK (octet_length(data_key_wrapping_key_id) >= 1 AND octet_length(data_key_wrapping_key_id) <= 2048)
 constraint checkpoints c CHECK (octet_length(manifest) >= 1 AND octet_length(manifest) <= 1048576)
 constraint checkpoints c CHECK (octet_length(restore_identity) = 32)
 constraint checkpoints c CHECK (ready_at IS NULL OR manifest IS NOT NULL)
@@ -1670,7 +1705,7 @@ constraint disk_objects c CHECK (kind = 'segment'::text AND rank = 0 OR kind <> 
 constraint disk_objects c CHECK (kind = ANY (ARRAY['segment'::text, 'index'::text, 'root'::text]))
 constraint disk_objects c CHECK (size_bytes > 0)
 constraint disk_objects f FOREIGN KEY (certified_org_id, digest, size_bytes, media_type) REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
-constraint disk_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired) ON DELETE RESTRICT
+constraint disk_objects f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired) ON DELETE RESTRICT
 constraint disk_objects f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT
 constraint disk_objects p PRIMARY KEY (environment_id, digest)
 constraint disk_objects u UNIQUE (environment_id, digest, rank)
@@ -2436,6 +2471,7 @@ constraint worker_scale_in_operations f FOREIGN KEY (worker_host_id, worker_grou
 constraint worker_scale_in_operations p PRIMARY KEY (worker_group_id, operation_key)
 index CREATE INDEX account_security_notifications_pending ON public.account_security_notifications USING btree (next_attempt_at)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
+index CREATE INDEX allocation_upload_receipts_digest ON public.allocation_upload_receipts USING btree (org_id, digest)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
 index CREATE INDEX audit_events_actor ON public.audit_events USING btree (org_id, COALESCE(actor_operator_id, actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id), recorded_at DESC, id DESC)

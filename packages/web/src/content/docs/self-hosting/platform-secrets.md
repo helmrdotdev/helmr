@@ -54,15 +54,14 @@ Set `TOFU=terraform` if required. The helper creates locally generated values fo
 - `auth_key`
 - `encryption_key`
 - `computer_fencing_key`
-- `checkpoint_encryption_key`
 - the worker-group enrollment token
 
-The six root keys are base64-encoded 32-byte values. The helper writes only secrets that do not already have an `AWSCURRENT` value; it never overwrites existing values.
+The five root keys are base64-encoded 32-byte values. The helper writes only secrets that do not already have an `AWSCURRENT` value; it never overwrites existing values.
 
 Optional email providers create additional secret destinations. Resend needs `email_provider = "resend"`, `email_from`, and a raw API key in `secret_arns.resend_api_key`. SMTP needs `email_provider = "smtp"`, `smtp_addr`, `email_from`, and, when enabled, a raw password in `secret_arns.smtp_password`.
 
 ## Rotation and recovery limits
 
-Rotate a worker-group enrollment token from Admin and propagate it to the group explicitly. Online rotation of the root signing and encryption keys is not supported by the checked-in deployment flow. Preserve the checkpoint encryption key for every worker that may restore existing checkpoints; losing or changing it can make encrypted checkpoint data unusable.
+Rotate a worker-group enrollment token from Admin and propagate it to the group explicitly. Rotation does not revoke enrolled hosts; see [host secrets, token rotation and revocation](/docs/self-hosting/workers#host-secrets-token-rotation-and-revocation). Online rotation of the root signing and encryption keys is not supported by the checked-in deployment flow. Each memory checkpoint and boot seed has its own data key wrapped by the Computer key provider; preserve that provider's key material, because losing it makes encrypted checkpoint and disk data unusable.
 
 Keep secret values out of tfvars, command history, logs, and support bundles.

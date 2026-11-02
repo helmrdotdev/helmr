@@ -3,6 +3,7 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/brokeredstore"
 	"reflect"
 	"slices"
 	"sync"
@@ -110,7 +111,8 @@ func (p *PreparedMachines) reconcilePreparedLeaves(ctx context.Context, jobs *sy
 		if err != nil {
 			return
 		}
-		leafCtx, cancel := context.WithCancel(ctx)
+		// A prepared leaf reads only under the preparation source offered for it.
+		leafCtx, cancel := context.WithCancel(brokeredstore.WithScope(ctx, workerapi.StorageScope{PreparationSource: &workerapi.PreparationSourceID{EnvironmentID: key.EnvironmentID, BuildID: key.BuildID}}))
 		leaf := &preparedLeaf{key: key, revision: policy.Revision, ctx: leafCtx, cancel: cancel, done: make(chan struct{}), running: true,
 			// Source fetch has a short provisional lifetime; successful admission
 			// replaces it with the authenticated envelope deadline.
@@ -273,5 +275,5 @@ func (p *PreparedMachines) adoptPreparedLeaf(ctx context.Context, leaf *prepared
 		}
 		keys[key.ID] = key.Key
 	}
-	return leaf.machine.Adopt(ctx, vm.PreparedAdoption{NetworkPolicy: source.NetworkPolicy, NetworkInstallation: source.NetworkInstallation, Binding: vm.WorkloadBinding{WorkerEpoch: hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: leaf.shape.VMPlatformID}, ComputerID: identity.OwnerID, Root: source.Disk.Root, WriteKeyID: source.Disk.WriteKeyID, Keys: keys, Source: p.ComputerRanges})
+	return leaf.machine.Adopt(ctx, vm.PreparedAdoption{NetworkPolicy: source.NetworkPolicy, NetworkInstallation: source.NetworkInstallation, Binding: vm.WorkloadBinding{WorkerEpoch: hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: leaf.shape.VMPlatformID}, ComputerID: identity.OwnerID, Root: source.Disk.Root, WriteKeyID: source.Disk.WriteKeyID, Keys: keys, Source: brokeredstore.BindRanges(ctx, p.ComputerRanges)})
 }

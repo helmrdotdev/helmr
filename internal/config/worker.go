@@ -20,9 +20,7 @@ func LoadWorker() (Worker, error) {
 		WorkerResourceID:          envText("WORKER_RESOURCE_ID"),
 		WorkerPoolName:            os.Getenv("WORKER_POOL_NAME"),
 		WorkerEnrollmentTokenFile: envText("WORKER_ENROLLMENT_TOKEN_FILE"),
-		CASURI:                    envText("CAS_URI"),
 		WorkerHostSecretPath:      envText("WORKER_HOST_SECRET_PATH"),
-		PlatformStoreURI:          envText("PLATFORM_STORE_URI"),
 		WorkDir:                   envText("WORKER_WORK_DIR"),
 		ImagesDir:                 envText("WORKER_IMAGES_DIR"),
 		FirecrackerPath:           env("FIRECRACKER_PATH", "firecracker"),
@@ -168,16 +166,6 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.ControlPlaneURL == "" {
 		return cfg, errors.New("CONTROL_PLANE_URL is required")
-	}
-	if cfg.CASURI == "" {
-		return cfg, errors.New("CAS_URI is required")
-	}
-	if cfg.PlatformStoreURI == "" {
-		return cfg, errors.New("PLATFORM_STORE_URI is required")
-	}
-	cfg.CheckpointKey, err = rootKey("CHECKPOINT_ENCRYPTION_KEY")
-	if err != nil {
-		return cfg, err
 	}
 	if cfg.JailerUID <= 0 {
 		return cfg, errors.New("JAILER_UID is required")

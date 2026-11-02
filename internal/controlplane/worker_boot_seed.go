@@ -57,7 +57,7 @@ func (s *Server) workerBootSeedStart(w http.ResponseWriter, r *http.Request) {
 		s.writeAllocationError(w, r, err)
 		return
 	}
-	bundle, err := s.readExecutableBundle(r.Context(), start.BundleDigest)
+	bundle, err := s.readExecutableBundle(r.Context(), start.OrganizationID, start.BundleDigest)
 	if err != nil {
 		s.writeAllocationError(w, r, err)
 		return

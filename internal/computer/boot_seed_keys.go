@@ -104,21 +104,23 @@ func (b *KeyBroker) pinBootSeed(ctx context.Context, host workergroup.HostPrinci
 }
 
 type BootSeedStart struct {
-	DeploymentID uuid.UUID
-	BundleDigest string
-	RootfsDigest string
-	ImageConfig  oci.RuntimeConfig
+	OrganizationID uuid.UUID
+	DeploymentID   uuid.UUID
+	BundleDigest   string
+	RootfsDigest   string
+	ImageConfig    oci.RuntimeConfig
 }
 
 func ReadBootSeedStart(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, ref BootSeedExecutor) (BootSeedStart, error) {
 	var result BootSeedStart
 	err := withBootSeedExecutor(ctx, database, host, ref, func(tx pgx.Tx) error {
 		var seedRaw []byte
-		if err := tx.QueryRow(ctx, `SELECT b.deployment_id,d.bundle_digest,p.rootfs_digest,s.seed FROM boot_seed_builds b
+		if err := tx.QueryRow(ctx, `SELECT e.org_id,b.deployment_id,d.bundle_digest,p.rootfs_digest,s.seed FROM boot_seed_builds b
+ JOIN environments e ON e.id=b.environment_id
  JOIN deployments d ON (d.environment_id,d.id)=(b.environment_id,b.deployment_id)
  JOIN image_specs s ON (s.environment_id,s.id)=(b.environment_id,b.image_spec_id)
  JOIN vm_platforms p ON p.id=b.vm_platform_id WHERE b.environment_id=$1 AND b.id=$2`, ref.EnvironmentID, ref.BuildID).
-			Scan(&result.DeploymentID, &result.BundleDigest, &result.RootfsDigest, &seedRaw); err != nil {
+			Scan(&result.OrganizationID, &result.DeploymentID, &result.BundleDigest, &result.RootfsDigest, &seedRaw); err != nil {
 			return err
 		}
 		var seed definition.ComputerSeedManifest
@@ -147,6 +149,9 @@ func withBootSeedExecutor(ctx context.Context, database db.TxBeginner, host work
 			return err
 		}
 		if err := LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
 			return err
 		}
 		if _, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID); err != nil {

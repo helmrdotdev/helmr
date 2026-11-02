@@ -327,12 +327,12 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	}
 	consentID, err := ids.Parse(flow.SlackConsentID)
 	if err != nil {
-		s.writeSlackLinkError(w, r, slack.ErrUserLinkDenied)
+		s.writeSlackLinkError(w, r, slack.ErrUserLinkExpired)
 		return
 	}
 	binding, err := browserBinding(w, r, false)
 	if err != nil {
-		s.writeSlackLinkError(w, r, slack.ErrUserLinkDenied)
+		s.writeSlackLinkError(w, r, slack.ErrUserLinkExpired)
 		return
 	}
 	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID}, slack.LinkConsent{ID: consentID, BrowserHash: binding})
@@ -361,6 +361,8 @@ func (s *Server) writeSlackLinkError(w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, slack.ErrFirstUseLink):
 		s.writeOperationError(w, r, badRequest(err))
 	case errors.Is(err, slack.ErrUserIdentity):
+		s.writeOperationError(w, r, badRequest(err))
+	case errors.Is(err, slack.ErrUserLinkExpired):
 		s.writeOperationError(w, r, badRequest(err))
 	case errors.Is(err, slack.ErrUserLinkDenied):
 		s.writeOperationError(w, r, forbidden(err))

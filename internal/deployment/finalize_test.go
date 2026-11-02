@@ -31,7 +31,7 @@ func TestVerificationStopsAfterDisconnectedProgress(t *testing.T) {
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
 	descriptor := cas.Descriptor{Digest: digest, SizeBytes: int64(len(image)), MediaType: definition.ComputerSeedMediaType}
 	store := &finalizeObjectStore{descriptor: descriptor, body: image}
-	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
+	finalizer := NewFinalizer(everyOrganization[cas.UploadStore](store), store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
 	err := finalizer.verifyObjects(t.Context(), finalizePossessionStore{}, uuid.NewV7(), preparedBundle{objects: []cas.Descriptor{descriptor}}, func(string) error { return context.Canceled })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v", err)
@@ -99,7 +99,7 @@ func TestVerifyObjectDisk(t *testing.T) {
 				data = append(data, 0)
 			}
 			store := &finalizeObjectStore{descriptor: object, body: data}
-			err := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(t.Context(), bundle.Manifest{}, object)
+			err := NewFinalizer(everyOrganization[cas.UploadStore](store), store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(t.Context(), uuid.Nil(), bundle.Manifest{}, object)
 			if kind == "valid" {
 				if err != nil {
 					t.Fatal(err)
@@ -117,7 +117,7 @@ func TestVerifyObjectDiskCancellationIsNotInvalid(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	store := cancellingObjectStore{body: body, cancel: cancel}
-	err := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(ctx, bundle.Manifest{}, descriptor)
+	err := NewFinalizer(everyOrganization[cas.UploadStore](store), store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(ctx, uuid.Nil(), bundle.Manifest{}, descriptor)
 	var invalid InvalidObjectError
 	if !errors.Is(err, context.Canceled) || errors.As(err, &invalid) {
 		t.Fatalf("cancellation misclassified: %v", err)
@@ -157,4 +157,9 @@ func TestPrepareRejectsInvalidIdempotencyKeysBeforeReadingObjects(t *testing.T) 
 			t.Fatalf("key %q: %v", key, err)
 		}
 	}
+}
+
+// everyOrganization serves one store for every organization's keyspace.
+func everyOrganization[T any](store T) func(uuid.UUID) T {
+	return func(uuid.UUID) T { return store }
 }

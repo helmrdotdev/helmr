@@ -19,10 +19,10 @@ import (
 // publishBootSeed retains encrypted bytes only. The build owner must qualify
 // independent clones before registering this manifest as eligible. Its staging
 // directory remains charged and owned by the caller until this method returns.
-func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string, environmentID, buildID uuid.UUID, artifact vm.BootSeedArtifact, scratchBytes int64, store cas.ImmutableStore) (bootseed.Manifest, error) {
+func (p *PreparedMachines) publishBootSeed(ctx context.Context, cipher *CheckpointEncryptor, directory string, environmentID, buildID uuid.UUID, artifact vm.BootSeedArtifact, scratchBytes int64, store cas.ImmutableStore) (bootseed.Manifest, error) {
 	m := bootseed.Manifest{EnvironmentID: environmentID, BuildID: buildID,
 		Config: append([]byte(nil), artifact.Manifest...), MemoryBytes: artifact.MemoryBytes, ScratchBytes: scratchBytes}
-	if store == nil || p.CheckpointCipher == nil || environmentID == uuid.Nil() || buildID == uuid.Nil() {
+	if store == nil || cipher == nil || environmentID == uuid.Nil() || buildID == uuid.Nil() {
 		return m, errors.New("boot seed publication requires build ownership and encrypted storage")
 	}
 	scratchLimit, err := filepack.PackedSizeLimit(scratchBytes, filepack.ScratchRole)
@@ -52,10 +52,10 @@ func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string
 		}
 		var object computercheckpoint.Object
 		if item.role == "memory" {
-			object, item.path, m.MemoryHeaderDigest, err = encryptCheckpointMemory(ctx, p.CheckpointCipher, directory, m.Purpose()+"/memory", f, artifact.MemoryBytes)
+			object, item.path, m.MemoryHeaderDigest, err = encryptCheckpointMemory(ctx, cipher, directory, m.Purpose()+"/memory", f, artifact.MemoryBytes)
 			object.MediaType = item.media
 		} else {
-			object, item.path, err = encryptCheckpointObject(ctx, p.CheckpointCipher, directory, m.Purpose(), item.role, item.media, f, item.limit)
+			object, item.path, err = encryptCheckpointObject(ctx, cipher, directory, m.Purpose(), item.role, item.media, f, item.limit)
 		}
 		err = errors.Join(err, f.Close())
 		if err != nil {
@@ -87,16 +87,22 @@ func (p *PreparedMachines) publishBootSeed(ctx context.Context, directory string
 // openBootSeed stages bounded state/scratch and authenticates the memory index.
 // RAM remains demand-readable. The caller retains the source until its VM and
 // pager have stopped, then releases the allocation's staging directory.
+// The seed's data key comes from the storage authority carried by ctx.
 func (p *PreparedMachines) openBootSeed(ctx context.Context, directory string, m bootseed.Manifest, memoryBytes, scratchBytes int64) (*vm.BootSeedRestore, error) {
-	return p.openBootSeedFrom(ctx, directory, m, memoryBytes, scratchBytes, p.ComputerObjects, p.ComputerRanges)
+	cipher, err := p.bootSeedCipher(ctx, m.BuildID)
+	if err != nil {
+		return nil, err
+	}
+	defer cipher.Close()
+	return p.openBootSeedFrom(ctx, cipher, directory, m, memoryBytes, scratchBytes, p.ComputerObjects, p.ComputerRanges)
 }
 
-func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory string, m bootseed.Manifest, memoryBytes, scratchBytes int64, objects cas.Reader, ranges blockformat.RangeSource) (*vm.BootSeedRestore, error) {
+func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, cipher *CheckpointEncryptor, directory string, m bootseed.Manifest, memoryBytes, scratchBytes int64, objects cas.Reader, ranges blockformat.RangeSource) (*vm.BootSeedRestore, error) {
 	if err := m.Validate(); err != nil {
 		return nil, invalidCheckpoint(err)
 	}
 	if m.MemoryBytes != memoryBytes || m.ScratchBytes != scratchBytes ||
-		objects == nil || ranges == nil || p.CheckpointCipher == nil {
+		objects == nil || ranges == nil || cipher == nil {
 		return nil, errors.New("boot seed differs from admitted resources or storage")
 	}
 	scratchLimit, err := filepack.PackedSizeLimit(scratchBytes, filepack.ScratchRole)
@@ -117,7 +123,7 @@ func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory strin
 		if err := cas.RequireExact(observed, m.Memory); err != nil {
 			return invalidCheckpoint(err)
 		}
-		memory, err = openCheckpointMemory(readCtx, ranges, p.CheckpointCipher, m.Memory, m.MemoryHeaderDigest, m.Purpose()+"/memory", memoryBytes)
+		memory, err = openCheckpointMemory(readCtx, ranges, cipher, m.Memory, m.MemoryHeaderDigest, m.Purpose()+"/memory", memoryBytes)
 		return err
 	})
 	for i, item := range []struct {
@@ -128,7 +134,7 @@ func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory strin
 	}{{"vm_state", m.VMState, vm.SnapshotStateLimit, &result.VMState}, {"scratch_disk", m.ScratchDisk, scratchLimit, &result.ScratchDisk}} {
 		group.Go(func() (err error) {
 			defer func() { stageErrors[i+1] = err }()
-			*item.path, err = downloadCheckpointObject(readCtx, objects, p.CheckpointCipher, directory, m.Purpose(),
+			*item.path, err = downloadCheckpointObject(readCtx, objects, cipher, directory, m.Purpose(),
 				computercheckpoint.RuntimeObject{Role: item.role, Digest: item.object.Digest, SizeBytes: item.object.SizeBytes, MediaType: item.object.MediaType}, item.limit)
 			return err
 		})
@@ -141,10 +147,9 @@ func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory strin
 }
 
 // A persistent selected-artifact read failure must not be selected again for
-// this Computer. Transient store failures and unavailable wrapping keys retain
-// their existing retry/pause semantics.
+// this Computer. Transient store failures retain their retry semantics.
 func bootSeedArtifactFailure(err error) bool {
-	if errors.Is(err, ErrCheckpointKeyUnavailable) || errors.Is(err, cas.ErrUnavailable) {
+	if errors.Is(err, cas.ErrUnavailable) {
 		return false
 	}
 	if errors.Is(err, vm.ErrInvalidCheckpointContent) || errors.Is(err, errInvalidCheckpoint) || errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {

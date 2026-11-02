@@ -128,14 +128,12 @@ def compile_config(raw):
         raise ValueError('supply distinct operator-owned /dev/nbdN devices')
     worker = merge_owned(worker, {
         'CONTROL_PLANE_URL': 'http://127.0.0.1:58088' if reply_faults else 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
-        'CAS_URI': cp['CAS_URI'], 'PLATFORM_STORE_URI': cp['PLATFORM_STORE_URI'],
         'WORKER_ENROLLMENT_TOKEN_FILE': str(CONFIG / 'enrollment-token'),
         'WORKER_WORK_DIR': str(WORKER_DATA), 'WORKER_IMAGES_DIR': '/var/lib/helmr/images',
         'WORKER_HOST_SECRET_PATH': str(WORKER_DATA / 'worker-host-secret.json'),
         'JAILER_CHROOT_DIR': '/var/lib/helmr/jailer', 'JAILER_UID': '1001', 'JAILER_GID': '1001',
         'FIRECRACKER_PATH': '/usr/local/bin/firecracker', 'JAILER_PATH': '/usr/local/bin/jailer',
         'CPU_TEMPLATE_HELPER_PATH': '/usr/local/bin/cpu-template-helper',
-        'CHECKPOINT_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
     })
     dispatcher = {key: cp[key] for key in ['AUDIT_RETENTION_SECONDS', 'DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'APP_ORIGIN']}
     # The dispatcher admits scheduled and Slack Sessions under the same limits.

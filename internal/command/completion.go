@@ -146,6 +146,9 @@ func applyCompletion(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx
 	if reconcile && !p.releaseSafe {
 		return pgx.ErrNoRows
 	}
+	if err := requireHostCommand(ctx, tx, worker, uuid.UUID(p.environment.Bytes), uuid.UUID(p.command.Bytes)); err != nil {
+		return err
+	}
 	q := db.New(tx)
 	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: p.environment, CommandID: p.command})
 	if err != nil {

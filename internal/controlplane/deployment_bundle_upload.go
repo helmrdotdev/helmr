@@ -68,7 +68,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	response, err := planDeploymentBundleUploads(
-		r.Context(), s.cas, s.db, s.platformStore,
+		r.Context(), s.cas(principal.OrgID), s.db, s.platformStore,
 		strings.ToLower(principal.OrgID.String()), pgvalue.UUID(principal.OrgID), raw, manifest,
 	)
 	if err != nil {

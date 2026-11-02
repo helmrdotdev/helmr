@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/executionlimit"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -26,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -58,6 +60,14 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	signer, err := cass3.New(t.Context(), "s3://unused-cas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformSigner, err := cass3.NewImmutable(t.Context(), "s3://unused-platform")
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
 		Changes:                        dbnotify.New(),
 		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
@@ -70,9 +80,11 @@ func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 		DiagnosticDB:                   panicDatabase{},
 		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		Auth:                           identity.NewAPIKeyAuthenticator(store),
-		CAS:                            unusedUploadStore{},
+		CAS:                            func(uuid.UUID) cas.UploadStore { return unusedUploadStore{} },
 		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:                  unusedUploadStore{},
+		StorageObjects:                 func(org uuid.UUID) computer.WriteSigner { return signer.Organization(org) },
+		StoragePlatform:                platformSigner,
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
 		AuthKey:                        make([]byte, auth.RootKeySize),
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),

@@ -17,19 +17,23 @@ import (
 // RecordCheckpointManifest pins the manifest's objects and stores the
 // manifest on its checkpoint. The caller holds the capture locks.
 func RecordCheckpointManifest(ctx context.Context, tx pgx.Tx, env uuid.UUID, manifest computercheckpoint.Manifest, raw []byte) error {
+	var org uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, env).Scan(&org); err != nil {
+		return err
+	}
 	for _, o := range manifest.Objects() {
-		if _, err := tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, o.Digest, o.SizeBytes); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO cas_blobs(org_id,digest,size_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, org, o.Digest, o.SizeBytes); err != nil {
 			return err
 		}
 		var size int64
 		var available bool
-		if err := tx.QueryRow(ctx, `SELECT size_bytes,not_retired FROM cas_blobs WHERE digest=$1 FOR KEY SHARE`, o.Digest).Scan(&size, &available); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT size_bytes,not_retired FROM cas_blobs WHERE org_id=$1 AND digest=$2 FOR KEY SHARE`, org, o.Digest).Scan(&size, &available); err != nil {
 			return err
 		}
 		if size != o.SizeBytes || !available {
 			return ErrConflict
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO checkpoint_objects(environment_id,checkpoint_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`, env, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO checkpoint_objects(org_id,environment_id,checkpoint_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6,$7)`, org, env, manifest.CheckpointID, o.Role, o.Digest, o.SizeBytes, o.MediaType); err != nil {
 			return err
 		}
 	}
@@ -53,6 +57,9 @@ func PublishCheckpointObjects(ctx context.Context, tx pgx.Tx, env uuid.UUID, man
 		}
 		if !pinned {
 			return ErrConflict
+		}
+		if err := releaseFinishedUploads(ctx, tx, org, o.Digest); err != nil {
+			return err
 		}
 		if _, err := db.New(tx).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: o.Digest, SizeBytes: o.SizeBytes, MediaType: o.MediaType}); err != nil {
 			return err

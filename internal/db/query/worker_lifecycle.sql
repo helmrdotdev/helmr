@@ -188,6 +188,28 @@ SELECT worker_hosts.id, worker_hosts.resource_id,
    AND NOT EXISTS (SELECT 1 FROM completed)
 LIMIT 1;
 
+-- Fences every live host of the group as lost and revokes every unrevoked host
+-- secret. The caller holds the group's status mutation lock and row lock.
+-- name: RevokeWorkerGroupHostCredentials :many
+WITH target AS (
+    UPDATE worker_hosts
+       SET status = 'lost', claim_version = worker_hosts.claim_version + 1,
+           lost_at = COALESCE(worker_hosts.lost_at, now()), updated_at = now()
+     WHERE worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_hosts.status IN ('registering', 'active', 'draining')
+    RETURNING worker_hosts.id
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets
+       SET revoked_at = now()
+     WHERE worker_host_secrets.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
+)
+SELECT target.id
+  FROM target
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
+ ORDER BY target.id;
+
 -- name: ListWorkerGroupRetainedProfiles :many
 WITH retained_ids AS (
  SELECT l.environment_id,l.computer_id,l.epoch

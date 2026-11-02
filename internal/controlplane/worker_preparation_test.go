@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -194,6 +195,7 @@ type preparationHTTPPublication struct {
 	client   *workerclient.Client
 	executor workerapi.PreparationExecutor
 	store    testUploadStore
+	pool     *pgxpool.Pool
 }
 
 func (p preparationHTTPPublication) RegisterBatch(ctx context.Context, inspection []blockformat.ObjectInspection) error {
@@ -215,7 +217,10 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper; cfg.CAS = store }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.ComputerKeys = wrapper
+		cfg.CAS = everyOrganization[cas.UploadStore](store)
+	}))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	key, err := client.PreparationWriteKey(t.Context(), request)
@@ -249,7 +254,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer candidate.Close()
-	locator, err := candidate.Publish(t.Context(), preparationHTTPPublication{client: client, executor: request, store: store})
+	locator, err := candidate.Publish(t.Context(), preparationHTTPPublication{client: client, executor: request, store: store, pool: f.Pool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +345,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 				}
 			}
-			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store }))
+			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = everyOrganization[cas.UploadStore](store) }))
 			defer server.Close()
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
@@ -395,7 +400,10 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secretID)
 	opener := &preparationSecretOpener{opener: secrets, after: func() { t.Error("seed-only preparation decrypted a Secret") }}
 	store := &sessionBundleStore{bundleUploadStoreFixture: &bundleUploadStoreFixture{objects: map[string]cas.Object{digest: {Digest: digest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType}}}, body: raw}
-	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store; cfg.SecretDelivery = opener }))
+	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.CAS = everyOrganization[cas.UploadStore](store)
+		cfg.SecretDelivery = opener
+	}))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	start, err := client.PreparationStart(t.Context(), request)

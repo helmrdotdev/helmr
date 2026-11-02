@@ -105,6 +105,27 @@ func lockRuntimeProcessAuthority(ctx context.Context, tx pgx.Tx, host workergrou
 	return runtimeProcessAuthorityWithOwnerLocked(ctx, tx, e, allowStopped, owner)
 }
 
+// requireHostedSession returns ErrDenied, for a missing Session as for any
+// other, unless the Session process's current lease is held by the
+// authenticated host epoch. It reads without locking, so a
+// Session of another host, group or organization is neither locked nor
+// distinguishable from a missing one. lockRuntimeHost applies it before any
+// Session, Slack or Computer row is locked; the authority checks after those
+// locks still decide whether this host may act now.
+func requireHostedSession(ctx context.Context, tx pgx.Tx, e Execution) error {
+	var hosted bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p
+ JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
+ WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5)`,
+		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.WorkerHostID, e.WorkerEpoch).Scan(&hosted); err != nil {
+		return err
+	}
+	if !hosted {
+		return ErrDenied
+	}
+	return nil
+}
+
 // Supply and Session/Computer ownership are already locked in this transaction.
 // This query still checks physical identity and wall-clock expiry after waits.
 func runtimeProcessAuthorityWithOwnerLocked(ctx context.Context, tx pgx.Tx, e Execution, allowStopped bool, owner owners) (RuntimeAuthority, error) {

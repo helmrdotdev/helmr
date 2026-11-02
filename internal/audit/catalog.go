@@ -93,6 +93,7 @@ var definitions = []Definition{
 	{"slack_user.unlinked", "slack_user_link", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"worker_group.created", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"worker_group.token_rotated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.host_credentials_revoked", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"worker_group.activated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"worker_group.paused", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"worker_group.drain_started", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},

@@ -29,10 +29,10 @@ type SaveObjectStore interface {
 // committed publication can be reconciled separately after that owner is fenced.
 type SavePublisher struct {
 	pool    db.TxBeginner
-	objects SaveObjectStore
+	objects func(org uuid.UUID) SaveObjectStore
 }
 
-func NewSavePublisher(pool db.TxBeginner, objects SaveObjectStore) (*SavePublisher, error) {
+func NewSavePublisher(pool db.TxBeginner, objects func(org uuid.UUID) SaveObjectStore) (*SavePublisher, error) {
 	if pool == nil || objects == nil {
 		return nil, errors.New("save database and object store are required")
 	}
@@ -114,12 +114,13 @@ func (p *SavePublisher) CertifyBatch(ctx context.Context, ref SavePublication, i
 		return err
 	}
 	var committed bool
+	var org uuid.UUID
 	err = db.RunTx(ctx, p.pool, func(tx pgx.Tx) error {
 		scope, state, err := lockSaveStorage(ctx, tx, ref)
 		if err != nil {
 			return err
 		}
-		committed = state == "published"
+		committed, org = state == "published", pgvalue.MustUUIDValue(scope.orgID)
 		for _, inspection := range inspections {
 			if committed {
 				err = scope.verifyCertified(ctx, tx, inspection)
@@ -135,7 +136,7 @@ func (p *SavePublisher) CertifyBatch(ctx context.Context, ref SavePublication, i
 	if err != nil || committed {
 		return hideMissing(err)
 	}
-	stored, err := verifySaveBatch(ctx, p.objects, inspections)
+	stored, err := verifySaveBatch(ctx, p.objects(org), inspections)
 	if err != nil {
 		return err
 	}
@@ -273,6 +274,9 @@ func lockSaveIdentity(ctx context.Context, tx pgx.Tx, ref SavePublication) (save
 		return s, "", ErrInvalidInput
 	}
 	if err := LockHost(ctx, tx, ref.Host); err != nil {
+		return s, "", err
+	}
+	if err := RequireHostSave(ctx, tx, ref.Host, ref.EnvironmentID, ref.SaveID); err != nil {
 		return s, "", err
 	}
 	s.environmentID, s.saveID, s.leaseEpoch = pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.SaveID), ref.LeaseEpoch

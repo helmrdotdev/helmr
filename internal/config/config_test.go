@@ -463,7 +463,6 @@ func setControlPlaneExecutionEnv(t *testing.T) {
 func setWorkerRuntimeEnv(t *testing.T) {
 	t.Helper()
 	setWorkerEnrollmentEnv(t)
-	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-runtime")
 	t.Setenv("WORKER_NETWORK_LINK_POOL", "169.254.64.0/18")
 	t.Setenv("WORKER_NETWORK_TRANSLATION_POOL", "100.96.0.0/16")
 	t.Setenv("WORKER_NETWORK_RESOLVER_IPV4", "1.1.1.1")
@@ -488,19 +487,8 @@ func setValidWorkerEnv(t *testing.T) {
 	t.Helper()
 	setWorkerRuntimeEnv(t)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")
-}
-
-func TestLoadWorkerRequiresPlatformStore(t *testing.T) {
-	setValidWorkerEnv(t)
-	t.Setenv("PLATFORM_STORE_URI", "")
-	if _, err := LoadWorker(); err == nil ||
-		!strings.Contains(err.Error(), "PLATFORM_STORE_URI") {
-		t.Fatalf("error = %v", err)
-	}
 }
 
 func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
@@ -520,8 +508,6 @@ func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	setWorkerRuntimeEnv(t)
 	t.Setenv("CONTROL_PLANE_URL", " https://api.example.test ")
-	t.Setenv("CAS_URI", "\ns3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
 	t.Setenv("WORKER_POOL_NAME", "execution-v0")
@@ -554,7 +540,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.ImagesDir != "/var/lib/helmr/images" {
+	if cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.WorkerPoolName != "execution-v0" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
@@ -564,12 +550,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 		t.Fatalf("blocked IPv4 CIDRs = %v", cfg.NetworkBlockedIPv4CIDRs)
 	}
 	if cfg.JailerPath != "/usr/bin/jailer" || cfg.MkfsExt4Path != "/opt/helmr/bin/mkfs.ext4" || cfg.Mke2fsConfigPath != "/opt/helmr/etc/mke2fs.conf" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 0 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
-		t.Fatalf("config = %+v", cfg)
-	}
-	if cfg.PlatformStoreURI != "s3://helmr-runtime" {
-		t.Fatalf("config = %+v", cfg)
-	}
-	if !bytes.Equal(cfg.CheckpointKey, make([]byte, 32)) {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
