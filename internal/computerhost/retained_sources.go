@@ -30,6 +30,21 @@ func (p *PreparedMachines) retainCheckpointSource(key reservation.Key) error {
 	return nil
 }
 
+// RequestCheckpointRelease lets a waiting assignment displace only a source
+// retained after durable publication. Its owner still performs physical cleanup.
+func (o *ComputerAllocationOwner) RequestCheckpointRelease() bool {
+	p := o.machines
+	p.optional.mu.Lock()
+	defer p.optional.mu.Unlock()
+	source := p.optional.sources[instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)]
+	if source == nil {
+		return false
+	}
+	source.stop = true
+	o.workWake.notify()
+	return true
+}
+
 func (p *PreparedMachines) retainedSourceReclaimRequested(key reservation.Key) bool {
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()

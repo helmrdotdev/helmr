@@ -54,9 +54,10 @@ type AgentComputerSaveAbsenceRequest struct {
 // Continuation failures preserve reconciliation distinctions. None authorizes
 // replaying an uncertain physical operation; the owner must inspect its attempt.
 const (
-	AgentComputerAuthorityUnavailable = "computer_authority_unavailable"
-	AgentComputerNotReady             = "computer_not_ready"
-	AgentComputerEvidenceConflict     = "computer_evidence_conflict"
+	AgentComputerAuthorityUnavailable   = "computer_authority_unavailable"
+	AgentComputerSourceCapacityAssigned = "computer_source_capacity_assigned"
+	AgentComputerNotReady               = "computer_not_ready"
+	AgentComputerEvidenceConflict       = "computer_evidence_conflict"
 )
 
 type AgentComputerControlsResponse struct {

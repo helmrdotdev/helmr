@@ -70,6 +70,10 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 // public caller can supply this installation: worker authentication owns it.
 func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
 	if r.State == "ready" {
+		// A competing grant must end same-host retries even if local demand disappeared.
+		if err := computer.RequireRetainedHostCapacity(ctx, tx, env, r.Computer, r.SourceEpoch); err != nil {
+			return err
+		}
 		var runnable bool
 		if err := tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, env, r.Computer).Scan(&runnable); err != nil {
 			return err
@@ -81,9 +85,6 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, limits executionlimit.L
 			if errors.Is(err, computer.ErrExecutionSettling) {
 				return ErrNotReady
 			}
-			return err
-		}
-		if err := computer.RequireRetainedHostCapacity(ctx, tx, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 	}

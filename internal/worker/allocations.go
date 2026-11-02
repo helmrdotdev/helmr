@@ -27,17 +27,18 @@ type AllocationOwner interface {
 // AllocationConsumer bounds retained custody separately from physical capacity.
 // The reservation ledger remains the authority for VM and quarantine resources.
 type AllocationConsumer struct {
-	wake    chan struct{}
-	ready   chan struct{}
-	client  AllocationDiscovery
-	create  func(workerapi.AllocationIdentity, func(context.Context) error) (AllocationOwner, error)
-	limit   int
-	poll    time.Duration
-	mu      sync.Mutex
-	wakeMu  sync.RWMutex // Owner wake snapshots must not wait behind discovery RPCs.
-	entries map[workerapi.AllocationIdentity]AllocationOwner
-	pending []workerapi.AllocationIdentity
-	after   *workerapi.AllocationIdentity
+	wake      chan struct{}
+	ready     chan struct{}
+	client    AllocationDiscovery
+	create    func(workerapi.AllocationIdentity, func(context.Context) error) (AllocationOwner, error)
+	limit     int
+	poll      time.Duration
+	mu        sync.Mutex
+	wakeMu    sync.RWMutex // Owner wake snapshots must not wait behind discovery RPCs.
+	entries   map[workerapi.AllocationIdentity]AllocationOwner
+	pending   []workerapi.AllocationIdentity
+	releasing workerapi.AllocationIdentity
+	after     *workerapi.AllocationIdentity
 }
 
 func NewAllocationConsumer(client AllocationDiscovery, limit int, poll time.Duration, create func(workerapi.AllocationIdentity, func(context.Context) error) (AllocationOwner, error)) (*AllocationConsumer, error) {
@@ -91,6 +92,17 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 		}
 		previous = &identity
 	}
+	// Discovery still runs when all claim goroutines are occupied. A parked
+	// Computer can yield here; waiting for the next Claim would require the
+	// very owner slot that the parked Computer is holding.
+	if len(c.entries) == c.limit {
+		for _, waiting := range page.Allocations {
+			if waiting.Kind != "seed" && c.entries[waiting] == nil {
+				c.requestCheckpointRelease(waiting)
+				break
+			}
+		}
+	}
 	for _, identity := range page.Allocations {
 		if c.entries[identity] != nil || len(c.pending) >= c.limit {
 			continue
@@ -107,6 +119,25 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 	last := page.Allocations[len(page.Allocations)-1]
 	c.after = &last
 	return nil
+}
+
+func (c *AllocationConsumer) requestCheckpointRelease(waiting workerapi.AllocationIdentity) {
+	type checkpointSource interface{ RequestCheckpointRelease() bool }
+	// Reuse the previous victim while it is cleaning up. If it won a
+	// concurrent promotion and is no longer retained, choose another source.
+	if owner := c.entries[c.releasing]; owner != nil {
+		if owner.Finished() || owner.(checkpointSource).RequestCheckpointRelease() {
+			return
+		}
+	}
+	for id, owner := range c.entries {
+		if parked, ok := owner.(checkpointSource); ok && parked.RequestCheckpointRelease() {
+			c.releasing = id
+			slog.Info("Requested checkpoint source release for waiting allocation",
+				"retained_allocation_id", id.AllocationID, "waiting_allocation_id", waiting.AllocationID)
+			return
+		}
+	}
 }
 
 func allocationAfter(a, b workerapi.AllocationIdentity) bool {

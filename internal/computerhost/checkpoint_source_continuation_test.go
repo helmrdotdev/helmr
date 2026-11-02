@@ -87,10 +87,11 @@ func TestCheckpointDemandResumesSourceAfterReservationWithoutLosingDiskCut(t *te
 
 type rejectedSourceReservation struct {
 	AllocatedComputerClient
-	rejected      chan struct{}
-	once          sync.Once
-	notReadyFirst bool
-	calls         int
+	rejected       chan struct{}
+	once           sync.Once
+	notReadyFirst  bool
+	competingGrant bool
+	calls          int
 }
 
 func (c *rejectedSourceReservation) ValidateAgentComputerSourceAbort(context.Context, workerapi.AgentComputerInstallationRequest) error {
@@ -99,6 +100,9 @@ func (c *rejectedSourceReservation) ValidateAgentComputerSourceAbort(context.Con
 		return &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerNotReady}
 	}
 	c.once.Do(func() { close(c.rejected) })
+	if c.competingGrant {
+		return &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerSourceCapacityAssigned}
+	}
 	return &httpclient.Error{StatusCode: 409, Code: workerapi.AgentComputerEvidenceConflict}
 }
 
@@ -118,8 +122,8 @@ func (p *publicationAfterReservationRejection) Publish(ctx context.Context, d ca
 	return p.ImmutableStore.Publish(ctx, d, f)
 }
 func TestCheckpointReservationRejectionFinishesSuccessfulCut(t *testing.T) {
-	for _, notReadyFirst := range []bool{false, true} {
-		t.Run(fmt.Sprint(notReadyFirst), func(t *testing.T) {
+	for _, mode := range []string{"rejected", "retry-then-rejected", "competing-grant"} {
+		t.Run(mode, func(t *testing.T) {
 			o, c, m, _ := checkpointPipelineFixture(t, "", "")
 			f := &allocationContinuationFixture{AllocatedComputerClient: c, t: t, target: o.identity, source: true, scenario: "joined-uncut"}
 			m.control = &agentControlMachine{handle: func(stream net.Conn) {
@@ -134,7 +138,7 @@ func TestCheckpointReservationRejectionFinishesSuccessfulCut(t *testing.T) {
 				f.handle(stream)
 			}}
 			rejected := make(chan struct{})
-			o.client = &rejectedSourceReservation{AllocatedComputerClient: f, rejected: rejected, notReadyFirst: notReadyFirst}
+			o.client = &rejectedSourceReservation{AllocatedComputerClient: f, rejected: rejected, notReadyFirst: mode == "retry-then-rejected", competingGrant: mode == "competing-grant"}
 			o.machines.ComputerObjects = &publicationAfterReservationRejection{ImmutableStore: o.machines.ComputerObjects, rejected: rejected, demand: func() { c.workPending.Store(true); o.Wake() }}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
