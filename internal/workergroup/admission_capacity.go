@@ -142,19 +142,21 @@ type ExecutionPlacement struct {
 	confirmed bool
 }
 
-// ReadExecutionPlacement runs under the region supply gate. An already blocked
-// claim remains visible, but does not forbid unrelated work that preserves every
-// currently feasible claim.
-func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID) (ExecutionPlacement, error) {
+// ReadExecutionPlacement runs under the region supply gate and plans the
+// target's capacity in the environment's region. An already blocked claim
+// remains visible, but does not forbid unrelated work that preserves every
+// currently feasible claim. Work on one target never counts against another.
+func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID, target Target) (ExecutionPlacement, error) {
 	var pending bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id WHERE c.execution_deadline_at>clock_timestamp() AND p.default_region_id=(SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1))`, env).Scan(&pending); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id WHERE c.execution_deadline_at>clock_timestamp() AND c.worker_group_id IS NOT DISTINCT FROM $2::uuid AND p.default_region_id=(SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1))`, env, target.Group).Scan(&pending); err != nil {
 		return ExecutionPlacement{}, err
 	}
 	if !pending {
 		return ExecutionPlacement{}, nil
 	}
 	var group uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT g.id FROM worker_groups g JOIN projects p ON p.default_region_id=g.region_id JOIN environments e ON e.project_id=p.id WHERE e.id=$1 AND g.status='active'`, env).Scan(&group)
+	err := tx.QueryRow(ctx, `SELECT g.id FROM environments e JOIN projects project ON project.id=e.project_id CROSS JOIN LATERAL (SELECT $2::uuid worker_group_id) target
+ JOIN worker_groups g ON g.status='active' AND `+db.ServesTargetSQL+` WHERE e.id=$1`, env, target.Group).Scan(&group)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExecutionPlacement{}, ErrCapacityUnavailable
 	}
@@ -225,8 +227,8 @@ func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimi
 // RequireExecutionPlacement compares the same serialized supply before and after
 // mutation. A new candidate must place; already accepted feasible claims may not
 // be displaced. A claim fulfilled by physical allocation may leave pending demand.
-func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env, candidate uuid.UUID, before ExecutionPlacement) error {
-	after, err := ReadExecutionPlacement(ctx, tx, limits, env)
+func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env uuid.UUID, target Target, candidate uuid.UUID, before ExecutionPlacement) error {
+	after, err := ReadExecutionPlacement(ctx, tx, limits, env, target)
 	if err != nil {
 		return err
 	}

@@ -24,7 +24,11 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, true)
+		target, err := workergroup.ComputerTarget(ctx, tx, env, computerID)
+		if err != nil {
+			return err
+		}
+		supply, err := lockAllocationSupply(ctx, tx, env, host, target, true)
 		if err != nil {
 			return err
 		}
@@ -32,7 +36,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env, target)
 		if err != nil {
 			return err
 		}
@@ -92,7 +96,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, target, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

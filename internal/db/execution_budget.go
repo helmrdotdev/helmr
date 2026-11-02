@@ -39,8 +39,11 @@ type PendingExecutionClaim struct {
 	CPU, Memory, CreditCPU, CreditMemory, CreditScratch, CreditStart int64
 }
 
+// ReadPendingExecutionClaims returns the claims of the Computers group serves.
 func ReadPendingExecutionClaims(ctx context.Context, q DBTX, group uuid.UUID) ([]PendingExecutionClaim, error) {
-	rows, err := q.Query(ctx, `SELECT c.* FROM (`+PendingExecutionClaimsSQL+`) c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id WHERE g.id=$1`, group)
+	rows, err := q.Query(ctx, `SELECT c.* FROM (`+PendingExecutionClaimsSQL+`) c JOIN computers computer ON (computer.environment_id,computer.id)=(c.environment_id,c.computer_id)
+ JOIN environments e ON e.id=c.environment_id JOIN projects project ON project.id=e.project_id JOIN worker_groups g ON g.id=$1
+ CROSS JOIN LATERAL (SELECT computer.worker_group_id) target WHERE `+ServesTargetSQL, group)
 	if err != nil {
 		return nil, err
 	}

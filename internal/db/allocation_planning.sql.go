@@ -56,7 +56,7 @@ WITH RECURSIVE held AS (
  UNION
  SELECT s.environment_id,s.id,true FROM sessions s JOIN held h ON h.environment_id=s.environment_id AND h.session_id=s.parent_session_id AND h.propagates
 ), demand AS (
- SELECT p.environment_id,p.id owner_id,'preparation'::text kind,d.cpu_millis,d.memory_bytes,
+ SELECT p.environment_id,p.id owner_id,'preparation'::text kind,NULL::uuid pinned_worker_group_id,d.cpu_millis,d.memory_bytes,
  NULL::uuid required_worker_group_id,''::text required_vm_platform_id,0::integer required_vm_vcpu_count,
  ''::text required_cpu_config_digest,0::bigint required_cpu_millis,0::bigint required_memory_bytes,
  0::bigint required_scratch_bytes
@@ -66,7 +66,7 @@ WITH RECURSIVE held AS (
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
  WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.revoked_at IS NOT NULL)
  UNION ALL
- SELECT c.environment_id,c.id,'computer',c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
+ SELECT c.environment_id,c.id,'computer',c.worker_group_id,c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
  COALESCE(source.vm_vcpu_count,0),COALESCE(source.cpu_config_digest,''),COALESCE(source.reserved_cpu_millis,0),
  COALESCE(source.reserved_memory_bytes,0),COALESCE(source.reserved_scratch_bytes,0)
  FROM computers c
@@ -85,7 +85,7 @@ WITH RECURSIVE held AS (
   AND NOT EXISTS(SELECT 1 FROM held WHERE held.environment_id=s.environment_id AND held.session_id=s.id)))
  )
 )
-SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, ($1::bigint-usage.cpu)::bigint remaining_cpu_millis,
+SELECT d.environment_id, d.owner_id, d.kind, d.pinned_worker_group_id, d.cpu_millis, d.memory_bytes, d.required_worker_group_id, d.required_vm_platform_id, d.required_vm_vcpu_count, d.required_cpu_config_digest, d.required_cpu_millis, d.required_memory_bytes, d.required_scratch_bytes, ($1::bigint-usage.cpu)::bigint remaining_cpu_millis,
  ($2::bigint-usage.memory)::bigint remaining_memory_bytes,
  ($3::bigint-usage.residents)::bigint remaining_residents
 FROM demand d JOIN environments e ON e.id=d.environment_id
@@ -106,7 +106,9 @@ CROSS JOIN LATERAL (
  started_at IS NULL
  FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE environment_id=e.id AND kind NOT IN ('seed','retained')
 ) usage
-WHERE (EXISTS (
+WHERE EXISTS(SELECT 1 FROM worker_groups serving WHERE serving.id=$5
+ AND (serving.id=d.pinned_worker_group_id OR (d.pinned_worker_group_id IS NULL AND serving.owner_org_id IS NULL AND serving.region_id=project_scope.default_region_id)))
+AND (EXISTS (
   SELECT 1 FROM worker_groups target_group
   JOIN worker_pools pool ON pool.worker_group_id=target_group.id AND pool.status='active'
   JOIN worker_pool_cpu_shapes shape ON shape.worker_pool_id=pool.id
@@ -138,6 +140,7 @@ type ListAllocationPlanningDemandRow struct {
 	EnvironmentID           pgtype.UUID `json:"environment_id"`
 	OwnerID                 pgtype.UUID `json:"owner_id"`
 	Kind                    string      `json:"kind"`
+	PinnedWorkerGroupID     pgtype.UUID `json:"pinned_worker_group_id"`
 	CpuMillis               int64       `json:"cpu_millis"`
 	MemoryBytes             int64       `json:"memory_bytes"`
 	RequiredWorkerGroupID   pgtype.UUID `json:"required_worker_group_id"`
@@ -174,6 +177,7 @@ func (q *Queries) ListAllocationPlanningDemand(ctx context.Context, arg ListAllo
 			&i.EnvironmentID,
 			&i.OwnerID,
 			&i.Kind,
+			&i.PinnedWorkerGroupID,
 			&i.CpuMillis,
 			&i.MemoryBytes,
 			&i.RequiredWorkerGroupID,

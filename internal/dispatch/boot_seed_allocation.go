@@ -38,7 +38,7 @@ func (a *Allocator) AllocateBootSeed(ctx context.Context, env, id, host uuid.UUI
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, true)
+		supply, err := lockAllocationSupply(ctx, tx, env, host, workergroup.Target{}, true)
 		if err != nil {
 			return err
 		}

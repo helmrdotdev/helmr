@@ -299,6 +299,9 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				if profile != definition.ComputerSeedProfile {
 					return ErrInvalidInput
 				}
+				if err = requireComputerPlacement(ctx, tx, req.EnvironmentID, deployment, agentID, computerID); err != nil {
+					return err
+				}
 			}
 		}
 		if hasInput {
@@ -484,4 +487,26 @@ func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computerID uu
 		return computer.ErrSecretUnavailable
 	}
 	return computer.MarkUsed(ctx, tx, env, computerID)
+}
+
+// requireComputerPlacement admits an existing Computer, including a caller's,
+// only when it runs on the capacity the Agent's template placement resolves
+// to, so placement holds across delegation and explicit reuse.
+func requireComputerPlacement(ctx context.Context, tx pgx.Tx, env, deployment, agentID, computerID uuid.UUID) error {
+	var template uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT template_id FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, env, agentID, deployment).Scan(&template); err != nil {
+		return err
+	}
+	want, err := workergroup.ResolveTemplatePlacement(ctx, tx, env, deployment, template)
+	if err != nil {
+		return err
+	}
+	pinned, err := workergroup.ComputerTarget(ctx, tx, env, computerID)
+	if err != nil {
+		return err
+	}
+	if !pinned.Equal(want) {
+		return workergroup.ErrComputerPlacement
+	}
+	return nil
 }

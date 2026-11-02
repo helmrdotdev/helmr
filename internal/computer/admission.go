@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -64,8 +65,15 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, configure
 	if reserved > limits.MaxReservedStorageBytes-disk.SeedCapacity {
 		return uuid.Nil(), ErrNotReady
 	}
+	// The pin is resolved once, before the first allocation, and never moves.
+	target, err := workergroup.ResolveTemplatePlacement(ctx, tx, env, deployment, template)
+	if err != nil {
+		return uuid.Nil(), err
+	}
 	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond')`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, ComputerPreparationTimeout.Milliseconds()); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,worker_group_id,pin_org_id,pin_project_id,pin_region_id)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',g.id,g.owner_org_id,CASE WHEN g.id IS NOT NULL THEN e.project_id END,g.region_id
+ FROM environments e LEFT JOIN worker_groups g ON g.id=$11 WHERE e.id=$1`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, ComputerPreparationTimeout.Milliseconds(), target.Group); err != nil {
 		return uuid.Nil(), err
 	}
 	if explicit == nil {

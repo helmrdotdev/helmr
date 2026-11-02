@@ -213,7 +213,11 @@ func ValidateComputerSourceAbort(ctx context.Context, limits executionlimit.Limi
 		if r.State != "capturing" && r.State != "sealed" && r.State != "ready" && r.State != "aborting" && r.State != "consumed" {
 			return ErrNotReady
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env)
+		target, err := workergroup.ComputerTarget(ctx, tx, env, r.Computer)
+		if err != nil {
+			return err
+		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env, target)
 		if err != nil {
 			return err
 		}
@@ -239,7 +243,7 @@ func ValidateComputerSourceAbort(ctx context.Context, limits executionlimit.Limi
 		if err := computer.BeginSourceAbort(ctx, tx, env, r.Computer, checkpoint, p.GetDesiredVersion(), identity); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, target, uuid.Nil(), before)
 	}))
 }
 
