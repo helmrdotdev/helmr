@@ -289,7 +289,7 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, workergroup.ErrCapacityUnavailable):
 		s.writeOperationError(w, r, unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true}))
 	case errors.Is(err, workergroup.ErrCapacityIncompatible):
-		s.writeOperationError(w, r, conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()}))
+		s.writeOperationError(w, r, capacityIncompatibleError(err))
 	case errors.Is(err, workergroup.ErrCapacityExhausted):
 		s.writeOperationError(w, r, conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()}))
 	case errors.Is(err, computer.ErrExecutionLimit):

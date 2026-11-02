@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 const (
@@ -218,6 +219,7 @@ func deploymentError(err error) error {
 		return badRequest(codedError{code: "invalid_runtime_mcp_policy", message: err.Error()})
 	}
 	var input deployment.InputError
+	var unbound workergroup.UnboundPlacementsError
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
@@ -227,6 +229,8 @@ func deploymentError(err error) error {
 		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
+	case errors.As(err, &unbound):
+		return conflict(codedError{code: "placements_unbound", message: unbound.Error()})
 	case errors.Is(err, computer.ErrNotReady):
 		return conflict(codedError{code: "preparation_unavailable", message: "An unusable preparation still owns this environment image; retry the operation after its cleanup"})
 	case errors.Is(err, computer.ErrSecretUnavailable):
