@@ -262,7 +262,7 @@ func TestGrantAuditAtMaximumSelectedAgentSize(t *testing.T) {
 	}
 }
 
-func TestGroupMembershipNeedsRecentProofOnlyWhenTheGroupCarriesAssignments(t *testing.T) {
+func TestGroupMembershipNeedsRecentProofOnlyToJoinAGroupWithAssignments(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	stale := f.owner
@@ -294,10 +294,7 @@ func TestGroupMembershipNeedsRecentProofOnlyWhenTheGroupCarriesAssignments(t *te
 	if err = org.SetPermissionGroupMember(ctx, f.pool, f.owner, group.ID, f.member.MemberID, true); err != nil {
 		t.Fatal(err)
 	}
-	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, false); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatal("stale sign-in removed a member from an assigned Group", err)
-	}
-	if err = org.SetPermissionGroupMember(ctx, f.pool, f.owner, group.ID, f.member.MemberID, false); err != nil {
-		t.Fatal(err)
+	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, false); err != nil {
+		t.Fatal("removing from an assigned Group required recent sign-in", err)
 	}
 }

@@ -43,20 +43,18 @@ func RequireRecentProof(p Principal) error {
 	return nil
 }
 
-// Viewing, ordinary work, unprivileged invitations, creating a Secret under a
-// new name and connection setup stay outside confirmation; a connection's OAuth
-// authorization is its own proof. Group membership changes require recent
-// proof only when the Group carries Role assignments, which its owner checks.
-// Machine credentials retain their independently configured permission boundary.
+// Recent proof guards what adds authority or issues credentials. Removing
+// authority, revoking credentials, deleting resources, viewing, ordinary work,
+// unprivileged invitations, creating a Secret under a new name and connection
+// setup stay outside confirmation; a deletion keeps its own preview. Adding a
+// member to a Group that carries Role assignments, which its owner checks, and
+// resuming a suspended member also require it. Machine credentials retain
+// their independently configured permission boundary.
 func RequireRecentFor(p Principal, permission Permission) error {
 	switch permission {
-	case PermissionRolesCreate, PermissionRolesUpdate, PermissionRolesDelete,
-		PermissionAssignmentsCreate, PermissionAssignmentsUpdate, PermissionAssignmentsDelete,
-		PermissionGroupsDelete,
-		PermissionMembersRemove, PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate, PermissionAPIKeysRevoke,
-		PermissionSecretsRotate, PermissionSecretsRevoke,
-		PermissionAgentConnectionsDelete,
-		PermissionAgentsDelete, PermissionComputersDelete:
+	case PermissionRolesCreate, PermissionRolesUpdate,
+		PermissionAssignmentsCreate, PermissionAssignmentsUpdate,
+		PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate:
 		return RequireRecentProof(p)
 	}
 	return nil

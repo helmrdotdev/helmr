@@ -14,7 +14,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrUserLinkDenied = errors.New("the Slack identity link is unavailable for this account")
+var ErrUserLinkDenied = errors.New("this Helmr account cannot link Slack here: it needs a browser sign-in, membership and Agent access in this workspace, and a connected workspace")
+
+// ErrUserLinkExpired covers what starting again fixes: the confirmation expired
+// or was used, or the browser or signed-in account changed.
+var ErrUserLinkExpired = errors.New("the Slack linking request expired or your Helmr sign-in changed; start linking again")
 var ErrUserLinkConflict = errors.New("this Slack identity or Helmr account already has a different link in this workspace; unlink that account first")
 
 type UserLink struct {
@@ -127,7 +131,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		return ErrUserLinkDenied
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		current, err := linkConsentPrincipal(ctx, tx, actor, org, user)
+		current, err := linkBrowserPrincipal(ctx, tx, actor, org, user)
 		if err != nil {
 			return err
 		}
@@ -140,7 +144,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
  AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id`,
 			consent.ID, consent.BrowserHash, current.SessionID, installation, org, member, user, identity.TeamID, identity.SlackUserID).Scan(&consumed)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrUserLinkDenied
+			return ErrUserLinkExpired
 		}
 		if err != nil {
 			return err
@@ -204,21 +208,11 @@ func UnlinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 	})
 }
 
-// Consent is issued from a live browser proof under the same account root lock
-// as source retirement and revoke-all. The resulting link is independent of it.
-func linkConsentPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org, user uuid.UUID) (auth.Principal, error) {
-	p, err := linkBrowserPrincipal(ctx, tx, e, org, user)
-	if err != nil {
-		return p, err
-	}
-	if !auth.ProvedRecently(p.AuthenticatedAt, time.Now()) {
-		return p, ErrUserLinkDenied
-	}
-	return p, nil
-}
-
 // linkBrowserPrincipal loads this account's live browser session under the
-// account root lock.
+// account root lock shared with source retirement and revoke-all. Linking needs
+// the live session, not recent proof: Slack OpenID proves the Slack identity,
+// the person confirms both accounts, and a Slack principal never reaches an
+// action that requires recent proof. The resulting link is independent of it.
 func linkBrowserPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org, user uuid.UUID) (auth.Principal, error) {
 	if e.Authentication.CredentialKind != "login_session" || e.Authentication.CredentialID == uuid.Nil() {
 		return auth.Principal{}, ErrUserLinkDenied
@@ -234,8 +228,11 @@ func linkBrowserPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org,
 	if err != nil {
 		return p, err
 	}
-	if p.UserID != user || p.Channel != "browser" {
+	if p.Channel != "browser" {
 		return p, ErrUserLinkDenied
+	}
+	if p.UserID != user {
+		return p, ErrUserLinkExpired
 	}
 	return p, nil
 }
@@ -252,7 +249,7 @@ func PrepareUserLink(ctx context.Context, pool db.TxBeginner, actor audit.Eviden
 		return uuid.Nil(), ErrUserLinkDenied
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		p, err := linkConsentPrincipal(ctx, tx, actor, org, user)
+		p, err := linkBrowserPrincipal(ctx, tx, actor, org, user)
 		if err != nil {
 			return err
 		}

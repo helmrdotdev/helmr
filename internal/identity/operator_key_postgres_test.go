@@ -178,6 +178,33 @@ func TestOperatorAddsKeyThroughItsOwnSession(t *testing.T) {
 	}
 }
 
+// The key a session signed in with is refused as such, whatever the proof age,
+// so confirming again with that key cannot loop.
+func TestOperatorCannotRemoveTheKeyItSignedInWith(t *testing.T) {
+	f := newIdentityFixture(t)
+	wa := testWebAuthn(t)
+	issued, err := IssueOperatorEnrollment(t.Context(), f.pool, "Operator", uuid.Nil())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := newTestPasskey(t)
+	installOperatorKey(t, f, wa, issued, key, "Key")
+	p, _, err := AuthenticateOperator(t.Context(), f.pool, f.cfg, signInOperator(t, f, wa, key, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = RemoveOperatorKey(t.Context(), f.pool, f.cfg, p, p.PasskeyID); !errors.Is(err, ErrCurrentOperatorKey) {
+		t.Fatal("recent session removed its own key", err)
+	}
+	f.exec(t, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '3 hours',authenticated_at=clock_timestamp()-interval '3 hours' WHERE id=$1`, p.SessionID)
+	if err = RemoveOperatorKey(t.Context(), f.pool, f.cfg, p, p.PasskeyID); !errors.Is(err, ErrCurrentOperatorKey) {
+		t.Fatal("stale session was asked to confirm removing its own key", err)
+	}
+	if err = RemoveOperatorKey(t.Context(), f.pool, f.cfg, p, uuid.NewV7()); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatal("stale session removed another key", err)
+	}
+}
+
 func TestOperatorConfirmationExtendsTheSameSession(t *testing.T) {
 	f := newIdentityFixture(t)
 	wa := testWebAuthn(t)

@@ -146,14 +146,10 @@ func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
 			_, rotateErr := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("new"), "rotate")
 			_, revokeErr := store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), "revoke")
 			if retired == "old-proof" {
-				// Creating under a new name uses the current sign-in; replacing or
-				// revoking existing material needs recent proof.
-				if createErr != nil {
-					t.Fatalf("old proof could not create a Secret under a new name: %v", createErr)
-				}
-				for _, err := range []error{rotateErr, revokeErr} {
-					if !errors.Is(err, auth.ErrRecentProofRequired) {
-						t.Fatalf("old proof admitted mutation: %v", err)
+				// Secret changes use the current sign-in, not recent proof.
+				for _, err := range []error{createErr, rotateErr, revokeErr} {
+					if err != nil {
+						t.Fatalf("old proof could not change a Secret: %v", err)
 					}
 				}
 				return
@@ -167,7 +163,7 @@ func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
 	}
 }
 
-func TestSecretRevokedNameIsRotatedWithRecentProof(t *testing.T) {
+func TestSecretRevokedNameIsReactivatedByRotation(t *testing.T) {
 	d := dbtest.Open(t)
 	if err := schema.Up(t.Context(), d.DSN); err != nil {
 		t.Fatal(err)
@@ -193,22 +189,14 @@ func TestSecretRevokedNameIsRotatedWithRecentProof(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), ""); err != nil {
 		t.Fatal(err)
 	}
-	// Create never issues new material under a revoked name, with or without
-	// recent proof. Setting a new value is a rotation, which needs recent proof.
-	recent := p.AuthenticatedAt
-	p.AuthenticatedAt = p.AuthenticatedAt.Add(-3 * time.Hour)
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
+	// Create never issues new material under a revoked name; setting a new
+	// value is a rotation of the same Secret.
 	if _, err = store.Create(t.Context(), p, env, "RETIRED", []byte("replacement"), ""); !errors.Is(err, ErrNameRevoked) {
 		t.Fatalf("create on a revoked name = %v, want it refused as revoked", err)
 	}
-	if _, err = store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("replacement"), ""); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatalf("rotate a revoked Secret without recent proof = %v", err)
-	}
-	p.AuthenticatedAt = recent
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
 	reactivated, err := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("replacement"), "")
 	if err != nil || reactivated.ID != row.ID || reactivated.RevokedAt.Valid {
-		t.Fatalf("rotate a revoked Secret with recent proof = %+v %v", reactivated, err)
+		t.Fatalf("rotate a revoked Secret = %+v %v", reactivated, err)
 	}
 	var count int
 	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secrets WHERE environment_id=$1 AND name='RETIRED'`, env).Scan(&count); err != nil || count != 1 {

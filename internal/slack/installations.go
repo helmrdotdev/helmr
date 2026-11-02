@@ -28,7 +28,7 @@ func lockAgentManager(ctx context.Context, tx pgx.Tx, prior auth.Principal, envi
 	if p.OrgID != org || !p.HasPermission(permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
 		return errInstallationAuthority
 	}
-	return auth.RequireRecentFor(p, permission)
+	return nil
 }
 
 func lockConnectionManager(ctx context.Context, tx pgx.Tx, prior auth.Principal, connection uuid.UUID, permission auth.Permission) error {

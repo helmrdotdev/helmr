@@ -31,13 +31,6 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		if (seconds == nil && !old.Valid) || (seconds != nil && old.Valid && *seconds == old.Int64) {
 			return nil
 		}
-		// Shortening can delete remaining history on the next cleanup pass, so
-		// it needs recent proof; lengthening or disabling expiry deletes nothing.
-		if seconds != nil && (!old.Valid || *seconds < old.Int64) {
-			if err := auth.RequireRecentProof(m.Human); err != nil {
-				return err
-			}
-		}
 		if _, err := tx.Exec(ctx, `UPDATE projects SET history_retention_seconds=$3,updated_at=now() WHERE org_id=$1 AND id=$2`, orgID, projectID, seconds); err != nil {
 			return fmt.Errorf("update project retention: %w", err)
 		}

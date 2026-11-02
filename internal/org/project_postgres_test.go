@@ -710,17 +710,14 @@ func TestProjectUpdateIncludesRetentionWithOperationSpecificProof(t *testing.T) 
 	if _, err := UpdateProject(t.Context(), f.pool, stale, id, ProjectDetails{Name: "Ordinary edit"}); err != nil {
 		t.Fatal("ordinary edit required recent sign-in", err)
 	}
-	// The project now keeps history without expiry: setting a period shortens it.
+	// Retention changes, including shortening, are ordinary project settings.
 	day := int64(24 * 60 * 60)
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &day); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatal("shortening retention accepted stale proof", err)
-	}
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, &day); err != nil {
-		t.Fatal(err)
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &day); err != nil {
+		t.Fatal("setting retention required recent sign-in", err)
 	}
 	shorter, longer := day/2, 2*day
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &shorter); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatal("shortening retention accepted stale proof", err)
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &shorter); err != nil {
+		t.Fatal("shortening retention required recent sign-in", err)
 	}
 	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &longer); err != nil {
 		t.Fatal("lengthening retention required recent sign-in", err)

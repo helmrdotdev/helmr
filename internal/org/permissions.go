@@ -724,11 +724,12 @@ func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m Man
 		}
 		// The Group row lock excludes concurrent assignment to this Group, so a
 		// Group without Role assignments cannot change what the member can access.
+		// Removal only takes access away.
 		var assigned bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants WHERE org_id=$1 AND group_id=$2)`, m.OrgID, group).Scan(&assigned); err != nil {
 			return err
 		}
-		if assigned {
+		if assigned && add {
 			if err := auth.RequireRecentProof(m.Human); err != nil {
 				return err
 			}

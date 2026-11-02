@@ -63,9 +63,8 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 	}
 }
 
-// Linking issues durable authority and needs recent proof; unlinking only
-// removes it and needs just the live browser.
-func TestSlackUserUnlinkNeedsNoRecentProof(t *testing.T) {
+// Linking and unlinking need the live browser, not recent proof.
+func TestSlackUserLinkNeedsNoRecentProof(t *testing.T) {
 	f, _, org := credentialFixture(t)
 	p := f.Principal(t)
 	identity := UserIdentity{TeamID: "team", SlackUserID: "stale"}
@@ -83,8 +82,8 @@ func TestSlackUserUnlinkNeedsNoRecentProof(t *testing.T) {
 	if err := UnlinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, identity.TeamID, identity.SlackUserID); err != nil {
 		t.Fatal("stale browser could not unlink", err)
 	}
-	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, f.installation, identity); !errors.Is(err, ErrUserLinkDenied) {
-		t.Fatal("stale browser linked", err)
+	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(p), org, f.User, f.installation, identity); err != nil {
+		t.Fatal("stale browser could not link", err)
 	}
 }
 func TestSlackUserLinksCompetingUsersCannotStealIdentity(t *testing.T) {

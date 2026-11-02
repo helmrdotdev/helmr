@@ -379,6 +379,8 @@ func identityError(err error) error {
 		return conflict(codedError{code: "device_identity_changed", message: "Your signed-in account or organization changed. Review the current account before approving."})
 	case errors.Is(err, identity.ErrLastSignInMethod):
 		return conflict(codedError{code: "last_sign_in_method", message: "Add another sign-in method before removing this one."})
+	case errors.Is(err, identity.ErrCurrentOperatorKey):
+		return conflict(codedError{code: "current_operator_key", message: "Sign in with another operator key before removing this one."})
 	default:
 		return err
 	}
