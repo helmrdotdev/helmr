@@ -76,7 +76,7 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 				                             ORDER BY template_id) FROM template_definitions d),
 				'agents', (SELECT jsonb_agg(to_jsonb(d) - 'runtime_mcp_policy'
 				                          ORDER BY agent_id) FROM agent_definitions d),
-				'preparations', (SELECT jsonb_agg(to_jsonb(s) #- '{spec,template,placement}' ORDER BY id) FROM image_specs s)
+				'preparations', (SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM image_specs s)
 			)::text
 		`).Scan(&value); err != nil {
 			t.Fatal(err)
