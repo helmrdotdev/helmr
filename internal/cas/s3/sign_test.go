@@ -125,6 +125,17 @@ type completionClient struct {
 	mu          sync.Mutex
 	ranges      []string
 	pinnedReads int
+	// Read back: inverted serves later ranges sooner, failRangeAt fails the
+	// range at that nonzero offset, and peakReads is the most reads at once.
+	inverted    bool
+	failRangeAt int64
+	activeReads int
+	peakReads   int
+	// Promotion: failPart fails that part copy; promotedParts are the part
+	// numbers completed, in order; aborted reports an aborted promotion.
+	failPart      int32
+	promotedParts []int32
+	aborted       bool
 }
 
 func (c *completionClient) version(id string) *string {
@@ -142,6 +153,9 @@ func (c *completionClient) CompleteMultipartUpload(_ context.Context, input *aws
 		if c.exists || aws.ToString(input.IfNoneMatch) != "*" {
 			return nil, &smithy.GenericAPIError{Code: "PreconditionFailed"}
 		}
+		for _, part := range input.MultipartUpload.Parts {
+			c.promotedParts = append(c.promotedParts, aws.ToInt32(part.PartNumber))
+		}
 		c.copied = aws.ToString(input.Key)
 		return &awss3.CompleteMultipartUploadOutput{}, nil
 	}
@@ -157,7 +171,15 @@ func (c *completionClient) UploadPartCopy(_ context.Context, input *awss3.Upload
 	if !c.pinned(aws.ToString(input.CopySourceIfMatch), aws.ToString(input.CopySource)) {
 		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "copied a version other than the verified one"}
 	}
-	return &awss3.UploadPartCopyOutput{CopyPartResult: &types.CopyPartResult{ETag: aws.String("part")}}, nil
+	if aws.ToInt32(input.PartNumber) == c.failPart {
+		return nil, &smithy.GenericAPIError{Code: "InternalError"}
+	}
+	return &awss3.UploadPartCopyOutput{CopyPartResult: &types.CopyPartResult{ETag: aws.String(fmt.Sprintf("part-%d", aws.ToInt32(input.PartNumber)))}}, nil
+}
+
+func (c *completionClient) AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error) {
+	c.aborted = true
+	return &awss3.AbortMultipartUploadOutput{}, nil
 }
 
 // pinned holds when a copy names the version that was authenticated: the
@@ -178,7 +200,14 @@ func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectIn
 	if input.VersionId != nil {
 		c.pinnedReads++
 	}
+	c.activeReads++
+	c.peakReads = max(c.peakReads, c.activeReads)
 	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.activeReads--
+		c.mu.Unlock()
+	}()
 	if input.VersionId != nil && (aws.ToString(input.VersionId) != "v1" || aws.ToString(input.IfMatch) != `"staged"`) {
 		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "read a version other than the first one read"}
 	}
@@ -187,6 +216,12 @@ func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectIn
 		return nil, fmt.Errorf("unexpected range %q", aws.ToString(input.Range))
 	}
 	end = min(end, int64(len(c.staged))-1)
+	if c.failRangeAt != 0 && start == c.failRangeAt {
+		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "the staged version was replaced"}
+	}
+	if c.inverted {
+		time.Sleep(time.Duration(int64(len(c.staged))-start) * 20 * time.Microsecond)
+	}
 	return &awss3.GetObjectOutput{
 		ETag: aws.String(`"staged"`), VersionId: c.version("v1"), Body: io.NopCloser(bytes.NewReader(c.staged[start : end+1])),
 		ContentLength: aws.Int64(end - start + 1), ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, end, len(c.staged))),
@@ -239,7 +274,10 @@ func (c *completionClient) DeleteObject(_ context.Context, input *awss3.DeleteOb
 // the digest are copied create-only to the digest key; staging is removed.
 // Storage computes the checksum, so the Control Plane reads no object bytes.
 func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
-	want := bytes.Repeat([]byte{7}, 96)
+	want := make([]byte, 96)
+	for i := range want {
+		want[i] = byte(i)
+	}
 	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(want), SizeBytes: int64(len(want)), MediaType: cas.CheckpointMemoryMediaType}
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
 	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
@@ -332,5 +370,55 @@ func TestCompleteUploadWithoutStorageChecksumIsNotAnIntegrityFailure(t *testing.
 	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
 	if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || errors.Is(err, cas.ErrRemoteIntegrity) || client.copied != "" {
 		t.Fatalf("completion without a storage checksum = %v, copied %q", err, client.copied)
+	}
+}
+
+// A read back hashes version-pinned ranges in object order however they
+// arrive, keeps at most eight ranges outstanding, and publishes nothing when a
+// range of the fixed version can no longer be read.
+func TestCompleteUploadReadBackOrdersAndBoundsRanges(t *testing.T) {
+	staged := make([]byte, 96)
+	for i := range staged {
+		staged[i] = byte(i * 7)
+	}
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
+	for _, failRangeAt := range []int64{0, 40} {
+		client := &completionClient{staged: staged, inverted: true, failRangeAt: failRangeAt}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, copyObjectMaxBytes: 32, readBackRangeBytes: 4}
+		_, err := store.CompleteUpload(t.Context(), descriptor, upload, parts)
+		if failRangeAt != 0 {
+			if err == nil || client.copied != "" {
+				t.Fatalf("completion after a failed range = %v, copied %q", err, client.copied)
+			}
+			continue
+		}
+		if err != nil || client.copied == "" || len(client.ranges) != 24 || client.pinnedReads != 23 || client.peakReads > s3ReadBackConcurrency || client.peakReads < 2 {
+			t.Fatalf("completion = %v, copied %q; %d ranges, %d pinned, peak %d", err, client.copied, len(client.ranges), client.pinnedReads, client.peakReads)
+		}
+	}
+}
+
+// Promotion copies parts of the verified version concurrently, completes them
+// in part order, and aborts without publishing when any part copy fails.
+func TestCompleteUploadPromotesPartsInOrderOrAborts(t *testing.T) {
+	staged := bytes.Repeat([]byte{7}, 96)
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	parts := []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}
+	for _, failPart := range []int32{0, 2} {
+		client := &completionClient{staged: staged, failPart: failPart}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64, copyObjectMaxBytes: 32, copyPartBytes: 32}
+		_, err := store.CompleteUpload(t.Context(), descriptor, upload, parts)
+		if failPart != 0 {
+			if err == nil || client.copied != "" || !client.aborted {
+				t.Fatalf("completion after a failed part copy = %v, copied %q, aborted %t", err, client.copied, client.aborted)
+			}
+			continue
+		}
+		if err != nil || !slices.Equal(client.promotedParts, []int32{1, 2, 3}) || client.aborted {
+			t.Fatalf("completion = %v, promoted parts %v, aborted %t", err, client.promotedParts, client.aborted)
+		}
 	}
 }

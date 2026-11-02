@@ -75,6 +75,7 @@ type Store struct {
 	multipartPartSizeBytes  int64
 	copyObjectMaxBytes      int64
 	readBackRangeBytes      int64
+	copyPartBytes           int64
 }
 
 type ImmutableStore struct {

@@ -414,6 +414,13 @@ func (c *Store) readStagedRange(ctx context.Context, staging, etag, version stri
 	return body, aws.ToString(output.ETag), aws.ToString(output.VersionId), nil
 }
 
+func (c *Store) copyPart() int64 {
+	if c.copyPartBytes > 0 {
+		return c.copyPartBytes
+	}
+	return s3CopyPartBytes
+}
+
 func (c *Store) readBackRange() int64 {
 	if c.readBackRangeBytes > 0 {
 		return c.readBackRangeBytes
@@ -447,19 +454,23 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		return storageFailure(ctx, err)
 	}
 	uploadID := aws.ToString(created.UploadId)
-	parts := make([]types.CompletedPart, (expected.SizeBytes+s3CopyPartBytes-1)/s3CopyPartBytes)
+	partBytes := c.copyPart()
+	parts := make([]types.CompletedPart, (expected.SizeBytes+partBytes-1)/partBytes)
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(s3CopyPartConcurrency)
 	for i := range parts {
-		offset, number := int64(i)*s3CopyPartBytes, int32(i+1)
-		end := min(offset+s3CopyPartBytes, expected.SizeBytes) - 1
+		offset, number := int64(i)*partBytes, int32(i+1)
+		end := min(offset+partBytes, expected.SizeBytes) - 1
 		group.Go(func() error {
 			copied, err := c.client.UploadPartCopy(groupCtx, &awss3.UploadPartCopyInput{
 				Bucket: aws.String(c.bucket), Key: aws.String(key), UploadId: aws.String(uploadID), PartNumber: aws.Int32(number),
 				CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag), CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
 			})
-			if err != nil || copied == nil || copied.CopyPartResult == nil {
-				return storageFailure(groupCtx, errors.Join(err, errors.New("server-side part copy returned no result")))
+			if err != nil {
+				return storageFailure(groupCtx, err)
+			}
+			if copied == nil || copied.CopyPartResult == nil {
+				return errors.New("server-side part copy returned no result")
 			}
 			parts[i] = types.CompletedPart{PartNumber: aws.Int32(number), ETag: copied.CopyPartResult.ETag}
 			return nil
