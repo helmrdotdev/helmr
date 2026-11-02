@@ -97,4 +97,16 @@ func TestPlacementBindingInvariantPostgres(t *testing.T) {
 	if removed, err := workergroup.RemovePlacement(t.Context(), f.pool, env, "unused"); err != nil || !removed {
 		t.Fatalf("removing an unused placement = %v %v", removed, err)
 	}
+	// A used placement whose group is draining blocks only edits to itself.
+	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &group}); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, group)
+	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "unused"}); err != nil {
+		t.Fatalf("an unrelated edit blocked by a draining group: %v", err)
+	}
+	assertUnbound(workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &other}), nil, []string{"secure"})
+	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure"}); err != nil {
+		t.Fatalf("rebinding away from a draining group: %v", err)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"uuid"
 
@@ -40,7 +41,7 @@ func ValidatePlacementName(name string) error {
 // SetPlacement assigns a placement name in an environment. Assigning the
 // default placement to deployment capacity removes its override. It holds the
 // environment lock promotion holds and refuses an assignment that leaves the
-// current deployment with an unbound placement.
+// placement unbound for the current deployment.
 func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUID, placement Placement) error {
 	if err := ValidatePlacementName(placement.Name); err != nil {
 		return err
@@ -68,7 +69,7 @@ func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUI
 		case err != nil:
 			return fmt.Errorf("set placement %q: %w", placement.Name, err)
 		}
-		return requireCurrentPlacements(ctx, tx, environmentID, current)
+		return requireCurrentPlacement(ctx, tx, environmentID, current, placement.Name)
 	})
 }
 
@@ -90,7 +91,7 @@ func RemovePlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.
 		if err != nil {
 			return fmt.Errorf("remove placement %q: %w", name, err)
 		}
-		return requireCurrentPlacements(ctx, tx, environmentID, current)
+		return requireCurrentPlacement(ctx, tx, environmentID, current, name)
 	})
 	return removed > 0, err
 }
@@ -106,11 +107,29 @@ func lockPlacements(ctx context.Context, tx pgx.Tx, environmentID uuid.UUID) (*u
 	return current, err
 }
 
-func requireCurrentPlacements(ctx context.Context, tx pgx.Tx, environmentID uuid.UUID, current *uuid.UUID) error {
+// requireCurrentPlacement refuses an edit that leaves the edited placement
+// unbound for the current deployment. Another placement that is already
+// unbound, for example because its group is draining, does not block it.
+func requireCurrentPlacement(ctx context.Context, tx pgx.Tx, environmentID uuid.UUID, current *uuid.UUID, name string) error {
 	if current == nil {
 		return nil
 	}
-	return RequireDeploymentPlacements(ctx, tx, environmentID, *current)
+	err := RequireDeploymentPlacements(ctx, tx, environmentID, *current)
+	var unbound UnboundPlacementsError
+	if !errors.As(err, &unbound) {
+		return err
+	}
+	edited := UnboundPlacementsError{}
+	if slices.Contains(unbound.Unassigned, name) {
+		edited.Unassigned = []string{name}
+	}
+	if slices.Contains(unbound.Retired, name) {
+		edited.Retired = []string{name}
+	}
+	if edited.Unassigned == nil && edited.Retired == nil {
+		return nil
+	}
+	return edited
 }
 
 // UnboundPlacementsError names the placements a deployment uses that have no
