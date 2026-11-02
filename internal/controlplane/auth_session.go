@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 	"time"
 	"uuid"
@@ -9,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/sso"
 )
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +121,21 @@ func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			response.SingleOrganization = &o
+		}
+	}
+	// Company SSO is offered beside the account methods: in Managed Cloud by
+	// organization slug, and in a self-hosted deployment once its organization
+	// has an active connection.
+	if s.ssoStore != nil {
+		if !s.selfHostedMode() {
+			response.Methods = append(response.Methods, "sso")
+		} else if response.SingleOrganization != nil {
+			if _, err := s.startConnection(r.Context(), ""); err == nil {
+				response.Methods = append(response.Methods, "sso")
+			} else if !errors.Is(err, sso.ErrConnectionNotFound) {
+				writeError(w, err)
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, response)

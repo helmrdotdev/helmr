@@ -35,7 +35,8 @@ import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
 import { AccountSecurity } from "./routes/account-security";
 import { Ownership } from "./routes/ownership";
-import { AuthGitHubCallback } from "./routes/auth-callback";
+import { AuthGitHubCallback, AuthSSOOIDCCallback, AuthSSOSAMLCallback } from "./routes/auth-callback";
+import { SSOLinkPage } from "./routes/sso-link";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
@@ -233,6 +234,9 @@ export function App() {
       <Route path="/auth/slack/connect" component={SlackConnect} />
       <Route path="/auth/confirmation" component={AuthConfirmation} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
+      <Route path="/sso/oidc/callback" component={AuthSSOOIDCCallback} />
+      <Route path="/sso/callback" component={AuthSSOSAMLCallback} />
+      <Route path="/sso/link" component={SSOLinkPage} />
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 

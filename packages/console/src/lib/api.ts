@@ -19,7 +19,7 @@ export function expectedActorHeaders(operator = false): Record<string, string> {
 }
 
 function establishesAuthentication(path: string): boolean {
-  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify)))$/.test(path)
+  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify))|sso\/(start|oidc\/finish|saml\/finish))$/.test(path)
     || /^\/admin\/api\/v1\/auth\/(options|verify)$/.test(path);
 }
 
@@ -169,7 +169,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       sessionStorage.setItem(identityKey, user);
     }
   }
-  if(response.ok&&fetchInit.method==="POST"&&(/^\/api\/auth\/(github\/finish|passkey\/verify|email\/[^/]+\/verify|logout)$/.test(path)||path==="/api/account/access/revoke-all"))localStorage.setItem("helmr.account-change",crypto.randomUUID());
+  if(response.ok&&fetchInit.method==="POST"&&(/^\/api\/auth\/(github\/finish|passkey\/verify|email\/[^/]+\/verify|sso\/(oidc|saml)\/finish|logout)$/.test(path)||path==="/api/account/access/revoke-all"))localStorage.setItem("helmr.account-change",crypto.randomUUID());
   return result;
 }
 

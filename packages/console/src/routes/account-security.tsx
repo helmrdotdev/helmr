@@ -2,22 +2,24 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { listSignInMethods, removeSignInMethod, revokeAllAccess, revokeOtherAccess, startGitHubLink, type SignInMethod } from "../lib/account";
 import { getAuthConfig } from "../lib/auth";
-import { errorMessage, loadError } from "../lib/error";
+import { AUTH_MESSAGES, errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { registerPasskey } from "../lib/passkey";
+import { listSSOBindings, startSSOLink } from "../lib/sso";
 import { DataTable, RowActions, TableCount } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { Field, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
-import { DangerZone } from "../ui/Panel";
+import { DangerZone, Panel } from "../ui/Panel";
 import { QueryState } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
 import { TableSkeleton } from "../ui/Skeleton";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 import { Tag } from "../ui/Tag";
 
 const COLUMNS = ["Sign-in method", "Type", "Added", "Last used", { label: "Actions", srOnly: true }] as const;
+const SSO_COLUMNS = ["Organization", "Protocol", "Company account", "Linked"] as const;
 const METHOD_NAMES: Record<string, string> = { passkey: "passkey", email: "email", github: "GitHub" };
 
 // How the account signs in, and signing out other sessions or everywhere.
@@ -35,6 +37,14 @@ export function AccountSecurity() {
   const [linking, setLinking] = createSignal(false);
   const [notice, setNotice] = createSignal("");
   const [error, setError] = createSignal("");
+  const bindings = createQuery(() => ({ queryKey: ["account", "sso-bindings"], queryFn: listSSOBindings }));
+  const [linkingSSO, setLinkingSSO] = createSignal(false);
+  const linkSSO = async (organizationID: string) => {
+    setLinkingSSO(true); setError("");
+    try { window.location.assign((await startSSOLink(organizationID)).redirect_url); }
+    catch (cause) { setError(loadError(cause, "Could not start linking company SSO.", AUTH_MESSAGES)); setLinkingSSO(false); }
+  };
+  const linkedHere = () => !!me.data?.org_id && (bindings.data?.bindings ?? []).some(binding => binding.organization_id === me.data?.org_id);
   const refresh = () => cache.invalidateQueries({ queryKey: ["account", "sign-in-methods"] });
   const linkGitHub = async () => {
     setLinking(true); setError("");
@@ -68,6 +78,29 @@ export function AccountSecurity() {
           </DataTable>
         )}
       </QueryState>
+      <Panel title="Company SSO" actions={<Show when={me.data?.org_id && !linkedHere() ? me.data.org_id : undefined}>{organization => (
+        <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization())}>{linkingSSO() ? "Linking…" : `Link company SSO for ${me.data?.org_name ?? "this organization"}`}</button>
+      )}</Show>}>
+        <p class={cx(ui.muted, "m-0")}>Organizations where you can sign in with your company identity provider. Linking needs a recent sign-in, and your company account's email can differ from your Helmr email.</p>
+        <QueryState query={bindings} pending={<TableSkeleton label="Loading company SSO links" columns={SSO_COLUMNS} />} error={cause => loadError(cause, "Could not load your company SSO links.")}>
+          {data => (
+            <Show when={data().bindings.length > 0}>
+              <DataTable columns={SSO_COLUMNS} minWidth="min-w-150">
+                <For each={data().bindings}>
+                  {binding => (
+                    <tr>
+                      <td>{binding.organization_name}</td>
+                      <td><Tag>{binding.protocol.toUpperCase()}</Tag></td>
+                      <td class="font-mono text-chrome!">{binding.subject}</td>
+                      <td><RelativeTime value={binding.linked_at} /></td>
+                    </tr>
+                  )}
+                </For>
+              </DataTable>
+            </Show>
+          )}
+        </QueryState>
+      </Panel>
       <DangerZone title="Sign out other sessions" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => { setNotice(""); setRevokingOthers(true); }}>Sign out other sessions…</button>}>
         Signs out every other browser and CLI and revokes Slack access issued for this account. This browser stays signed in.
       </DangerZone>

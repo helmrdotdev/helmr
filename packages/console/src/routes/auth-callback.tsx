@@ -1,6 +1,7 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, Match, onMount, Switch } from "solid-js";
 import { finishGitHubAuth } from "../lib/auth";
+import { finishOIDC, finishSAML } from "../lib/sso";
 import { returnPath } from "../lib/continuation";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthError, AuthMissing, AuthWindow, AuthWorking } from "../ui/AuthWindow";
@@ -79,4 +80,24 @@ export function AuthGitHubCallback() {
       })}
     />
   );
+}
+
+export function AuthSSOOIDCCallback() {
+  return (
+    <SignInCallback
+      path="/sso/oidc/callback"
+      finish={(params) => finishOIDC({
+        code: params["code"] ?? "",
+        state: params["state"] ?? "",
+        ...(params["error"] !== undefined ? { error: params["error"] } : {}),
+        ...(params["error_description"] !== undefined ? { error_description: params["error_description"] } : {}),
+      })}
+    />
+  );
+}
+
+// The SAML response was validated when the identity provider posted it; this
+// page finishes the sign-in with this browser's own session.
+export function AuthSSOSAMLCallback() {
+  return <SignInCallback path="/sso/callback" finish={() => finishSAML()} />;
 }
