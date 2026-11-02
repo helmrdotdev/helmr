@@ -2,11 +2,13 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { assert, assertEqual, completedResult, deadline, verify } from "../../support/context"
+import { capacityAwareStartAgent } from "../../support/capacity-admission"
 import { hostObservation } from "../../support/host-observation"
 import { fixtureInput } from "../../support/runtime-mcp"
 
 // Run with a single one-slot Worker and a policy that permits retained sources.
 await verify("checkpoint-slot-handoff", async ({ computer, startAgent, marker, objects }) => {
+  const admit = capacityAwareStartAgent(startAgent)
   const hosts = (await hostObservation("worker-fleet", { region: "default" })).filter((h: any) => h.status === "active")
   assert.equal(hosts.length, 1)
   assert.equal(hosts[0].max_vm_slots, 1)
@@ -31,13 +33,13 @@ await verify("checkpoint-slot-handoff", async ({ computer, startAgent, marker, o
     }
   }
   const a = await computer("verification", "handoff-a")
-  const first = await startAgent("verification-persistence", { computer: a, input: { marker } })
+  const first = await admit("verification-persistence", { computer: a, input: { marker }, idempotencyKey: marker + ":a" })
   const before = await completedResult(first.turn, 180_000)
   assert(before !== null && typeof before === "object" && "nonce" in before && typeof before.nonce === "string")
   const parked = await waitRetained(a.id)
 
   const b = await computer("verification", "handoff-b")
-  const second = await startAgent("verification-persistence", { computer: b, input: { marker: b.id } })
+  const second = await admit("verification-persistence", { computer: b, input: { marker: b.id }, idempotencyKey: marker + ":b" })
   const bResult = await completedResult(second.turn, 180_000)
   assert(bResult !== null && typeof bResult === "object" && "computerId" in bResult && bResult.computerId === b.id)
   const parkedB = await waitRetained(b.id)
