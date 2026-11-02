@@ -22,6 +22,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
+// An object already at the digest key may have been promoted from a multipart
+// upload, which stores no full checksum. Promoting the same quarantined bytes
+// reuses it when its metadata matches.
+func TestPromoteQuarantineReusesObjectWithoutFullChecksum(t *testing.T) {
+	body := []byte("bundle root")
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.deployment-bundle.v0+json"}
+	checksum, _ := descriptorChecksum(descriptor.Digest)
+	client := &fakeS3Client{}
+	store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas"}
+	client.headObjectOutputs = []*awss3.HeadObjectOutput{
+		{ChecksumSHA256: aws.String(checksum), ContentLength: aws.Int64(descriptor.SizeBytes), ContentType: aws.String(descriptor.MediaType)},
+		{ChecksumSHA256: aws.String("composite-2"), ContentLength: aws.Int64(descriptor.SizeBytes), ContentType: aws.String(descriptor.MediaType)},
+	}
+	client.headObjectErrors = []error{nil, nil}
+	object, err := store.PromoteQuarantine(t.Context(), "019abcde-1234", descriptor)
+	if err != nil || object.Digest != descriptor.Digest || client.copyObject != nil {
+		t.Fatalf("promotion over a multipart-promoted object = %+v, %v; copied %+v", object, err, client.copyObject)
+	}
+}
+
 func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 	body := []byte("bundle root")
 	descriptor := cas.Descriptor{

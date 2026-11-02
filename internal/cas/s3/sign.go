@@ -368,6 +368,12 @@ func (c *Store) readStagedRange(ctx context.Context, staging, etag, version stri
 	return body, aws.ToString(output.ETag), aws.ToString(output.VersionId), nil
 }
 
+// promotionPartBytes is the part size of a promotion copy: base, grown only for
+// an object that would otherwise exceed the multipart part limit.
+func promotionPartBytes(size, base int64) int64 {
+	return max(base, (size+s3MultipartMaxParts-1)/s3MultipartMaxParts)
+}
+
 func (c *Store) copyPart() int64 {
 	if c.copyPartBytes > 0 {
 		return c.copyPartBytes
@@ -397,7 +403,7 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		return "", false, storageFailure(ctx, err)
 	}
 	uploadID := aws.ToString(created.UploadId)
-	partBytes := c.copyPart()
+	partBytes := promotionPartBytes(expected.SizeBytes, c.copyPart())
 	parts := make([]types.CompletedPart, (expected.SizeBytes+partBytes-1)/partBytes)
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(s3CopyPartConcurrency)

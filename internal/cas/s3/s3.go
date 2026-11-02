@@ -271,9 +271,11 @@ func (c *Store) PromoteQuarantine(
 	if err != nil {
 		return cas.Object{}, err
 	}
-	if err := c.verifyKey(ctx, key, expected); err == nil {
-		return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
-	} else if !isObjectNotFound(err) {
+	// An object already at the digest key was authenticated when it was
+	// written, possibly by a multipart promotion that stores no full checksum.
+	if object, err := c.StatDescriptor(ctx, expected); err == nil {
+		return object, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return cas.Object{}, fmt.Errorf("verify existing immutable object: %w", err)
 	}
 	_, err = c.client.CopyObject(ctx, &awss3.CopyObjectInput{
@@ -287,13 +289,14 @@ func (c *Store) PromoteQuarantine(
 		Tagging:           aws.String(objectTagging()),
 		TaggingDirective:  types.TaggingDirectiveReplace,
 	})
-	if err != nil && conditionalWriteError(err) != conditionalWriteExists {
+	switch {
+	case err == nil:
+		return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
+	case conditionalWriteError(err) == conditionalWriteExists:
+		return c.StatDescriptor(ctx, expected)
+	default:
 		return cas.Object{}, err
 	}
-	if err := c.verifyKey(ctx, key, expected); err != nil {
-		return cas.Object{}, fmt.Errorf("verify promoted immutable object: %w", err)
-	}
-	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
 }
 
 // NewImmutable opens the release-only platform store, whose keyspace belongs to

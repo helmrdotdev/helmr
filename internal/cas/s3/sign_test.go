@@ -362,3 +362,14 @@ func TestCompleteUploadPromotesPartsInOrderOrAborts(t *testing.T) {
 		}
 	}
 }
+
+// A promotion copy keeps its part size until the object would need more parts
+// than multipart allows.
+func TestPromotionPartBytesStaysWithinThePartLimit(t *testing.T) {
+	for _, size := range []int64{64 << 20, 8 << 30, s3CopyPartBytes * s3MultipartMaxParts, s3CopyPartBytes*s3MultipartMaxParts + 1, 5 << 40} {
+		part := promotionPartBytes(size, s3CopyPartBytes)
+		if part < s3CopyPartBytes || (size+part-1)/part > s3MultipartMaxParts || (size <= s3CopyPartBytes*s3MultipartMaxParts && part != s3CopyPartBytes) {
+			t.Fatalf("size %d: part %d", size, part)
+		}
+	}
+}
