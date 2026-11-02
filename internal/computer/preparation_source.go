@@ -38,6 +38,7 @@ type PreparationSource struct {
 // This predicate is shared by discovery and exact source authorization. The
 // policy acknowledgment is evidence of current local bounds, not a VM grant.
 const eligiblePreparationSourceSQL = `b.status='succeeded' AND b.payload_retired_at IS NULL
+ AND ` + preparationSourceCustodySQL + `
  AND NOT ` + obsoleteBootSeed + ` AND ` + usableBootSeedImageSQL + `
  AND e.current_deployment_id=b.deployment_id AND project.default_region_id=g.region_id
  AND h.id=$1 AND h.worker_group_id=$2 AND h.current_epoch=$3 AND h.status='active'
@@ -55,6 +56,14 @@ const eligiblePreparationSourceSQL = `b.status='succeeded' AND b.payload_retired
  AND NOT EXISTS(SELECT 1 FROM template_definitions t WHERE t.environment_id=b.environment_id AND t.deployment_id=b.deployment_id
  AND t.image_spec_id=b.image_spec_id AND t.cpu_millis=b.cpu_millis AND t.memory_bytes=b.memory_bytes
  AND t.refresh_every_ms IS NOT NULL AND extract(epoch FROM statement_timestamp()-image.published_at)*1000>3*t.refresh_every_ms))`
+
+// preparationSourceCustodySQL keeps a source with the group that produced it,
+// which an organization group's owner must also own. A placement assignment
+// never moves a source to another group; once its placement resolves
+// elsewhere, the source is no longer offered at all.
+const preparationSourceCustodySQL = `b.worker_group_id=g.id AND (g.owner_org_id IS NULL OR g.owner_org_id=e.org_id)
+ AND EXISTS(SELECT 1 FROM (SELECT b.environment_id,b.image_spec_id) prep JOIN LATERAL ` + db.PreparationTargetSQL + ` target ON true
+ WHERE ` + db.ServesTargetSQL + `)`
 
 // preparationSourceLifetimeSQL bounds a preparation source and its grants.
 const preparationSourceLifetimeSQL = `interval '120 seconds'`
@@ -136,12 +145,12 @@ func (b *KeyBroker) pinPreparationSource(ctx context.Context, host workergroup.H
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		// A source outside the host group's region reads exactly like a missing
-		// one and its build is never locked.
+		// A source outside the host group's region or custody reads exactly like
+		// a missing one and its build is never locked.
 		var reachable bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM boot_seed_builds b
  JOIN environments e ON e.id=b.environment_id JOIN projects project ON project.id=e.project_id
- JOIN worker_groups g ON g.id=$3 WHERE b.environment_id=$1 AND b.id=$2 AND project.default_region_id=g.region_id)`, key.EnvironmentID, key.BuildID, host.GroupID).Scan(&reachable); err != nil {
+ JOIN worker_groups g ON g.id=$3 WHERE b.environment_id=$1 AND b.id=$2 AND project.default_region_id=g.region_id AND `+preparationSourceCustodySQL+`)`, key.EnvironmentID, key.BuildID, host.GroupID).Scan(&reachable); err != nil {
 			return err
 		}
 		if !reachable {

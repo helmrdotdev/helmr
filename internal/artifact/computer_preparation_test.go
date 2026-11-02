@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
@@ -123,5 +124,41 @@ func TestSeedOnlyPreparationRuntimeInvalidatesIdentity(t *testing.T) {
 	changed[0].Runtime = nil
 	if _, err := artifact.CanonicalComputerPreparationSpec(changed[0]); err == nil {
 		t.Fatal("missing qualifying Runtime accepted")
+	}
+}
+
+func TestPreparationSpecIdentityIncludesPlacement(t *testing.T) {
+	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("session"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
+	specs, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if specs[0].Placement != definition.DefaultPlacement {
+		t.Fatalf("placement = %q", specs[0].Placement)
+	}
+	before, err := artifact.ComputerPreparationSpecDigest(specs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range output.Metadata.Definitions {
+		if output.Metadata.Definitions[i].Kind == definition.KindTemplate {
+			output.Metadata.Definitions[i].Template.Placement = "secure"
+		}
+	}
+	changed, err := artifact.BuildComputerPreparationSpecs(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := artifact.ComputerPreparationSpecDigest(changed[0])
+	if err != nil || before == after || changed[0].Placement != "secure" {
+		t.Fatalf("placement did not change preparation identity: %v", err)
+	}
+	changed[0].Placement = definition.DefaultPlacement
+	if _, err := artifact.CanonicalComputerPreparationSpec(changed[0]); err == nil {
+		t.Fatal("seed-only spec accepted a placement other than its template's")
+	}
+	changed[0].Placement = ""
+	if _, err := artifact.CanonicalComputerPreparationSpec(changed[0]); err == nil {
+		t.Fatal("spec without placement accepted")
 	}
 }

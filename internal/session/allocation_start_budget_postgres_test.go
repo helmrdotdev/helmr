@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -30,7 +31,7 @@ func startBudgetFixture(t *testing.T) (fixture, *dispatch.Allocator, uuid.UUID, 
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at) VALUES($1,$2,$3,'start-budget',clock_timestamp()+interval '10 minutes')`, f.env, build, f.deployment)
 	spec, err := artifact.CanonicalComputerPreparationSpec(artifact.ComputerPreparationSpec{
 		PrepareNetworkPolicy: networkpolicy.OrdinaryPolicy(),
-		APIVersion:           artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "fixture-computer",
+		APIVersion:           artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "fixture-computer", Placement: definition.DefaultPlacement,
 		Program: artifact.ProgramDescriptor{Digest: "sha256:" + strings.Repeat("1", 64), SizeBytes: 1, MediaType: artifact.ProgramArtifactMediaType},
 	})
 	if err != nil {

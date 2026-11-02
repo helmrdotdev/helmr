@@ -64,14 +64,16 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := a.database.Query(scanCtx, `WITH demand AS (
- SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id,NULL::uuid pin FROM image_builds p
+ SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id,target.worker_group_id pin FROM image_builds p
+ CROSS JOIN LATERAL (SELECT p.environment_id,p.image_spec_id) prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  UNION ALL
- SELECT b.environment_id,b.id,'seed',b.executor_epoch+1,NULL::uuid,NULL::uuid FROM boot_seed_builds b
+ SELECT b.environment_id,b.id,'seed',b.executor_epoch+1,NULL::uuid,target.worker_group_id FROM boot_seed_builds b
+ CROSS JOIN LATERAL (SELECT b.environment_id,b.image_spec_id) prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
  WHERE b.status='queued' AND b.worker_host_id IS NULL AND b.executor_epoch<9223372036854775807
  AND (b.retry_after IS NULL OR b.retry_after<=statement_timestamp())
  AND EXISTS(SELECT 1 FROM environments e JOIN projects project ON project.id=e.project_id
- JOIN worker_groups g ON g.region_id=project.default_region_id AND g.owner_org_id IS NULL AND g.status='active'
+ JOIN worker_groups g ON g.status='active' AND `+db.ServesTargetSQL+`
  JOIN worker_pools p ON p.worker_group_id=g.id AND p.id=g.primary_pool_id AND p.status='active'
  WHERE e.id=b.environment_id AND p.optional_cpu_millis>=(b.cpu_millis+999)/1000*1000
  AND p.optional_memory_bytes>=b.memory_bytes AND p.optional_disk_bytes>0 AND p.optional_vm_slots>0

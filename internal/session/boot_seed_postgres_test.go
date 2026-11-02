@@ -188,6 +188,12 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET disk_only_recovery=true WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 	selectSeed(program, false)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET disk_only_recovery=false WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
+	// A seed depends on the platform and CPU shape of the group that produced it.
+	group, host := organizationCapacity(t, f.fixture)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET worker_host_id=$3,worker_group_id=$4 WHERE environment_id=$1 AND id=$2`, f.env, id, host, group)
+	selectSeed(program, false)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET worker_host_id=$3,worker_group_id=$4 WHERE environment_id=$1 AND id=$2`, f.env, id, f.worker, f.group)
+	selectSeed(program, true)
 	// A newer promoted deployment makes this payload obsolete, but neither the
 	// builder nor a selected Computer may lose objects before physical closure.
 	newer := uuid.NewV7()

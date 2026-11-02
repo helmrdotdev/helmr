@@ -98,6 +98,11 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 		if deadline == nil {
 			return ErrNotReady
 		}
+		if accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, p.SpecID); err != nil {
+			return err
+		} else if !accepted {
+			return ErrNotReady
+		}
 		id := uuid.NewV7()
 		_, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,predecessor_build_id,idempotency_key,deadline_at)
  VALUES($1,$2,$3,$4,$5,$6)`, env, id, p.SpecID, predecessor, "successor:"+predecessor.String(), *deadline)

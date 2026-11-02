@@ -89,6 +89,13 @@ func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 		if successorPending {
 			return result, ErrNotReady
 		}
+		accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, spec)
+		if err != nil {
+			return result, err
+		}
+		if !accepted {
+			return result, ErrNotReady
+		}
 		usable = true
 		attempt = uuid.NewV7()
 		if _, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)

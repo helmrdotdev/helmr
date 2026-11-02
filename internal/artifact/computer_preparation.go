@@ -22,11 +22,14 @@ type PreparationRuntime struct {
 
 // ComputerPreparationSpec binds an independently verified preparation Program.
 // Templates without a callback commit their seed, settings and Runtime, without
-// an executable artifact. Actual Secret versions remain attempt evidence.
+// an executable artifact. Actual Secret versions remain attempt evidence. The
+// placement is part of the spec, so templates that share an image but run on
+// different placements prepare separately on their own capacity.
 type ComputerPreparationSpec struct {
 	PrepareNetworkPolicy networkpolicy.Policy         `json:"prepareNetworkPolicy"`
 	APIVersion           string                       `json:"apiVersion"`
 	TemplateDefinitionID string                       `json:"templateDefinitionId"`
+	Placement            string                       `json:"placement"`
 	Program              ProgramDescriptor            `json:"program,omitzero"`
 	Runtime              *PreparationRuntime          `json:"runtime,omitempty"`
 	Template             *definition.TemplateManifest `json:"template,omitempty"`
@@ -48,7 +51,7 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 		if err != nil {
 			return nil, err
 		}
-		spec := ComputerPreparationSpec{PrepareNetworkPolicy: stage, APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID}
+		spec := ComputerPreparationSpec{PrepareNetworkPolicy: stage, APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID, Placement: d.Template.Placement}
 		if d.Template.Prepare {
 			spec.Program = output.Artifact
 		} else {
@@ -61,7 +64,7 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 }
 
 func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, error) {
-	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.TemplateDefinitionID) {
+	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.TemplateDefinitionID) || definition.ValidatePlacement(spec.Placement) != nil {
 		return nil, errors.New("invalid Computer preparation identity")
 	}
 	if _, err := networkpolicy.DecodeStored(mustPolicyJSON(spec.PrepareNetworkPolicy)); err != nil {
@@ -73,6 +76,9 @@ func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, err
 		}
 		if spec.Template == nil || spec.Template.Prepare {
 			return nil, errors.New("seed-only preparation requires its Template without a callback")
+		}
+		if spec.Template.Placement != spec.Placement {
+			return nil, errors.New("seed-only preparation placement must match its Template")
 		}
 		if spec.PrepareNetworkPolicy.Kind != networkpolicy.Blocked {
 			return nil, errors.New("seed-only preparation requires blocking network policy")
