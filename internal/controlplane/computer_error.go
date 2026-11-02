@@ -31,7 +31,7 @@ func computerError(err error, operation computerOperation) error {
 	case errors.Is(err, workergroup.ErrCapacityUnavailable):
 		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
 	case errors.Is(err, workergroup.ErrCapacityIncompatible):
-		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
+		return capacityIncompatibleError(err)
 	case errors.Is(err, workergroup.ErrCapacityExhausted):
 		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
 	case errors.As(err, &expired):

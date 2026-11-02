@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -95,6 +96,11 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 		}
 		if incompatible {
 			return invalidInput(errors.New("a connected Slack agent must accept conversation input"))
+		}
+		// Placement writers take the same lock, so the binding holds from
+		// before preparation is queued through cutover.
+		if err := workergroup.RequireDeploymentPlacements(ctx, tx, pgvalue.MustUUIDValue(env), id); err != nil {
+			return err
 		}
 		ready, err := preparePromotion(ctx, tx, pgvalue.MustUUIDValue(env), id)
 		if err != nil {

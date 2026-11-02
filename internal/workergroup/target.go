@@ -26,6 +26,18 @@ func (e PlacementUnassignedError) Error() string {
 
 func (PlacementUnassignedError) Unwrap() error { return ErrCapacityIncompatible }
 
+// GroupRetiredError rejects new work whose placement is assigned to a
+// draining or disabled worker group, at once and before anything is queued:
+// a Computer pinned there could never run. A paused group is only
+// unavailable. It is a kind of ErrCapacityIncompatible.
+type GroupRetiredError struct{ Placement, Status string }
+
+func (e GroupRetiredError) Error() string {
+	return fmt.Sprintf("placement %q is assigned to a %s worker group", e.Placement, e.Status)
+}
+
+func (GroupRetiredError) Unwrap() error { return ErrCapacityIncompatible }
+
 type placementError string
 
 func (e placementError) Error() string { return string(e) }
@@ -46,10 +58,12 @@ func (t Target) Equal(other Target) bool {
 
 // ResolvePlacement maps a template placement to its environment's current
 // assignment. The default placement maps to deployment capacity unless it is
-// reassigned; any other placement must be assigned.
+// reassigned; any other placement must be assigned, and not to a draining
+// or disabled group.
 func ResolvePlacement(ctx context.Context, q db.DBTX, env uuid.UUID, placement string) (Target, error) {
 	var group *uuid.UUID
-	err := q.QueryRow(ctx, `SELECT worker_group_id FROM environment_placements WHERE environment_id=$1 AND name=$2`, env, placement).Scan(&group)
+	var status *string
+	err := q.QueryRow(ctx, `SELECT p.worker_group_id,g.status::text FROM environment_placements p LEFT JOIN worker_groups g ON g.id=p.worker_group_id WHERE p.environment_id=$1 AND p.name=$2`, env, placement).Scan(&group, &status)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows) && placement == definition.DefaultPlacement:
 		return Target{}, nil
@@ -57,6 +71,8 @@ func ResolvePlacement(ctx context.Context, q db.DBTX, env uuid.UUID, placement s
 		return Target{}, PlacementUnassignedError{Placement: placement}
 	case err != nil:
 		return Target{}, err
+	case status != nil && (*status == "draining" || *status == "disabled"):
+		return Target{}, GroupRetiredError{Placement: placement, Status: *status}
 	}
 	return Target{Group: group}, nil
 }

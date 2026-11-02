@@ -10,10 +10,12 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestDeploymentErrorMapsHTTPContract(t *testing.T) {
 	input := deployment.InputError{Err: errors.New(`scheduled Computer Secret "REPORT_TOKEN" is unavailable`)}
+	unbound := workergroup.UnboundPlacementsError{Unassigned: []string{"secure"}, Retired: []string{"edge"}}
 	for _, test := range []struct {
 		err     error
 		status  int
@@ -21,6 +23,7 @@ func TestDeploymentErrorMapsHTTPContract(t *testing.T) {
 		message string
 	}{
 		{input, http.StatusBadRequest, "bad_request", input.Error()},
+		{fmt.Errorf("promote deployment: %w", unbound), http.StatusConflict, "placements_unbound", "deployment placements are not bound in this environment; unassigned placements: secure; placements assigned to a draining or disabled worker group: edge"},
 		{deployment.ErrPermissionRequired, http.StatusForbidden, "forbidden", "permission is required"},
 		{deployment.ErrNotFound, http.StatusNotFound, "not_found", "deployment not found"},
 		{deployment.ErrNotDeployable, http.StatusNotFound, "not_found", "deployment not found or is not deployable"},

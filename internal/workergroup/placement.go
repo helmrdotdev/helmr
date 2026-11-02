@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -37,44 +39,149 @@ func ValidatePlacementName(name string) error {
 }
 
 // SetPlacement assigns a placement name in an environment. Assigning the
-// default placement to deployment capacity removes its override.
-func SetPlacement(ctx context.Context, q db.Querier, environmentID uuid.UUID, placement Placement) error {
+// default placement to deployment capacity removes its override. It holds the
+// environment lock promotion holds and refuses an assignment that leaves the
+// placement unbound for the current deployment.
+func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUID, placement Placement) error {
 	if err := ValidatePlacementName(placement.Name); err != nil {
 		return err
 	}
 	if placement.Name == definition.DefaultPlacement && placement.WorkerGroupID == nil {
-		_, err := RemovePlacement(ctx, q, environmentID, placement.Name)
+		_, err := RemovePlacement(ctx, txb, environmentID, placement.Name)
 		return err
 	}
-	params := db.SetEnvironmentPlacementParams{EnvironmentID: pgvalue.UUID(environmentID), Name: placement.Name}
-	if placement.WorkerGroupID != nil {
-		params.WorkerGroupID = pgvalue.UUID(*placement.WorkerGroupID)
-	}
-	_, err := q.SetEnvironmentPlacement(ctx, params)
-	var pgErr *pgconn.PgError
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return ErrEnvironmentNotFound
-	case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "environment_placements_group_fkey":
-		return ErrPlacementGroup
-	case err != nil:
-		return fmt.Errorf("set placement %q: %w", placement.Name, err)
-	}
-	return nil
+	return db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		current, err := lockPlacements(ctx, tx, environmentID)
+		if err != nil {
+			return err
+		}
+		params := db.SetEnvironmentPlacementParams{EnvironmentID: pgvalue.UUID(environmentID), Name: placement.Name}
+		if placement.WorkerGroupID != nil {
+			params.WorkerGroupID = pgvalue.UUID(*placement.WorkerGroupID)
+		}
+		_, err = db.New(tx).SetEnvironmentPlacement(ctx, params)
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrEnvironmentNotFound
+		case errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "environment_placements_group_fkey":
+			return ErrPlacementGroup
+		case err != nil:
+			return fmt.Errorf("set placement %q: %w", placement.Name, err)
+		}
+		return requireCurrentPlacement(ctx, tx, environmentID, current, placement.Name)
+	})
 }
 
 // RemovePlacement removes a placement name from an environment and reports
 // whether it was assigned. Removing the default placement resets it to
-// deployment capacity.
-func RemovePlacement(ctx context.Context, q db.Querier, environmentID uuid.UUID, name string) (bool, error) {
+// deployment capacity; removing another placement the current deployment
+// uses is refused.
+func RemovePlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUID, name string) (bool, error) {
 	if err := ValidatePlacementName(name); err != nil {
 		return false, err
 	}
-	removed, err := q.DeleteEnvironmentPlacement(ctx, db.DeleteEnvironmentPlacementParams{EnvironmentID: pgvalue.UUID(environmentID), Name: name})
-	if err != nil {
-		return false, fmt.Errorf("remove placement %q: %w", name, err)
+	var removed int64
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		current, err := lockPlacements(ctx, tx, environmentID)
+		if err != nil {
+			return err
+		}
+		removed, err = db.New(tx).DeleteEnvironmentPlacement(ctx, db.DeleteEnvironmentPlacementParams{EnvironmentID: pgvalue.UUID(environmentID), Name: name})
+		if err != nil {
+			return fmt.Errorf("remove placement %q: %w", name, err)
+		}
+		return requireCurrentPlacement(ctx, tx, environmentID, current, name)
+	})
+	return removed > 0, err
+}
+
+// lockPlacements takes the environment lock promotion holds and returns the
+// current deployment, if any.
+func lockPlacements(ctx context.Context, tx pgx.Tx, environmentID uuid.UUID) (*uuid.UUID, error) {
+	var current *uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, environmentID).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrEnvironmentNotFound
 	}
-	return removed > 0, nil
+	return current, err
+}
+
+// requireCurrentPlacement refuses an edit that leaves the edited placement
+// unbound for the current deployment. Another placement that is already
+// unbound, for example because its group is draining, does not block it.
+func requireCurrentPlacement(ctx context.Context, tx pgx.Tx, environmentID uuid.UUID, current *uuid.UUID, name string) error {
+	if current == nil {
+		return nil
+	}
+	err := RequireDeploymentPlacements(ctx, tx, environmentID, *current)
+	var unbound UnboundPlacementsError
+	if !errors.As(err, &unbound) {
+		return err
+	}
+	edited := UnboundPlacementsError{}
+	if slices.Contains(unbound.Unassigned, name) {
+		edited.Unassigned = []string{name}
+	}
+	if slices.Contains(unbound.Retired, name) {
+		edited.Retired = []string{name}
+	}
+	if edited.Unassigned == nil && edited.Retired == nil {
+		return nil
+	}
+	return edited
+}
+
+// UnboundPlacementsError names the placements a deployment uses that have no
+// assignment in its environment or are assigned to a draining or disabled
+// group.
+type UnboundPlacementsError struct{ Unassigned, Retired []string }
+
+func (e UnboundPlacementsError) Error() string {
+	var parts []string
+	if len(e.Unassigned) > 0 {
+		parts = append(parts, "unassigned placements: "+strings.Join(e.Unassigned, ", "))
+	}
+	if len(e.Retired) > 0 {
+		parts = append(parts, "placements assigned to a draining or disabled worker group: "+strings.Join(e.Retired, ", "))
+	}
+	return "deployment placements are not bound in this environment; " + strings.Join(parts, "; ")
+}
+
+// RequireDeploymentPlacements checks that every placement a deployment's
+// templates use is bound in its environment to deployment capacity or to a
+// group that is not draining or disabled, and holds those groups until the
+// caller commits, so a group cannot retire under a check that passed. Image
+// platform needs no check in this release: bundles admit only linux/x86_64
+// images, which every VM platform runs. The caller holds the environment lock;
+// retirement never takes it.
+func RequireDeploymentPlacements(ctx context.Context, q db.DBTX, environmentID, deploymentID uuid.UUID) error {
+	rows, err := q.Query(ctx, `SELECT used.placement,p.name IS NULL AND used.placement<>$3,COALESCE(g.status IN ('draining','disabled'),false)
+ FROM (SELECT DISTINCT placement FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2) used
+ LEFT JOIN environment_placements p ON (p.environment_id,p.name)=($1,used.placement)
+ LEFT JOIN LATERAL (SELECT status FROM worker_groups WHERE id=p.worker_group_id FOR SHARE) g ON true
+ ORDER BY used.placement COLLATE "C"`, environmentID, deploymentID, definition.DefaultPlacement)
+	if err != nil {
+		return fmt.Errorf("read deployment placements: %w", err)
+	}
+	var unbound UnboundPlacementsError
+	var name string
+	var unassigned, retired bool
+	if _, err := pgx.ForEachRow(rows, []any{&name, &unassigned, &retired}, func() error {
+		if unassigned {
+			unbound.Unassigned = append(unbound.Unassigned, name)
+		}
+		if retired {
+			unbound.Retired = append(unbound.Retired, name)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("read deployment placements: %w", err)
+	}
+	if len(unbound.Unassigned) > 0 || len(unbound.Retired) > 0 {
+		return unbound
+	}
+	return nil
 }
 
 // ListPlacements returns an environment's placements by name, including the

@@ -64,7 +64,7 @@ func placedComputerFixture(t *testing.T, assign func(f fixture, group uuid.UUID)
 
 func assignDefault(t *testing.T) func(f fixture, group uuid.UUID) {
 	return func(f fixture, group uuid.UUID) {
-		if err := workergroup.SetPlacement(t.Context(), db.New(f.pool), f.env, workergroup.Placement{Name: definition.DefaultPlacement, WorkerGroupID: &group}); err != nil {
+		if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement, WorkerGroupID: &group}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,7 +116,7 @@ func TestPlacementKeepsDeploymentComputerOffOrganizationGroupPostgres(t *testing
 func TestPlacementRebindingMovesNoComputerPostgres(t *testing.T) {
 	f, _, computerID, _, _ := placedComputerFixture(t, assignDefault(t))
 	before := computerPin(t, f, computerID)
-	if err := workergroup.SetPlacement(t.Context(), db.New(f.pool), f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
 		t.Fatal(err)
 	}
 	if after := computerPin(t, f, computerID); after == nil || *after != *before {
@@ -147,7 +147,7 @@ func TestPlacementExistingComputerMustMatchAgentPlacementPostgres(t *testing.T) 
 	if err := explicit("other-capacity"); !errors.Is(err, workergroup.ErrComputerPlacement) {
 		t.Fatalf("deployment Computer reused under organization placement: %v", err)
 	}
-	if err := workergroup.SetPlacement(t.Context(), db.New(f.pool), f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
 		t.Fatal(err)
 	}
 	if err := explicit("same-capacity"); err != nil {
@@ -208,5 +208,35 @@ func TestPlacementDemandCountsOnlyTheServingGroupPostgres(t *testing.T) {
 				t.Fatalf("organization group queued demand = %v %v", queued, err)
 			}
 		})
+	}
+}
+
+func TestPlacementRetiredGroupRejectsNewWorkAtOncePostgres(t *testing.T) {
+	f := newAdmissionFixture(t)
+	group, _ := organizationCapacity(t, f)
+	assignDefault(t)(f, group)
+	// Retiring a group the current deployment's placement uses stays possible
+	// for platform safety; only placement edits and promotion keep the binding.
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), group, 1); err != nil {
+		t.Fatalf("drain a group in use: %v", err)
+	}
+	count := func(table string) int {
+		var n int
+		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table+` WHERE environment_id=$1`, f.env).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	sessions, computers := count("sessions"), count("computers")
+	for _, status := range []string{"draining", "disabled"} {
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status=$2 WHERE id=$1`, group, status)
+		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest(status))
+		var retired workergroup.GroupRetiredError
+		if !errors.As(err, &retired) || retired.Placement != definition.DefaultPlacement || retired.Status != status || !errors.Is(err, workergroup.ErrCapacityIncompatible) {
+			t.Fatalf("start under a %s group: %v", status, err)
+		}
+	}
+	if count("sessions") != sessions || count("computers") != computers {
+		t.Fatal("rejected work was queued")
 	}
 }
