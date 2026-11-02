@@ -136,14 +136,18 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits executionli
 	if !budget.Fits(cpu, memory, true) {
 		return ErrExecutionLimit
 	}
-	before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env)
+	target, err := workergroup.ComputerTarget(ctx, tx, env, id)
+	if err != nil {
+		return err
+	}
+	before, err := workergroup.ReadExecutionPlacement(ctx, tx, limits, env, target)
 	if err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id, ExecutionStartTimeout.Milliseconds()); err != nil {
 		return err
 	}
-	return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, id, before)
+	return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, target, id, before)
 }
 
 // RequireRetainedHostCapacity runs under the Host lock before a paused source

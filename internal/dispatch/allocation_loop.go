@@ -64,47 +64,48 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := a.database.Query(scanCtx, `WITH demand AS (
- SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id FROM image_builds p
+ SELECT p.environment_id,p.id,'preparation'::text kind,1::bigint epoch,NULL::uuid host_id,NULL::uuid pin FROM image_builds p
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  UNION ALL
- SELECT b.environment_id,b.id,'seed',b.executor_epoch+1,NULL::uuid FROM boot_seed_builds b
+ SELECT b.environment_id,b.id,'seed',b.executor_epoch+1,NULL::uuid,NULL::uuid FROM boot_seed_builds b
  WHERE b.status='queued' AND b.worker_host_id IS NULL AND b.executor_epoch<9223372036854775807
  AND (b.retry_after IS NULL OR b.retry_after<=statement_timestamp())
  AND EXISTS(SELECT 1 FROM environments e JOIN projects project ON project.id=e.project_id
- JOIN worker_groups g ON g.region_id=project.default_region_id AND g.status='active'
+ JOIN worker_groups g ON g.region_id=project.default_region_id AND g.owner_org_id IS NULL AND g.status='active'
  JOIN worker_pools p ON p.worker_group_id=g.id AND p.id=g.primary_pool_id AND p.status='active'
  WHERE e.id=b.environment_id AND p.optional_cpu_millis>=(b.cpu_millis+999)/1000*1000
  AND p.optional_memory_bytes>=b.memory_bytes AND p.optional_disk_bytes>0 AND p.optional_vm_slots>0
  AND p.optional_max_tasks>0 AND p.optional_io_bytes_per_second>0
  AND p.max_vm_slots>p.local_headroom_slots)
  UNION ALL
- SELECT c.environment_id,c.id,'computer',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id),0)+1,NULL::uuid FROM computers c
+ SELECT c.environment_id,c.id,'computer',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id),0)+1,NULL::uuid,c.worker_group_id FROM computers c
  WHERE c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.recovery_save_id IS NULL
  AND c.execution_deadline_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
  AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.epoch=9223372036854775807)
  UNION ALL
- SELECT c.environment_id,c.id,'recovery', (SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id)+1,NULL::uuid
+ SELECT c.environment_id,c.id,'recovery', (SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id)+1,NULL::uuid,c.worker_group_id
  FROM computers c LEFT JOIN computer_saves save ON (save.environment_id,save.id)=(c.environment_id,c.recovery_save_id)
  WHERE c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.image_id IS NOT NULL AND ((c.recovery_save_id IS NULL AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM computer_leases old WHERE old.environment_id=c.environment_id AND old.computer_id=c.id AND old.initialized_at IS NOT NULL)) OR (save.root_id IS NOT NULL AND save.status='published'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  UNION ALL
- SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid
- FROM checkpoints cp WHERE cp.status IN ('ready','restoring')
+ SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid,c.worker_group_id
+ FROM checkpoints cp JOIN computers c ON (c.environment_id,c.id)=(cp.environment_id,cp.computer_id) WHERE cp.status IN ('ready','restoring')
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND (EXISTS(SELECT 1 FROM computer_controls ctl WHERE ctl.environment_id=cp.environment_id AND ctl.computer_id=cp.computer_id AND ctl.kind='wake' AND ctl.status='accepted') OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
  UNION ALL
- SELECT s.environment_id,s.id,'process',COALESCE((SELECT max(p.epoch) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id),0)+1,l.worker_host_id
- FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id)
+ SELECT s.environment_id,s.id,'process',COALESCE((SELECT max(p.epoch) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id),0)+1,l.worker_host_id,c.worker_group_id
+ FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  WHERE s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND (p.fenced_at IS NULL OR p.epoch=9223372036854775807))
  ) SELECT d.environment_id,d.kind,d.id,h.id,d.epoch FROM demand d JOIN environments e ON e.id=d.environment_id
- JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.status='active'
+ JOIN projects project ON project.id=e.project_id CROSS JOIN LATERAL (SELECT d.pin worker_group_id) target
+ JOIN worker_groups g ON g.status='active' AND `+db.ServesTargetSQL+`
  JOIN worker_pools pool ON pool.worker_group_id=g.id AND (d.kind IN ('process','restore') OR pool.id=g.primary_pool_id) AND pool.status='active'
  JOIN worker_hosts h ON h.worker_group_id=g.id AND h.worker_pool_id=pool.id AND h.status='active' AND h.current_epoch IS NOT NULL
  AND h.observed_at>=statement_timestamp()-$5*interval '1 second'

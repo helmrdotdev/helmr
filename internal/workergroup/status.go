@@ -107,11 +107,12 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
  OR EXISTS(SELECT 1 FROM checkpoints c
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
- WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))`, groupID).Scan(&retained); err != nil {
+ WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))
+ OR EXISTS(SELECT 1 FROM computers c WHERE c.worker_group_id=$1 AND c.deleted_at IS NULL)`, groupID).Scan(&retained); err != nil {
 				return fmt.Errorf("read worker group dependencies: %w", err)
 			}
 			if retained {
-				return conflict("worker group retains physical custody or Computer checkpoints")
+				return conflict("worker group retains physical custody, Computer checkpoints or Computers pinned to it")
 			}
 		}
 		row, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{

@@ -95,7 +95,9 @@ type allocationSupply struct {
 // Every wait is bounded, including implicit FK/unique waits after Host UPDATE.
 // A failed candidate rolls back before the caller tries another Host.
 
-func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, primary bool) (allocationSupply, error) {
+// lockAllocationSupply admits only a Host whose group serves target. Work
+// never falls back between deployment and organization capacity.
+func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, target workergroup.Target, primary bool) (allocationSupply, error) {
 	s := allocationSupply{host: host}
 	if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
 		return s, err
@@ -106,6 +108,13 @@ func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, p
 	}
 	if err := tx.QueryRow(ctx, `SELECT worker_group_id,current_epoch FROM worker_hosts WHERE id=$1 AND current_epoch IS NOT NULL`, host).Scan(&s.group, &s.epoch); err != nil {
 		return s, err
+	}
+	serves, err := target.Serves(ctx, tx, env, s.group)
+	if err != nil {
+		return s, err
+	}
+	if !serves {
+		return s, ErrNotReady
 	}
 	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{
 		GroupID: pgvalue.UUID(s.group), HostID: pgvalue.UUID(host), Epoch: s.epoch,
@@ -215,7 +224,8 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, true)
+		target := workergroup.Target{}
+		supply, err := lockAllocationSupply(ctx, tx, env, host, target, true)
 		if err != nil {
 			return err
 		}
@@ -223,7 +233,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env, target)
 		if err != nil {
 			return err
 		}
@@ -295,7 +305,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if !current {
 			return ErrNotReady
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, target, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.Allocation{}, allocationError(err)
@@ -323,7 +333,11 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, true)
+		target, err := workergroup.ComputerTarget(ctx, tx, env, computerID)
+		if err != nil {
+			return err
+		}
+		supply, err := lockAllocationSupply(ctx, tx, env, host, target, true)
 		if err != nil {
 			return err
 		}
@@ -331,7 +345,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env, target)
 		if err != nil {
 			return err
 		}
@@ -381,7 +395,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, target, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
@@ -424,7 +438,11 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, false)
+		target, err := workergroup.ComputerTarget(ctx, tx, env, computerID)
+		if err != nil {
+			return err
+		}
+		supply, err := lockAllocationSupply(ctx, tx, env, host, target, false)
 		if err != nil {
 			return err
 		}
@@ -432,7 +450,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err != nil {
 			return err
 		}
-		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env)
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env, target)
 		if err != nil {
 			return err
 		}
@@ -506,7 +524,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, uuid.Nil(), before)
+		return workergroup.RequireExecutionPlacement(ctx, tx, a.limits, env, target, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
