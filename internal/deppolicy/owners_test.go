@@ -18,6 +18,8 @@ import (
 // Session failure transitions atomically when an execution admission expires.
 // Identity composes account and membership revocation with Slack-owned access
 // retirement in the same transaction; Slack remains the writer of its link tables.
+// Deployment promotion checks the Worker group placement binding under its
+// Environment lock; Worker groups remain the writer of placements.
 var ownerImports = map[string][]string{
 	"agent":       {"audit", "session", "slack", "slackroute", "computer", "org", "workergroup"},
 	"computer":    {"audit", "secret", "workergroup"},
@@ -25,7 +27,7 @@ var ownerImports = map[string][]string{
 	"dispatch":    {"audit", "session", "command", "computer", "secret", "org", "workergroup"},
 	"slack":       {"session", "slackroute", "computer", "audit", "workergroup"},
 	"slackroute":  {},
-	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit"},
+	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit", "workergroup"},
 	"command":     {"audit", "computer", "secret", "workergroup", "org"},
 	"identity":    {"org", "audit", "slack"},
 	"org":         {"audit"},
