@@ -64,17 +64,18 @@ func scopeOf(ctx context.Context) (workerapi.StorageScope, string, error) {
 }
 
 // renewBefore re-requests a cached grant this long before it expires, so a
-// request never starts on a grant about to lapse.
-const renewBefore = 30 * time.Second
+// request never starts on a grant about to lapse. A grant lasts at least
+// 50 s, since an allocation's lease is renewed every 10 s for a minute.
+const renewBefore = 15 * time.Second
 
 const (
 	publishAttempts = 3
 	partConcurrency = 4
-	// partAttempts and partRetryBase give each part the budget of the storage
-	// SDK's standard retryer: network failures, server errors, throttling and
-	// refused grants are retried with backoff.
-	partAttempts  = 3
-	partRetryBase = time.Second
+	// storageAttempts and storageRetryBase give each read and part the budget
+	// of the storage SDK's standard retryer: network failures, server errors,
+	// throttling and refused grants are retried with backoff.
+	storageAttempts  = 3
+	storageRetryBase = time.Second
 )
 
 type readKey struct{ scope, digest string }
@@ -128,28 +129,43 @@ func (s *Store) readGrant(ctx context.Context, digest string, renew bool) (worke
 	return grant, nil
 }
 
-// read issues one signed read, renewing the grant once if storage rejects it.
+// read issues one signed read. A refused grant is renewed and retried at once;
+// network failures, server errors and throttling are retried with backoff.
 func (s *Store) read(ctx context.Context, digest string, head bool, header http.Header) (*http.Response, error) {
-	for attempt := range 2 {
-		grant, err := s.readGrant(ctx, digest, attempt > 0)
-		if err != nil {
-			return nil, err
+	var err error
+	renew := false
+	for attempt := range storageAttempts {
+		if attempt > 0 && !renew {
+			if err := storageBackoff(ctx, attempt); err != nil {
+				return nil, err
+			}
+		}
+		grant, grantErr := s.readGrant(ctx, digest, renew)
+		if grantErr != nil {
+			return nil, grantErr
 		}
 		signed := grant.Get
 		if head {
 			signed = grant.Head
 		}
-		response, err := s.send(ctx, signed, header, nil, 0)
-		if err != nil {
-			return nil, err
-		}
-		if response.StatusCode == http.StatusForbidden && attempt == 0 {
+		response, sendErr := s.send(ctx, signed, header, nil, 0)
+		renew = false
+		switch {
+		case sendErr != nil:
+			if !errors.Is(sendErr, cas.ErrUnavailable) {
+				return nil, sendErr
+			}
+			err = sendErr
+		case response.StatusCode == http.StatusForbidden:
 			drain(response)
-			continue
+			renew, err = true, errors.New("storage refused the read grant")
+		case response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500:
+			err = statusError(response)
+		default:
+			return response, nil
 		}
-		return response, nil
 	}
-	return nil, errors.New("storage read retry exhausted")
+	return nil, fmt.Errorf("storage read retry exhausted: %w", err)
 }
 
 func (s *Store) send(ctx context.Context, signed cas.SignedRequest, extra http.Header, body io.Reader, length int64) (*http.Response, error) {
@@ -369,9 +385,9 @@ func (s *Store) multipart(ctx context.Context, scope workerapi.StorageScope, obj
 				offset := int64(number-1) * upload.PartSize
 				length := min(upload.PartSize, object.SizeBytes-offset)
 				var err error
-				for attempt := range partAttempts {
+				for attempt := range storageAttempts {
 					if attempt > 0 {
-						if err := partBackoff(groupCtx, attempt); err != nil {
+						if err := storageBackoff(groupCtx, attempt); err != nil {
 							return err
 						}
 					}
@@ -429,10 +445,10 @@ func (s *Store) part(ctx context.Context, grant cas.SignedRequest, file *os.File
 	return etag, nil
 }
 
-// partBackoff waits before retry attempt n (n >= 1) with full jitter, doubling
-// from partRetryBase as the storage SDK's standard retryer does.
-var partBackoff = func(ctx context.Context, n int) error {
-	delay := time.Duration(rand.Int64N(int64(partRetryBase << (n - 1))))
+// storageBackoff waits before retry attempt n (n >= 1) with full jitter, doubling
+// from storageRetryBase as the storage SDK's standard retryer does.
+var storageBackoff = func(ctx context.Context, n int) error {
+	delay := time.Duration(rand.Int64N(int64(storageRetryBase << (n - 1))))
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {

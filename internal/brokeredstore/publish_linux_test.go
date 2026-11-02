@@ -40,8 +40,8 @@ func TestPublishMultipartCompletesOrAborts(t *testing.T) {
 		t.Fatalf("completed %+v, aborted %v", g.completed, g.aborted)
 	}
 	failed, other := publishedFile(t, []byte("abcdefghij"))
-	defer func(original func(context.Context, int) error) { partBackoff = original }(partBackoff)
-	partBackoff = func(context.Context, int) error { return nil }
+	defer func(original func(context.Context, int) error) { storageBackoff = original }(storageBackoff)
+	storageBackoff = func(context.Context, int) error { return nil }
 	g.failParts = 1 << 20
 	if _, err := store.Publish(scoped(t), other, failed); err == nil || !g.aborted {
 		t.Fatalf("failed part = %v, aborted %v", err, g.aborted)
@@ -52,8 +52,8 @@ func TestPublishMultipartCompletesOrAborts(t *testing.T) {
 // backoff under a renewed grant, as the storage SDK retried it before.
 func TestPublishMultipartRetriesTransientPartFailures(t *testing.T) {
 	waits := 0
-	defer func(original func(context.Context, int) error) { partBackoff = original }(partBackoff)
-	partBackoff = func(context.Context, int) error { waits++; return nil }
+	defer func(original func(context.Context, int) error) { storageBackoff = original }(storageBackoff)
+	storageBackoff = func(context.Context, int) error { waits++; return nil }
 	g := newGrantServer(t)
 	store, _ := New(g, workerapi.StorageCAS, g.storage.Client())
 	file, descriptor := publishedFile(t, []byte("0123456789"))

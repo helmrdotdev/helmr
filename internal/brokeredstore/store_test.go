@@ -30,6 +30,8 @@ type grantServer struct {
 	aborted   bool
 	expired   bool // the next storage request is refused as an expired grant
 	failParts int  // part uploads to refuse with a server error before accepting one
+	failReads int  // reads to refuse with throttling before serving one
+	dropReads int  // reads to fail at the connection before serving one
 	dropParts int  // part uploads to fail at the connection before accepting one
 	partGrant int  // part grants issued
 	partSize  int64
@@ -53,6 +55,17 @@ func (g *grantServer) serve(w http.ResponseWriter, r *http.Request) {
 	digest := strings.TrimPrefix(r.URL.Path, "/")
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
+		if g.dropReads > 0 {
+			g.dropReads--
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+			return
+		}
+		if g.failReads > 0 {
+			g.failReads--
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		body, ok := g.objects[digest]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -233,6 +246,28 @@ func TestStorageReadsVerifyAndRenew(t *testing.T) {
 	}
 	if _, err := store.Stat(ctx, sha256sum.DigestBytes([]byte("missing"))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing object = %v", err)
+	}
+}
+
+// Reads retry network failures, server errors and throttling with backoff up
+// to the storage SDK's budget, then report storage as unavailable.
+func TestStorageReadsRetryUnavailableStorage(t *testing.T) {
+	defer func(original func(context.Context, int) error) { storageBackoff = original }(storageBackoff)
+	waits := 0
+	storageBackoff = func(context.Context, int) error { waits++; return nil }
+	g := newGrantServer(t)
+	store, _ := New(g, workerapi.StorageCAS, g.storage.Client())
+	ctx := scoped(t)
+	body := []byte("object bytes")
+	digest := sha256sum.DigestBytes(body)
+	g.objects[digest] = body
+	g.failReads, g.dropReads = 1, 1
+	if object, err := store.Stat(ctx, digest); err != nil || object.SizeBytes != int64(len(body)) || waits != 2 {
+		t.Fatalf("stat after transient failures = %+v, %v; %d waits", object, err, waits)
+	}
+	g.failReads = storageAttempts
+	if _, err := store.Stat(ctx, digest); !errors.Is(err, cas.ErrUnavailable) {
+		t.Fatalf("stat of unavailable storage = %v", err)
 	}
 }
 
