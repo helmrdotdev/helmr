@@ -47,7 +47,8 @@ Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
 `COMPUTER_FENCING_KEY`. The `CAS_URI` bucket must have versioning enabled:
 multipart uploads are published only from the exact object version the Control
-Plane verified. Configure `GITHUB_OAUTH_CLIENT_ID` and
+Plane verified. It should also expire objects under its `staging/` prefix and
+abort incomplete multipart uploads after a day; the AWS modules configure both. Configure `GITHUB_OAUTH_CLIENT_ID` and
 `GITHUB_OAUTH_CLIENT_SECRET` together to enable GitHub login; both may be omitted.
 
 Deployment uploads require the same explicit process configuration in Managed
