@@ -190,6 +190,9 @@ func ValidateComputerSourceAbort(ctx context.Context, limits executionlimit.Limi
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
+			return err
+		}
 		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
 			return err
 		}
@@ -264,6 +267,9 @@ func CommitComputerSourceAbort(ctx context.Context, limits executionlimit.Limits
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
+			return err
+		}
 		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
 			return err
 		}
@@ -331,6 +337,9 @@ func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Po
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)
@@ -401,6 +410,9 @@ func RecordCheckpointSaveAbsence(ctx context.Context, pool db.TxBeginner, host w
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)

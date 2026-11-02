@@ -228,6 +228,12 @@ func TestAdminHTTPWorkerGroups(t *testing.T) {
 		t.Fatalf("rotated token = %+v", token)
 	}
 	assertAdminError(t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+uuid.NewV7().String()+"/token/rotate", admin, ""), http.StatusNotFound, "not_found")
+
+	revoked := decodeAdmin[api.RevokeWorkerGroupHostCredentialsResponse](t, f.request(t, http.MethodPost, path+"/host-credentials/revoke", admin, ""), http.StatusOK)
+	if revoked.FencedWorkerHostIDs == nil || len(revoked.FencedWorkerHostIDs) != 0 {
+		t.Fatalf("revoked host credentials of a group without hosts = %+v", revoked)
+	}
+	assertAdminError(t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+uuid.NewV7().String()+"/host-credentials/revoke", admin, ""), http.StatusNotFound, "not_found")
 }
 
 func TestAdminHTTPWorkerPools(t *testing.T) {

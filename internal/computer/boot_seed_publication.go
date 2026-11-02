@@ -57,6 +57,9 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 		if err := LockHost(ctx, tx, host); err != nil {
 			return false, err
 		}
+		if err := RequireHostBootSeedBuild(ctx, tx, host, ref.EnvironmentID, ref.BuildID); err != nil {
+			return false, err
+		}
 		build, err := LockBootSeedBuild(ctx, tx, ref.EnvironmentID, ref.BuildID)
 		if err != nil {
 			return false, err

@@ -40,6 +40,9 @@ func ListHostProcesses(ctx context.Context, database db.TxBeginner, host workerg
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		var owned, closed bool
 		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id=$5 AND l.worker_epoch=$6 AND l.allocation_id=$4,l.fenced_at IS NOT NULL OR c.deleted_at IS NOT NULL
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)

@@ -249,6 +249,28 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, api.RotateWorkerGroupTokenResponse{EnrollmentToken: token})
 }
 
+func (s *Server) adminRevokeWorkerGroupHostCredentials(w http.ResponseWriter, r *http.Request) {
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
+	if actorErr != nil {
+		s.writeOperationError(w, r, actorErr)
+		return
+	}
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return
+	}
+	fenced, err := workergroup.RevokeGroupHostCredentials(r.Context(), s.tx, s.auditPolicy, actor, groupID)
+	if err != nil {
+		s.writeWorkerGroupError(w, r, err)
+		return
+	}
+	response := api.RevokeWorkerGroupHostCredentialsResponse{FencedWorkerHostIDs: make([]string, 0, len(fenced))}
+	for _, hostID := range fenced {
+		response.FencedWorkerHostIDs = append(response.FencedWorkerHostIDs, hostID.String())
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
 	groupID, ok := adminGroupID(w, r)
 	if !ok {

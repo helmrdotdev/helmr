@@ -217,6 +217,7 @@ POST /admin/api/v1/worker-groups
 POST /admin/api/v1/worker-groups/{groupID}/activate
 POST /admin/api/v1/worker-groups/{groupID}/disable
 POST /admin/api/v1/worker-groups/{groupID}/drain
+POST /admin/api/v1/worker-groups/{groupID}/host-credentials/revoke
 POST /admin/api/v1/worker-groups/{groupID}/pause
 POST /admin/api/v1/worker-groups/{groupID}/pools
 POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/disable

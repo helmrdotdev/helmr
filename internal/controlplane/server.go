@@ -394,6 +394,7 @@ func (s *Server) mountAdminRoutes(r chi.Router) {
 		r.Post("/worker-groups/{groupID}/drain", s.adminDrainWorkerGroup)
 		r.Post("/worker-groups/{groupID}/disable", s.adminDisableWorkerGroup)
 		r.Post("/worker-groups/{groupID}/token/rotate", s.adminRotateWorkerGroupToken)
+		r.Post("/worker-groups/{groupID}/host-credentials/revoke", s.adminRevokeWorkerGroupHostCredentials)
 		r.Get("/worker-groups/{groupID}/pools", s.adminListWorkerPools)
 		r.Post("/worker-groups/{groupID}/pools", s.adminCreateWorkerPool)
 		r.Post("/worker-groups/{groupID}/pools/{poolID}/primary", s.adminSwitchWorkerPoolPrimary)

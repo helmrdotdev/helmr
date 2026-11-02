@@ -65,6 +65,23 @@ func lockCommandLease(ctx context.Context, tx pgx.Tx, target db.GetCommandTarget
 	}
 	return l, err
 }
+
+// requireHostCommand returns pgx.ErrNoRows, exactly as a missing Command would,
+// unless the Command's lease is held by the host epoch. It reads without
+// locking, so another host's Command is neither locked nor distinguishable.
+func requireHostCommand(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, id uuid.UUID) error {
+	var held bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM commands c JOIN computer_leases l
+ ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.computer_lease_epoch)
+ WHERE c.environment_id=$1 AND c.id=$2 AND l.worker_host_id=$3 AND l.worker_epoch=$4)`, env, id, host.HostID, host.Epoch).Scan(&held); err != nil {
+		return err
+	}
+	if !held {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 func (l Lease) matches(host workergroup.HostPrincipal, instance uuid.UUID, epoch int64) bool {
 	return l.Epoch > 0 && l.InstanceID == instance && l.Epoch == epoch && l.HostID == host.HostID && l.WorkerEpoch == host.Epoch
 }

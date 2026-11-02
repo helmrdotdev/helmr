@@ -101,6 +101,9 @@ func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergr
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
+			return err
+		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
@@ -144,6 +147,9 @@ type UnsealedCaptureEvidence struct {
 func CancelUnsealedComputerCapture(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, evidence UnsealedCaptureEvidence) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if err := requireHostCheckpointSource(ctx, tx, host, env, checkpoint); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)

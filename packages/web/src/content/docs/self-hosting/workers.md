@@ -149,6 +149,33 @@ destinations your agents call. They do not install dependencies or build Deploym
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 
+## Host secrets, token rotation and revocation
+
+Enrollment returns a host secret that the worker stores in
+`worker-host-secret.json` and exchanges for 15-minute host credentials. The host
+secret stays valid until its host is fenced, for example after it stops sending
+heartbeats, or until the group's host credentials are revoked.
+
+Two Admin API operations change worker group credentials, with different effects:
+
+- **Rotate token** (`POST /admin/api/v1/worker-groups/{id}/token/rotate`) replaces
+  the group's enrollment token. The old token stops enrolling hosts immediately.
+  Enrolled hosts keep their host secrets and keep running. Propagate the new token
+  to the group's provisioning before hosts are replaced.
+- **Revoke host credentials** (`POST /admin/api/v1/worker-groups/{id}/host-credentials/revoke`)
+  fences every registering, active and draining host of the group as lost and
+  revokes every host secret the group issued. Their host credentials and Secret
+  proxy grants fail every authorization check from then on; a request already
+  authorized before the revocation may still complete. Their allocations are
+  reconciled as host loss. The response lists the fenced host IDs. The enrollment
+  token is unchanged, so a machine that still holds it can enroll again. Each fenced host is audited as `worker_host.marked_lost`.
+
+When an enrollment token or a host may be compromised, rotate the token first,
+then revoke the group's host credentials, and replace the hosts with ones
+provisioned with the new token. Revocation does not stop processes or erase data
+already on a host, including keys and Secret values it received; confirm
+physical cleanup before releasing custody.
+
 ## Drain and replace
 
 Set an explicit `worker_count` when enabling workers. The reference stacks set

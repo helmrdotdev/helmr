@@ -34,6 +34,9 @@ func RenewLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
+		if err := RequireHostLease(ctx, tx, host, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+			return err
+		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID).Scan(&id); err != nil {
 			return err

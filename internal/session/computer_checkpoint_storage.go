@@ -142,6 +142,9 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPub
 	if err := computer.LockHost(ctx, tx, ref.Host); err != nil {
 		return r, nil, false, err
 	}
+	if err := requireHostCheckpointSource(ctx, tx, ref.Host, ref.EnvironmentID, m.CheckpointID); err != nil {
+		return r, nil, false, err
+	}
 	r, err := LockCapture(ctx, tx, ref.EnvironmentID, m.CheckpointID)
 	if err != nil {
 		return r, nil, false, err

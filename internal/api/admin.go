@@ -58,6 +58,10 @@ type RotateWorkerGroupTokenResponse struct {
 	EnrollmentToken string `json:"enrollment_token"`
 }
 
+type RevokeWorkerGroupHostCredentialsResponse struct {
+	FencedWorkerHostIDs []string `json:"fenced_worker_host_ids"`
+}
+
 type AdminWorkerPool struct {
 	ID            string `json:"id"`
 	WorkerGroupID string `json:"worker_group_id"`
