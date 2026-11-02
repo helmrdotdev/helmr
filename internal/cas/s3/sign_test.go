@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,7 +121,10 @@ type completionClient struct {
 	// existingMedia is the media type of an object already at the digest key.
 	existingMedia string
 	// noChecksum storage ignores the requested checksum of a copy.
-	noChecksum bool
+	noChecksum  bool
+	mu          sync.Mutex
+	ranges      []string
+	pinnedReads int
 }
 
 func (c *completionClient) version(id string) *string {
@@ -165,9 +169,29 @@ func (c *completionClient) pinned(etag, source string) bool {
 	return etag == `"staged"` && strings.HasSuffix(source, "?versionId=v1")
 }
 
+// GetObject serves ranges of the staged object, which is version v1. A read
+// that names a version must also name its entity tag.
 func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
+	c.mu.Lock()
 	c.read = true
-	return &awss3.GetObjectOutput{ETag: aws.String(`"staged"`), VersionId: c.version("v1"), Body: io.NopCloser(bytes.NewReader(c.staged)), ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(cas.CheckpointMemoryMediaType)}, nil
+	c.ranges = append(c.ranges, aws.ToString(input.Range))
+	if input.VersionId != nil {
+		c.pinnedReads++
+	}
+	c.mu.Unlock()
+	if input.VersionId != nil && (aws.ToString(input.VersionId) != "v1" || aws.ToString(input.IfMatch) != `"staged"`) {
+		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "read a version other than the first one read"}
+	}
+	var start, end int64
+	if _, err := fmt.Sscanf(aws.ToString(input.Range), "bytes=%d-%d", &start, &end); err != nil || start > end || start >= int64(len(c.staged)) {
+		return nil, fmt.Errorf("unexpected range %q", aws.ToString(input.Range))
+	}
+	end = min(end, int64(len(c.staged))-1)
+	return &awss3.GetObjectOutput{
+		ETag: aws.String(`"staged"`), VersionId: c.version("v1"), Body: io.NopCloser(bytes.NewReader(c.staged[start : end+1])),
+		ContentLength: aws.Int64(end - start + 1), ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, end, len(c.staged))),
+		ContentType: aws.String(cas.CheckpointMemoryMediaType),
+	}, nil
 }
 
 // CopyObject computes the full checksum of an in-place copy of the staged
@@ -239,12 +263,12 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 				client := &completionClient{staged: test.staged, exists: test.exists}
 				store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
 				if readBack {
-					// Larger than one server-side copy: read back once, never twice.
-					store.copyObjectMaxBytes = 32
+					// Larger than one server-side copy: read back in six ranges.
+					store.copyObjectMaxBytes, store.readBackRangeBytes = 32, 16
 				}
 				object, err := store.CompleteUpload(t.Context(), descriptor, upload, test.parts)
 				if test.valid {
-					if err != nil || object.Digest != descriptor.Digest || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || client.read != readBack || client.inPlace == readBack {
+					if err != nil || object.Digest != descriptor.Digest || client.completed != staging || (client.copied != final) == !test.exists || !slices.Contains(client.deleted, staging) || client.read != readBack || client.inPlace == readBack || (readBack && (len(client.ranges) != 6 || client.pinnedReads != 5)) {
 						t.Fatalf("complete = %+v, %v; completed %q copied %q deleted %v", object, err, client.completed, client.copied, client.deleted)
 					}
 					return

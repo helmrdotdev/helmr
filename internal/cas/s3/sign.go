@@ -18,6 +18,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"golang.org/x/sync/errgroup"
 )
 
 // MultipartThresholdBytes is the smallest descriptor published in parts.
@@ -27,6 +28,12 @@ const (
 	// s3CopyObjectMaxBytes is the largest single server-side copy.
 	s3CopyObjectMaxBytes = 5 << 30
 	s3CopyPartBytes      = 1 << 30
+	// s3ReadBackRangeBytes and s3ReadBackConcurrency bound a read back to
+	// eight 16-MiB ranges in flight or awaiting the hash, 128 MiB in all.
+	s3ReadBackRangeBytes  = 16 << 20
+	s3ReadBackConcurrency = 8
+	// s3CopyPartConcurrency is how many server-side part copies run at once.
+	s3CopyPartConcurrency = 8
 )
 
 type presigner interface {
@@ -315,31 +322,103 @@ func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas
 	return aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId), nil
 }
 
-// verifyStaged reads an object too large for one server-side copy back,
-// requires the descriptor's exact bytes, size and media type, and returns the
-// entity tag and version of what it read.
+// verifyStaged reads an object too large for one server-side copy back
+// through the Control Plane and hashes it. The first range fixes the version
+// and entity tag; every later range is read from that version only, and the
+// ranges are hashed in order while the following ones are in flight. It returns
+// the entity tag and version of what it read.
 func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
-	output, err := c.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging)})
+	rangeBytes := c.readBackRange()
+	first, etag, version, err := c.readStagedRange(ctx, staging, "", "", 0, min(rangeBytes, expected.SizeBytes), expected)
 	if err != nil {
-		return "", "", storageFailure(ctx, err)
+		return "", "", err
 	}
-	if output == nil || output.Body == nil {
-		return "", "", errors.New("missing staged object body")
+	if !immutableVersion(version) {
+		return "", "", errors.New("storage returned no immutable version for the staged object; the bucket must be versioned")
 	}
-	etag := aws.ToString(output.ETag)
-	if etag == "" || aws.ToInt64(output.ContentLength) != expected.SizeBytes || aws.ToString(output.ContentType) != expected.MediaType {
-		_ = output.Body.Close()
-		return "", "", fmt.Errorf("%w: staged object metadata differs from its descriptor", cas.ErrRemoteIntegrity)
+	ranges := int((expected.SizeBytes + rangeBytes - 1) / rangeBytes)
+	results := make([]chan []byte, ranges)
+	for i := range results {
+		results[i] = make(chan []byte, 1)
 	}
+	results[0] <- first
+	slots := make(chan struct{}, s3ReadBackConcurrency)
+	slots <- struct{}{}
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		for i := 1; i < ranges; i++ {
+			select {
+			case slots <- struct{}{}:
+			case <-groupCtx.Done():
+				return groupCtx.Err()
+			}
+			offset := int64(i) * rangeBytes
+			group.Go(func() error {
+				body, _, _, err := c.readStagedRange(groupCtx, staging, etag, version, offset, min(rangeBytes, expected.SizeBytes-offset), expected)
+				if err != nil {
+					return err
+				}
+				results[i] <- body
+				return nil
+			})
+		}
+		return nil
+	})
 	hash := sha256.New()
-	n, readErr := io.Copy(hash, io.LimitReader(output.Body, expected.SizeBytes+1))
-	if err := errors.Join(readErr, output.Body.Close()); err != nil {
-		return "", "", storageFailure(ctx, err)
+	group.Go(func() error {
+		for i := range ranges {
+			select {
+			case body := <-results[i]:
+				hash.Write(body)
+			case <-groupCtx.Done():
+				return groupCtx.Err()
+			}
+			<-slots
+		}
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		return "", "", err
 	}
-	if n != expected.SizeBytes || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != expected.Digest {
+	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != expected.Digest {
 		return "", "", fmt.Errorf("%w: staged bytes differ from digest %s", cas.ErrRemoteIntegrity, expected.Digest)
 	}
-	return etag, aws.ToString(output.VersionId), nil
+	return etag, version, nil
+}
+
+// readStagedRange reads length bytes at offset of the staged object. With an
+// entity tag and version it reads only that version; without, it reports the
+// version it read.
+func (c *Store) readStagedRange(ctx context.Context, staging, etag, version string, offset, length int64, expected cas.Descriptor) ([]byte, string, string, error) {
+	input := &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging), Range: aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))}
+	if version != "" {
+		input.VersionId, input.IfMatch = aws.String(version), aws.String(etag)
+	}
+	output, err := c.client.GetObject(ctx, input)
+	if err != nil {
+		return nil, "", "", storageFailure(ctx, err)
+	}
+	if output == nil || output.Body == nil {
+		return nil, "", "", errors.New("missing staged object body")
+	}
+	if aws.ToString(output.ETag) == "" || aws.ToString(output.ContentType) != expected.MediaType ||
+		aws.ToString(output.ContentRange) != fmt.Sprintf("bytes %d-%d/%d", offset, offset+length-1, expected.SizeBytes) {
+		_ = output.Body.Close()
+		return nil, "", "", fmt.Errorf("%w: staged object metadata differs from its descriptor", cas.ErrRemoteIntegrity)
+	}
+	body := make([]byte, length)
+	_, readErr := io.ReadFull(output.Body, body)
+	if err := errors.Join(readErr, output.Body.Close()); err != nil {
+		return nil, "", "", storageFailure(ctx, err)
+	}
+	return body, aws.ToString(output.ETag), aws.ToString(output.VersionId), nil
+}
+
+func (c *Store) readBackRange() int64 {
+	if c.readBackRangeBytes > 0 {
+		return c.readBackRangeBytes
+	}
+	return s3ReadBackRangeBytes
 }
 
 // promoteStaged copies verified staged bytes to the digest key create-only.
@@ -368,17 +447,26 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 		return storageFailure(ctx, err)
 	}
 	uploadID := aws.ToString(created.UploadId)
-	var parts []types.CompletedPart
-	for offset, number := int64(0), int32(1); offset < expected.SizeBytes; offset, number = offset+s3CopyPartBytes, number+1 {
+	parts := make([]types.CompletedPart, (expected.SizeBytes+s3CopyPartBytes-1)/s3CopyPartBytes)
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(s3CopyPartConcurrency)
+	for i := range parts {
+		offset, number := int64(i)*s3CopyPartBytes, int32(i+1)
 		end := min(offset+s3CopyPartBytes, expected.SizeBytes) - 1
-		copied, err := c.client.UploadPartCopy(ctx, &awss3.UploadPartCopyInput{
-			Bucket: aws.String(c.bucket), Key: aws.String(key), UploadId: aws.String(uploadID), PartNumber: aws.Int32(number),
-			CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag), CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
+		group.Go(func() error {
+			copied, err := c.client.UploadPartCopy(groupCtx, &awss3.UploadPartCopyInput{
+				Bucket: aws.String(c.bucket), Key: aws.String(key), UploadId: aws.String(uploadID), PartNumber: aws.Int32(number),
+				CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag), CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
+			})
+			if err != nil || copied == nil || copied.CopyPartResult == nil {
+				return storageFailure(groupCtx, errors.Join(err, errors.New("server-side part copy returned no result")))
+			}
+			parts[i] = types.CompletedPart{PartNumber: aws.Int32(number), ETag: copied.CopyPartResult.ETag}
+			return nil
 		})
-		if err != nil || copied == nil || copied.CopyPartResult == nil {
-			return errors.Join(storageFailure(ctx, err), c.abortMultipartUpload(ctx, key, uploadID))
-		}
-		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(number), ETag: copied.CopyPartResult.ETag})
+	}
+	if err := group.Wait(); err != nil {
+		return errors.Join(err, c.abortMultipartUpload(ctx, key, uploadID))
 	}
 	_, err = c.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
 		Bucket: aws.String(c.bucket), Key: aws.String(key), UploadId: aws.String(uploadID),
