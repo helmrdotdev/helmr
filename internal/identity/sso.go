@@ -57,7 +57,14 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 		if err != nil {
 			return err
 		}
+		// The member, then the binding: the order member retirement takes.
 		if err := admitSSOProof(ctx, tx, b, a.AuthenticatedAt); err != nil {
+			return err
+		}
+		if err := sso.HoldBinding(ctx, tx, b); errors.Is(err, sso.ErrNotBound) {
+			result.Unbound = true
+			return nil
+		} else if err != nil {
 			return err
 		}
 		existing, err := liveBrowserSession(ctx, tx, cfg, raw)

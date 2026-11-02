@@ -15,10 +15,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// requestedMaxAge makes IdPs that honor max_age return auth_time. Helmr's own
-// browser SSO proof lifetime is enforced separately.
-const requestedMaxAge = 30 * 24 * time.Hour
-
 // clockSkew bounds how far an IdP authentication time may lie in the future.
 const clockSkew = 5 * time.Minute
 
@@ -55,14 +51,16 @@ func NewOIDC(ctx context.Context, client *http.Client, issuer, clientID, clientS
 	}, nil
 }
 
-// AuthURL starts a sign-in. reauthenticate asks the IdP to authenticate the
-// person again even when it has a session.
-func (o *OIDC) AuthURL(state, nonce, pkceVerifier string, reauthenticate bool) string {
+// AuthURL starts a sign-in. maxAge is the organization's proof lifetime: an
+// IdP that honors it authenticates again rather than return an older sign-in,
+// and returns auth_time. reauthenticate asks the IdP to authenticate the person
+// again even when it has a session.
+func (o *OIDC) AuthURL(state, nonce, pkceVerifier string, maxAge time.Duration, reauthenticate bool) string {
 	opts := []oauth2.AuthCodeOption{oidc.Nonce(nonce), oauth2.S256ChallengeOption(pkceVerifier)}
 	if reauthenticate {
 		opts = append(opts, oauth2.SetAuthURLParam("prompt", "login"), oauth2.SetAuthURLParam("max_age", "0"))
 	} else {
-		opts = append(opts, oauth2.SetAuthURLParam("max_age", strconv.Itoa(int(requestedMaxAge.Seconds()))))
+		opts = append(opts, oauth2.SetAuthURLParam("max_age", strconv.Itoa(int(maxAge.Seconds()))))
 	}
 	return o.config.AuthCodeURL(state, opts...)
 }

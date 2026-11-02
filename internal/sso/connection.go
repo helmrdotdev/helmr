@@ -148,6 +148,13 @@ func (s *Store) Active(ctx context.Context, q db.DBTX, org uuid.UUID) (Connectio
  FROM org_sso_connections WHERE org_id=$1 AND state='active'`, org))
 }
 
+// HasActive reports whether an organization has an active connection.
+func HasActive(ctx context.Context, q db.DBTX, org uuid.UUID) (bool, error) {
+	var active bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM org_sso_connections WHERE org_id=$1 AND state='active')`, org).Scan(&active)
+	return active, err
+}
+
 // ActiveByID reads an active connection without locking it, for callbacks that
 // name the connection. The transaction acting on the callback rechecks it.
 func (s *Store) ActiveByID(ctx context.Context, q db.DBTX, id uuid.UUID) (Connection, error) {

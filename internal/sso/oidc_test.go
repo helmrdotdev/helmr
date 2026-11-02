@@ -87,8 +87,8 @@ func TestOIDCAuthURLAndDiscovery(t *testing.T) {
 		reauth bool
 		prompt string
 		maxAge string
-	}{{false, "", "2592000"}, {true, "login", "0"}} {
-		u, _ := url.Parse(o.AuthURL("state", "nonce", "verifier-verifier-verifier-verifier-verifier", tc.reauth))
+	}{{false, "", "86400"}, {true, "login", "0"}} {
+		u, _ := url.Parse(o.AuthURL("state", "nonce", "verifier-verifier-verifier-verifier-verifier", DefaultProofLifetime, tc.reauth))
 		q := u.Query()
 		if q.Get("prompt") != tc.prompt || q.Get("max_age") != tc.maxAge || q.Get("nonce") != "nonce" || q.Get("code_challenge_method") != "S256" || !strings.Contains(q.Get("scope"), "openid") {
 			t.Fatalf("reauth=%v query %v", tc.reauth, q)

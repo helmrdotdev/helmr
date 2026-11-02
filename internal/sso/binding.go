@@ -40,17 +40,29 @@ func LockActive(ctx context.Context, tx pgx.Tx, connection uuid.UUID) (uuid.UUID
 	return org, err
 }
 
-// LiveBinding returns the live binding of a connection subject, held against
-// retirement for the rest of the caller's transaction.
-func LiveBinding(ctx context.Context, tx pgx.Tx, connection uuid.UUID, subject string) (Binding, error) {
+// LiveBinding finds the live binding of a connection subject without locking
+// it. Member retirement locks the member before the binding, so a caller locks
+// the member next and then holds the binding with HoldBinding.
+func LiveBinding(ctx context.Context, q db.DBTX, connection uuid.UUID, subject string) (Binding, error) {
 	var b Binding
-	err := tx.QueryRow(ctx, `SELECT b.id,b.org_id,b.identity_id,b.member_id,b.user_id FROM org_sso_identities i
+	err := q.QueryRow(ctx, `SELECT b.id,b.org_id,b.identity_id,b.member_id,b.user_id FROM org_sso_identities i
  JOIN org_sso_member_bindings b ON b.identity_id=i.id AND b.retired_at IS NULL
- WHERE i.connection_id=$1 AND i.subject=$2 FOR SHARE OF b`, connection, subject).Scan(&b.ID, &b.OrgID, &b.IdentityID, &b.MemberID, &b.UserID)
+ WHERE i.connection_id=$1 AND i.subject=$2`, connection, subject).Scan(&b.ID, &b.OrgID, &b.IdentityID, &b.MemberID, &b.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Binding{}, ErrNotBound
 	}
 	return b, err
+}
+
+// HoldBinding holds a live binding against retirement for the rest of the
+// caller's transaction.
+func HoldBinding(ctx context.Context, tx pgx.Tx, b Binding) error {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM org_sso_member_bindings WHERE id=$1 AND retired_at IS NULL FOR SHARE`, b.ID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotBound
+	}
+	return err
 }
 
 // Link binds a connection subject to a membership of user. The subject belongs

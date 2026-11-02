@@ -6,8 +6,25 @@ export type SSOBinding = { organization_id: string; organization_name: string; p
 
 const unauthenticated = { redirectOnUnauthorized: false } as const;
 
-export const startSSO = (input: { organization?: string; next?: string; invitation_token?: string; reauthenticate?: boolean }) =>
-  postJson<typeof input, { redirect_url: string }>("/api/auth/sso/start", input, unauthenticated);
+type Start = { organization?: string; next?: string; invitation_token?: string; reauthenticate?: boolean };
+const START_KEY = "helmr.sso-start";
+
+// The start is remembered for this tab so a sign-in the identity provider
+// answered with a stale authentication can be repeated with a fresh one.
+export function startSSO(input: Start) {
+  try { sessionStorage.setItem(START_KEY, JSON.stringify({ ...input, reauthenticate: undefined })); } catch { /* the retry is a convenience */ }
+  return postJson<Start, { redirect_url: string }>("/api/auth/sso/start", input, unauthenticated);
+}
+
+// restartSSO repeats this tab's last SSO start, asking the identity provider to
+// authenticate again. It returns false when there is nothing to repeat.
+export async function restartSSO(): Promise<boolean> {
+  let saved: Start | undefined;
+  try { saved = JSON.parse(sessionStorage.getItem(START_KEY) ?? "null") ?? undefined; } catch { saved = undefined; }
+  if (!saved) return false;
+  window.location.assign((await startSSO({ ...saved, reauthenticate: true })).redirect_url);
+  return true;
+}
 export const finishOIDC = (input: { code: string; state: string; error?: string; error_description?: string }) =>
   postJson<typeof input, { redirect_after: string }>("/api/auth/sso/oidc/finish", input, unauthenticated);
 export const finishSAML = () => postJson<Record<string, never>, { redirect_after: string }>("/api/auth/sso/saml/finish", {}, unauthenticated);

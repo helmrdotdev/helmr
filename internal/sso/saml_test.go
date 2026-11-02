@@ -1,7 +1,11 @@
 package sso
 
 import (
+	"bytes"
+	"compress/flate"
+	"encoding/base64"
 	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"testing"
@@ -243,4 +247,26 @@ func evilAssertion(a *etree.Element) *etree.Element {
 	}
 	setNameID(c, attacker)
 	return c
+}
+
+func TestSAMLForcedReauthentication(t *testing.T) {
+	sp := testSP(t, ssotest.NewIdP(t), time.Now())
+	for _, force := range []bool{false, true} {
+		redirect, requestID, err := sp.AuthnRequest(force)
+		if err != nil || requestID == "" {
+			t.Fatalf("request = %q, %v", requestID, err)
+		}
+		u, _ := url.Parse(redirect)
+		deflated, err := base64.StdEncoding.DecodeString(u.Query().Get("SAMLRequest"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		inflated, err := io.ReadAll(flate.NewReader(bytes.NewReader(deflated)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(inflated), `ForceAuthn="true"`); got != force {
+			t.Fatalf("force=%v request %s", force, inflated)
+		}
+	}
 }

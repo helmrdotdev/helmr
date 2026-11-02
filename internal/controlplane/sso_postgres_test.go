@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/sso"
 	"github.com/helmrdotdev/helmr/internal/sso/ssotest"
 	"github.com/jackc/pgx/v5"
@@ -175,7 +176,10 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	}
 }
 
-func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
+// newOIDCFixture serves an organization "acme" whose active connection is the
+// local OIDC issuer.
+func newOIDCFixture(t *testing.T) (httpPostgresFixture, *ssotest.OIDCIssuer, uuid.UUID) {
+	t.Helper()
 	issuer := ssotest.NewOIDCIssuer(t)
 	store, err := sso.NewStore(make([]byte, 32))
 	if err != nil {
@@ -200,6 +204,11 @@ func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	return f, issuer, orgID
+}
+
+func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
+	f, issuer, orgID := newOIDCFixture(t)
 	alice := f.user(t, "Alice")
 	f.member(t, orgID, alice, "member")
 	console := f.origin
@@ -246,5 +255,72 @@ func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
 	bindings := browser.do(t, http.MethodGet, "/api/account/sso/bindings", "", console, nil)
 	if !strings.Contains(bindings.Body.String(), `"subject":"alice-oidc"`) || !strings.Contains(bindings.Body.String(), `"protocol":"oidc"`) {
 		t.Fatalf("bindings = %d %s", bindings.Code, bindings.Body)
+	}
+}
+
+// oidcAnswer has the issuer answer the authorization request in redirect for
+// subject, and returns the state to finish with.
+func oidcAnswer(t *testing.T, issuer *ssotest.OIDCIssuer, body []byte, subject string, authTime time.Time) url.Values {
+	t.Helper()
+	var redirect struct {
+		RedirectURL string `json:"redirect_url"`
+	}
+	if err := json.Unmarshal(body, &redirect); err != nil {
+		t.Fatal(err)
+	}
+	authorize, err := url.Parse(redirect.RedirectURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := authorize.Query()
+	issuer.Nonce = query.Get("nonce")
+	issuer.Claims = func(nonce string) map[string]any {
+		return map[string]any{"iss": issuer.Server.URL, "aud": "helmr", "sub": subject, "nonce": nonce,
+			"iat": time.Now().Unix(), "auth_time": authTime.Unix(), "exp": time.Now().Add(time.Hour).Unix(), "email": subject + "@example.test"}
+	}
+	return query
+}
+
+func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
+	f, issuer, orgID := newOIDCFixture(t)
+	alice := f.user(t, "Alice")
+	member := f.member(t, orgID, alice, "member")
+	identity, binding := uuid.NewV7(), uuid.NewV7()
+	var connection uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM org_sso_connections WHERE org_id=$1`, orgID).Scan(&connection); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,'alice',$4)`, identity, orgID, connection, alice)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, binding, orgID, identity, member, alice)
+	console := f.origin
+	browser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
+
+	started := browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"acme"}`, console, nil)
+	query := oidcAnswer(t, issuer, started.Body.Bytes(), "alice", time.Now().Add(-48*time.Hour))
+	if query.Get("max_age") != "86400" || query.Get("prompt") != "" {
+		t.Fatalf("authorization query = %v", query)
+	}
+	stale := browser.do(t, http.MethodPost, "/api/auth/sso/oidc/finish", `{"state":"`+query.Get("state")+`","code":"good-code"}`, console, nil)
+	if stale.Code != http.StatusForbidden || !strings.Contains(stale.Body.String(), "sso_reauthentication_required") {
+		t.Fatalf("stale authentication = %d %s", stale.Code, stale.Body)
+	}
+	started = browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"acme","reauthenticate":true}`, console, nil)
+	query = oidcAnswer(t, issuer, started.Body.Bytes(), "alice", time.Now())
+	if query.Get("prompt") != "login" || query.Get("max_age") != "0" {
+		t.Fatalf("forced authorization query = %v", query)
+	}
+	fresh := browser.do(t, http.MethodPost, "/api/auth/sso/oidc/finish", `{"state":"`+query.Get("state")+`","code":"good-code"}`, console, nil)
+	if fresh.Code != http.StatusOK || browser.cookies["__Host-helmr_session"] == nil {
+		t.Fatalf("fresh authentication = %d %s", fresh.Code, fresh.Body)
+	}
+	selected := map[string]string{"X-Helmr-Organization": orgID.String()}
+	context := browser.do(t, http.MethodGet, "/api/organization", "", console, selected)
+	if context.Code != http.StatusOK || !strings.Contains(context.Body.String(), `"sso":true`) {
+		t.Fatalf("organization context = %d %s", context.Code, context.Body)
+	}
+	for _, path := range []string{"/api/organizations", "/api/auth/invitations/accept"} {
+		if got := browser.do(t, http.MethodPost, path, `{"name":"Other","slug":"other","token":"x"}`, console, nil); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "ordinary_sign_in_required") {
+			t.Fatalf("%s from an SSO-only session = %d %s", path, got.Code, got.Body)
+		}
 	}
 }

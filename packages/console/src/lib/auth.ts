@@ -3,10 +3,10 @@ import { ApiError, postJson, request, selectedOrganization, setOrganization } fr
 export type Account = {user_id:string;display_name:string;profile_image_url:string;primary_email:string};
 export type OrganizationMembership = {id:string;name:string;slug:string;membership_id:string;authentication_required:string};
 export type AuthConfig = {deployment_mode:string;methods:string[];email_delivery:boolean;app_origin:string;signup_enabled:boolean;organization_creation_enabled:boolean;single_organization?:OrganizationMembership;setup_required:boolean};
-export type OrganizationContext = {id:string;name:string;slug:string;current_member:{id:string;user_id:string;display_name:string;is_owner:boolean;permissions:string[];permission_scopes:{project:string;environment:string;agent?:string;permissions:string[]}[]};authentication:{authenticated_at:string};onboarding:{project_required:boolean}};
+export type OrganizationContext = {id:string;name:string;slug:string;current_member:{id:string;user_id:string;display_name:string;is_owner:boolean;permissions:string[];permission_scopes:{project:string;environment:string;agent?:string;permissions:string[]}[]};authentication:{authenticated_at:string};onboarding:{project_required:boolean};sso:boolean};
 // Console projection; account and organization have distinct API/proof sources.
 export type Me = Account & {
- org_id?:string;org_name?:string;app_origin:string;membership_id?:string;is_owner:boolean;
+ org_id?:string;org_name?:string;org_sso:boolean;app_origin:string;membership_id?:string;is_owner:boolean;
  permissions:string[];permission_scopes:OrganizationContext["current_member"]["permission_scopes"];
  organization_access_denied?:boolean;organization_required:boolean;project_required:boolean;access_required:boolean;
  email_delivery:boolean;organizations:OrganizationMembership[];organization_selection_required:boolean;setup_required:boolean;
@@ -26,7 +26,7 @@ export async function getMe():Promise<Me>{
  }
  return {...account,organization_access_denied:denied,app_origin:config.app_origin,email_delivery:config.email_delivery,organizations:memberships.organizations,
  ...(context?{org_id:context.id,org_name:context.name,membership_id:context.current_member.id}:{}),
- is_owner:context?.current_member.is_owner??false,permissions:context?.current_member.permissions??[],permission_scopes:context?.current_member.permission_scopes??[],
+ org_sso:context?.sso??false,is_owner:context?.current_member.is_owner??false,permissions:context?.current_member.permissions??[],permission_scopes:context?.current_member.permission_scopes??[],
  organization_required:!context&&memberships.organizations.length===0&&config.organization_creation_enabled,
  access_required:!context&&memberships.organizations.length===0&&!config.organization_creation_enabled,
  organization_selection_required:!denied&&!context&&memberships.organizations.length>0,

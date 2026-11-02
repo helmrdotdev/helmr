@@ -1,14 +1,15 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
-import { createSignal, Match, onMount, Switch } from "solid-js";
+import { createSignal, Match, onMount, Show, Switch } from "solid-js";
 import { finishGitHubAuth } from "../lib/auth";
-import { finishOIDC, finishSAML } from "../lib/sso";
+import { ApiError } from "../lib/api";
+import { finishOIDC, finishSAML, restartSSO } from "../lib/sso";
 import { returnPath } from "../lib/continuation";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthError, AuthMissing, AuthWindow, AuthWorking } from "../ui/AuthWindow";
 import { cx, ui } from "../ui/styles";
 
 type Params = Record<string, string | undefined>;
-type Outcome = { kind: "working" } | { kind: "missing" } | ({ kind: "failed" } & Failure);
+type Outcome = { kind: "working" } | { kind: "missing" } | ({ kind: "failed"; code?: string } & Failure);
 
 function readParams(params: Record<string, string | string[] | undefined>): Params {
   return Object.fromEntries(Object.entries(params).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]));
@@ -27,7 +28,7 @@ function NextStep() {
 // The return from a sign-in provider: finish the sign-in with the parameters it
 // sent, drop them from the address bar, and continue where the person started.
 // `finish` returns null when a required parameter is missing.
-function SignInCallback(props: { path: string; finish: (params: Params) => Promise<{ redirect_after: string }> | null }) {
+function SignInCallback(props: { path: string; finish: (params: Params) => Promise<{ redirect_after: string }> | null; sso?: boolean }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [outcome, setOutcome] = createSignal<Outcome>({ kind: "working" });
@@ -44,7 +45,7 @@ function SignInCallback(props: { path: string; finish: (params: Params) => Promi
       const result = await pending;
       navigate(returnPath(result.redirect_after), { replace: true });
     } catch (error) {
-      setOutcome({ kind: "failed", ...describeFailure(error, AUTH_MESSAGES, "Sign in could not be completed.") });
+      setOutcome({ kind: "failed", ...(error instanceof ApiError && error.code ? { code: error.code } : {}), ...describeFailure(error, AUTH_MESSAGES, "Sign in could not be completed.") });
     }
   });
 
@@ -60,7 +61,11 @@ function SignInCallback(props: { path: string; finish: (params: Params) => Promi
       <Match when={outcome().kind === "failed" ? outcome() as Extract<Outcome, { kind: "failed" }> : undefined}>
         {(failure) => (
           <AuthWindow>
-            <AuthError title="Sign in failed" message={failure().message} details={failure().details} action={<NextStep />} />
+            <AuthError title="Sign in failed" message={failure().message} details={failure().details} action={
+              <Show when={props.sso && failure().code === "sso_reauthentication_required"} fallback={<NextStep />}>
+                <button type="button" class={cx(ui.button, "auth-full")} onClick={() => void restartSSO().then(started => { if (!started) window.location.assign("/login"); })}>Sign in again with single sign-on</button>
+              </Show>
+            } />
           </AuthWindow>
         )}
       </Match>
@@ -85,6 +90,7 @@ export function AuthGitHubCallback() {
 export function AuthSSOOIDCCallback() {
   return (
     <SignInCallback
+      sso
       path="/sso/oidc/callback"
       finish={(params) => finishOIDC({
         code: params["code"] ?? "",
@@ -99,5 +105,5 @@ export function AuthSSOOIDCCallback() {
 // The SAML response was validated when the identity provider posted it; this
 // page finishes the sign-in with this browser's own session.
 export function AuthSSOSAMLCallback() {
-  return <SignInCallback path="/sso/callback" finish={() => finishSAML()} />;
+  return <SignInCallback sso path="/sso/callback" finish={() => finishSAML()} />;
 }

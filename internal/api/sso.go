@@ -1,8 +1,8 @@
 package api
 
 type SSOStartRequest struct {
-	// Organization is the organization slug. Self-hosted deployments with one
-	// organization may omit it.
+	// Organization is the organization slug. An invitation names its own
+	// organization, and self-hosted deployments with one organization may omit it.
 	Organization    string `json:"organization,omitempty"`
 	Next            string `json:"next,omitempty"`
 	InvitationToken string `json:"invitation_token,omitempty"`

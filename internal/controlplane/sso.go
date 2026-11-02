@@ -72,23 +72,24 @@ func (s *Server) ssoStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	connection, err := s.startConnection(r.Context(), request.Organization)
-	if err != nil {
-		writeError(w, identityError(err))
-		return
-	}
 	flow := browserAuthFlow{Kind: browserAuthSSOSignIn, RedirectAfter: validateRedirectAfter(request.Next)}
+	var connection sso.Connection
+	var err error
 	if request.InvitationToken != "" {
+		// An invitation names its organization.
 		invitation, tokenHash, err := s.resolveInvitation(r, request.InvitationToken)
 		if err != nil {
 			s.writeIdentityError(w, r, err)
 			return
 		}
-		if invitation.OrgID != connection.OrgID {
-			writeError(w, badRequest(errors.New("the invitation is for another organization")))
+		if connection, err = s.invitationConnection(r.Context(), invitation.OrgID); err != nil {
+			writeError(w, identityError(err))
 			return
 		}
 		flow.TokenHash = base64.RawURLEncoding.EncodeToString(tokenHash)
+	} else if connection, err = s.startConnection(r.Context(), request.Organization); err != nil {
+		writeError(w, identityError(err))
+		return
 	}
 	s.writeSSOStart(w, r, connection, flow, request.Reauthenticate)
 }
@@ -113,6 +114,13 @@ func (s *Server) startConnection(ctx context.Context, slug string) (sso.Connecti
 		return sso.Connection{}, sso.ErrConnectionNotFound
 	}
 	return s.ssoStore.Active(ctx, s.tx, uuid.UUID(ids[0].Bytes))
+}
+
+func (s *Server) invitationConnection(ctx context.Context, org uuid.UUID) (sso.Connection, error) {
+	if s.ssoStore == nil {
+		return sso.Connection{}, sso.ErrConnectionNotFound
+	}
+	return s.ssoStore.Active(ctx, s.tx, org)
 }
 
 func (s *Server) writeSSOStart(w http.ResponseWriter, r *http.Request, connection sso.Connection, flow browserAuthFlow, reauthenticate bool) {
@@ -141,7 +149,12 @@ func (s *Server) writeSSOStart(w http.ResponseWriter, r *http.Request, connectio
 			writeError(w, unavailable(errors.New("the identity provider is unavailable")))
 			return
 		}
-		redirect = client.AuthURL(flow.State, flow.Nonce, flow.Verifier, reauthenticate)
+		lifetime, err := sso.ProofLifetime(r.Context(), s.tx, connection.OrgID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		redirect = client.AuthURL(flow.State, flow.Nonce, flow.Verifier, lifetime, reauthenticate)
 		encoded, err := s.encodeAuthFlow(flow)
 		if err != nil {
 			writeError(w, errors.New("encode auth flow"))
@@ -246,10 +259,14 @@ func (s *Server) ssoOIDCFinish(w http.ResponseWriter, r *http.Request) {
 // ssoSAMLACS receives the IdP's cross-site post. It answers with a redirect to
 // the Console in every case.
 func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
-	fail := func(code string) {
-		http.Redirect(w, r, "/login?sso_error="+url.QueryEscape(code), http.StatusSeeOther)
-	}
 	var flow browserAuthFlow
+	fail := func(code string) {
+		page := "/login"
+		if flow.Kind == browserAuthSSOSelfLink {
+			page = "/settings/security"
+		}
+		http.Redirect(w, r, page+"?sso_error="+url.QueryEscape(code), http.StatusSeeOther)
+	}
 	cookie, err := r.Cookie(samlFlowCookieName(r))
 	if err == nil {
 		flow, err = s.decodeAuthFlowValue(cookie.Value)

@@ -1,3 +1,4 @@
+import { useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { listSignInMethods, removeSignInMethod, revokeAllAccess, revokeOtherAccess, startGitHubLink, type SignInMethod } from "../lib/account";
@@ -36,7 +37,9 @@ export function AccountSecurity() {
   const [revokingOthers, setRevokingOthers] = createSignal(false);
   const [linking, setLinking] = createSignal(false);
   const [notice, setNotice] = createSignal("");
-  const [error, setError] = createSignal("");
+  // A SAML self-link the server refused returns here with its code.
+  const [params] = useSearchParams();
+  const [error, setError] = createSignal(typeof params["sso_error"] === "string" ? AUTH_MESSAGES[params["sso_error"]] ?? AUTH_MESSAGES["authentication_invalid"]! : "");
   const bindings = createQuery(() => ({ queryKey: ["account", "sso-bindings"], queryFn: listSSOBindings }));
   const [linkingSSO, setLinkingSSO] = createSignal(false);
   const linkSSO = async (organizationID: string) => {
@@ -78,7 +81,7 @@ export function AccountSecurity() {
           </DataTable>
         )}
       </QueryState>
-      <Panel title="Company SSO" actions={<Show when={me.data?.org_id && !linkedHere() ? me.data.org_id : undefined}>{organization => (
+      <Panel title="Company SSO" actions={<Show when={me.data?.org_id && me.data.org_sso && !linkedHere() ? me.data.org_id : undefined}>{organization => (
         <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization())}>{linkingSSO() ? "Linking…" : `Link company SSO for ${me.data?.org_name ?? "this organization"}`}</button>
       )}</Show>}>
         <p class={cx(ui.muted, "m-0")}>Organizations where you can sign in with your company identity provider. Linking needs a recent sign-in, and your company account's email can differ from your Helmr email.</p>

@@ -317,3 +317,39 @@ func TestOrdinarySignInKeepsSSOProofsOfTheSession(t *testing.T) {
 		t.Fatalf("confirmed session = %+v, %v", p, err)
 	}
 }
+
+// Member removal locks the member and then retires its binding. A concurrent
+// sign-in takes the same order, so it waits for the removal and is refused
+// instead of deadlocking with it.
+func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
+	f := newSSOFixture(t)
+	user := f.user(t, "Alice", "alice@example.test")
+	member := f.member(t, f.org, user, "member")
+	f.bind(t, "alice-subject", member, user)
+	removal, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = removal.Rollback(t.Context()) }()
+	if _, err := removal.Exec(t.Context(), `SELECT id FROM org_members WHERE id=$1 FOR UPDATE`, member); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("alice-subject", "", time.Now()), "", uuid.Nil())
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if _, err := removal.Exec(t.Context(), `UPDATE org_sso_member_bindings SET retired_at=clock_timestamp() WHERE member_id=$1`, member); err != nil {
+		t.Fatalf("removal blocked behind the sign-in: %v", err)
+	}
+	if _, err := removal.Exec(t.Context(), `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member); err != nil {
+		t.Fatal(err)
+	}
+	if err := removal.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrSSONotEligible) {
+		t.Fatalf("sign-in concurrent with removal: %v", err)
+	}
+}

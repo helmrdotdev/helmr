@@ -40,6 +40,13 @@ func (s *Server) organizationContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Onboarding.ProjectRequired = !projects && p.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: p.OrgID})
+	if s.ssoStore != nil {
+		var err error
+		if response.SSO, err = sso.HasActive(r.Context(), s.tx, p.OrgID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	grants, err := access.MemberGrants(r.Context(), s.tx, p.OrgID, p.MemberID)
 	if err != nil {
 		writeError(w, err)
