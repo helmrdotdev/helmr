@@ -28,6 +28,11 @@ export interface TemplateDefinition {
   readonly id: string
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
+  /**
+   * Logical name for the capacity that runs Computers created from this
+   * Template; it never names a worker group or machine. Omitted: "default".
+   */
+  readonly placement?: string
   readonly network?: NetworkPolicy
   /** Replaces preparation outbound policy; omission inherits network. */
   readonly prepareNetwork?: NetworkPolicy

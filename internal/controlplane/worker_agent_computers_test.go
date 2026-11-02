@@ -25,7 +25,7 @@ func runtimeDiscoveryEnvironment(t *testing.T, original sessiontest.Fixture) ses
       INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,$3,bundle_digest FROM deployments WHERE environment_id=$1 AND id=$6;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1 AND id=$6;
       INSERT INTO templates(environment_id,id,key) VALUES($2,$3,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($2,$3,$3,$3,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement) VALUES($2,$3,$3,$3,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}','default');
       INSERT INTO agents(environment_id,id,key) VALUES($2,$4,'agent');
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($2,$4,$3,$3,false,'{"kind":"unrestricted"}');
       INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour',$3,$3,1000,536870912,NULL,34359738368);
@@ -128,8 +128,8 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('2',64));
-      INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy)
-        SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+      INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement)
+        SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy)
         SELECT environment_id,agent_id,$3,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
       UPDATE environments SET current_deployment_id=$3 WHERE id=$1;

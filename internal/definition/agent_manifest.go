@@ -47,6 +47,9 @@ type TemplateInputManifest struct {
 	Refresh             *ComputerRefresh  `json:"refresh,omitempty"`
 	Secrets             []SecretBinding   `json:"secrets"`
 	PrepareSecrets      []SecretBinding   `json:"prepareSecrets"`
+	// Placement is always present; the compiler writes DefaultPlacement when
+	// the Template names none.
+	Placement string `json:"placement"`
 }
 
 func ValidateAgentManifest(m AgentManifest) error {
@@ -115,6 +118,7 @@ func ValidateSecretBindings(refs []SecretBinding) error {
 // A seed is not an eligible prepared revision; preparation must publish that output.
 type TemplateManifest struct {
 	DeleteAfterUnusedMs *int64               `json:"deleteAfterUnusedMs"`
+	Placement           string               `json:"placement"`
 	Seed                ComputerSeedManifest `json:"seed"`
 	Resources           ResourcesManifest    `json:"resources"`
 	Network             json.RawMessage      `json:"network"`
@@ -135,6 +139,9 @@ func ValidateTemplateManifest(m TemplateManifest) error {
 	if err := ValidateUnusedPolicy(m.DeleteAfterUnusedMs); err != nil {
 		return err
 	}
+	if err := ValidatePlacement(m.Placement); err != nil {
+		return err
+	}
 	if m.Seed.Profile != ComputerSeedProfile || m.Seed.MediaType != ComputerSeedMediaType {
 		return errors.New("unsupported Computer seed contract")
 	}
@@ -148,6 +155,19 @@ func ValidateTemplateManifest(m TemplateManifest) error {
 }
 
 var computerSeedDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// DefaultPlacement is the placement of a Template that names none. It maps to
+// deployment capacity unless its environment assigns it to a group.
+const DefaultPlacement = "default"
+
+// ValidatePlacement accepts a logical placement name. The name never identifies
+// a worker group; each environment binds it to capacity.
+func ValidatePlacement(name string) error {
+	if !ValidDeclaredID(name) {
+		return errors.New("invalid Computer placement")
+	}
+	return nil
+}
 
 func ValidateUnusedPolicy(duration *int64) error {
 	if duration != nil && !positiveSafeInteger(*duration) {

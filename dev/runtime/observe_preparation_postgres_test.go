@@ -78,8 +78,8 @@ func TestVerificationObservationPreparationPath(t *testing.T) {
 	// All referencing Deployments are historical facts, with a bounded output.
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO deployments(environment_id,id,bundle_digest)
  SELECT $1,gen_random_uuid(),'sha256:'||lpad(to_hex(n),64,'0') FROM generate_series(2,258) n`, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy)
- SELECT d.environment_id,d.id,t.template_id,t.image_spec_id,t.cpu_millis,t.memory_bytes,t.network_policy,t.prepare_network_policy FROM deployments d JOIN template_definitions t ON t.environment_id=d.environment_id AND t.deployment_id=$2 WHERE d.environment_id=$1 AND d.id<>$2`, f.Environment, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy,placement)
+ SELECT d.environment_id,d.id,t.template_id,t.image_spec_id,t.cpu_millis,t.memory_bytes,t.network_policy,t.prepare_network_policy,t.placement FROM deployments d JOIN template_definitions t ON t.environment_id=d.environment_id AND t.deployment_id=$2 WHERE d.environment_id=$1 AND d.id<>$2`, f.Environment, f.Deployment)
 	bounded := read(f.Environment, first)
 	if len(bounded["referencing_definitions"].([]any)) != 256 || bounded["definitions_have_more"] != true {
 		t.Fatalf("unbounded definitions=%v", bounded)

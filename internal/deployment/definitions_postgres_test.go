@@ -23,6 +23,7 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	every := int64(1001)
 	output.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every}
+	output.Metadata.Definitions[2].Template.Placement = "secure"
 	register := func(deployment uuid.UUID, output artifact.ProgramOutput) error {
 		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
@@ -47,8 +48,9 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	}
 	var gotEvery int64
 	var scheduled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.image_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &scheduled); err != nil || gotEvery != every || scheduled {
-		t.Fatalf("policy %d scheduled=%v: %v", gotEvery, scheduled, err)
+	var placement string
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,s.next_refresh_at IS NOT NULL,d.placement FROM template_definitions d JOIN image_specs s ON s.environment_id=d.environment_id AND s.id=d.image_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &scheduled, &placement); err != nil || gotEvery != every || scheduled || placement != "secure" {
+		t.Fatalf("policy %d scheduled=%v placement=%q: %v", gotEvery, scheduled, placement, err)
 	}
 	// A failed registration never leaves a new input row behind.
 	third := uuid.NewV7()

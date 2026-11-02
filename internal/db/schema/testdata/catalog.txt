@@ -1085,6 +1085,7 @@ column template_definitions.environment_id uuid not null
 column template_definitions.image_spec_id uuid not null
 column template_definitions.memory_bytes bigint not null
 column template_definitions.network_policy jsonb not null
+column template_definitions.placement text not null
 column template_definitions.prepare boolean not null default false
 column template_definitions.prepare_network_policy jsonb not null
 column template_definitions.refresh_every_ms bigint
@@ -2256,6 +2257,7 @@ constraint template_definitions c CHECK (cpu_millis > 0)
 constraint template_definitions c CHECK (delete_after_unused_ms > 0)
 constraint template_definitions c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
 constraint template_definitions c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
+constraint template_definitions c CHECK (placement ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
 constraint template_definitions c CHECK (prepare OR prepare_network_policy = '{"kind": "block"}'::jsonb)
 constraint template_definitions c CHECK (refresh_every_ms > 0)
 constraint template_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)

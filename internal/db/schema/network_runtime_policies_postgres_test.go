@@ -72,7 +72,7 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 		var value string
 		if err := pool.QueryRow(ctx, `
 			SELECT jsonb_build_object(
-				'templates', (SELECT jsonb_agg(to_jsonb(d) - 'network_policy' - 'prepare_network_policy'
+				'templates', (SELECT jsonb_agg(to_jsonb(d) - 'network_policy' - 'prepare_network_policy' - 'placement'
 				                             ORDER BY template_id) FROM template_definitions d),
 				'agents', (SELECT jsonb_agg(to_jsonb(d) - 'runtime_mcp_policy'
 				                          ORDER BY agent_id) FROM agent_definitions d),

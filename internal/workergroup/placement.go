@@ -13,10 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// DefaultPlacement is the placement of a template that names none. It maps to
-// deployment capacity unless its environment assigns it to a group.
-const DefaultPlacement = "default"
-
 var (
 	ErrEnvironmentNotFound = errors.New("environment not found")
 	// ErrPlacementGroup rejects assigning a placement to a group that is not
@@ -46,7 +42,7 @@ func SetPlacement(ctx context.Context, q db.Querier, environmentID uuid.UUID, pl
 	if err := ValidatePlacementName(placement.Name); err != nil {
 		return err
 	}
-	if placement.Name == DefaultPlacement && placement.WorkerGroupID == nil {
+	if placement.Name == definition.DefaultPlacement && placement.WorkerGroupID == nil {
 		_, err := RemovePlacement(ctx, q, environmentID, placement.Name)
 		return err
 	}
@@ -91,8 +87,8 @@ func ListPlacements(ctx context.Context, q db.Querier, environmentID uuid.UUID) 
 	placements := make([]Placement, 0, len(rows)+1)
 	defaulted := false
 	for _, row := range rows {
-		if !defaulted && row.Name > DefaultPlacement {
-			placements = append(placements, Placement{Name: DefaultPlacement})
+		if !defaulted && row.Name > definition.DefaultPlacement {
+			placements = append(placements, Placement{Name: definition.DefaultPlacement})
 			defaulted = true
 		}
 		placement := Placement{Name: row.Name}
@@ -100,11 +96,11 @@ func ListPlacements(ctx context.Context, q db.Querier, environmentID uuid.UUID) 
 			group := pgvalue.MustUUIDValue(row.WorkerGroupID)
 			placement.WorkerGroupID = &group
 		}
-		defaulted = defaulted || row.Name == DefaultPlacement
+		defaulted = defaulted || row.Name == definition.DefaultPlacement
 		placements = append(placements, placement)
 	}
 	if !defaulted {
-		placements = append(placements, Placement{Name: DefaultPlacement})
+		placements = append(placements, Placement{Name: definition.DefaultPlacement})
 	}
 	return placements, nil
 }

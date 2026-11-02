@@ -53,8 +53,8 @@ VALUES($1::uuid,$2::uuid,$9::text,now()-interval '3 days');
 INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed,created_at)
 VALUES($1::uuid,$3::uuid,$9::text,'{}','{}',now()-interval '3 days');
 INSERT INTO templates(environment_id,id,key) VALUES($1::uuid,$3::uuid,'demo-computer');
-INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy)
-VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912,'{"kind":"ordinary"}','{"kind":"block"}');
+INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy,placement)
+VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912,'{"kind":"ordinary"}','{"kind":"block"}','default');
 INSERT INTO agents(environment_id,id,key) VALUES
 ($1::uuid,$4::uuid,'demo-agent'),($1::uuid,$10::uuid,'demo-triage'),($1::uuid,$11::uuid,'demo-reporter');
 INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES

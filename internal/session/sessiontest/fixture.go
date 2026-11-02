@@ -67,7 +67,7 @@ func New(t *testing.T) Fixture {
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
       INSERT INTO templates(environment_id,id,key) VALUES($4,$5,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($4,$5,$5,$5,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement) VALUES($4,$5,$5,$5,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}','default');
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
       INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($4,$7,$5,$5,false,'{"kind":"unrestricted"}');
       INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));

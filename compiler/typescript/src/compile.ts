@@ -11,6 +11,7 @@ export const BUILD_PLAN_FORMAT_VERSION = 0 as const
 export interface TemplateManifest {
   /** Null means never. */
   readonly deleteAfterUnusedMs: number | null
+  readonly placement: string
   readonly imageBuild: ImageBuild
   readonly resources: { readonly milliCpu: number; readonly memoryMiB: number; readonly diskMiB?: number }
   readonly network: NetworkPolicy
@@ -144,6 +145,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
       prepare: definition.prepare !== undefined, network, ...(prepareNetwork === undefined ? {} : { prepareNetwork }),
       deleteAfterUnusedMs: retention(definition.deleteAfterUnused, DEFAULT_RETENTION, "deleteAfterUnused"),
+      placement: placement(definition.placement, definition.id),
       ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every") } }),
       secrets, prepareSecrets,
     } }
@@ -178,15 +180,23 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
   for (const { definition } of found.values()) {
     if (definition.kind === "template") {
       if (Object.hasOwn(definition,"buildSecrets")) throw new Error("Computer buildSecrets was renamed to prepareSecrets")
-      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "prepareSecrets", "network", "prepareNetwork", "deleteAfterUnused"], "Computer")
+      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "prepareSecrets", "network", "prepareNetwork", "deleteAfterUnused", "placement"], "Computer")
       if (definition.prepare !== undefined && typeof definition.prepare !== "function") throw new Error("Computer prepare must be a function")
     }
   }
   if (found.size === 0 || found.size > 10_000) throw new Error("BuildPlan definitions must contain 1 to 10000 definitions")
   return [...found.values()].sort((a, b) => compareUTF8(a.definition.kind, b.definition.kind) || compareUTF8(a.definition.id, b.definition.id))
 }
+const DEFINITION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 function validateID(value: unknown): asserts value is string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) throw new Error("Definition id is invalid")
+  if (typeof value !== "string" || !DEFINITION_ID.test(value)) throw new Error("Definition id is invalid")
+}
+/** Templates without a placement run on the environment's default placement. */
+const DEFAULT_PLACEMENT = "default"
+function placement(value: unknown, id: string): string {
+  if (value === undefined) return DEFAULT_PLACEMENT
+  if (typeof value !== "string" || !DEFINITION_ID.test(value)) throw new Error(`${id}.placement is invalid`)
+  return value
 }
 function assertMembers(value: unknown, allowed: readonly string[], label: string): void {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error(`${label} has invalid or unknown members`)

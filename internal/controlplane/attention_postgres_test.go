@@ -241,7 +241,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$4,$5);
  INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$4,$5,'{}','{}');
  INSERT INTO templates(environment_id,id,key) VALUES($1,$4,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($1,$4,$4,$4,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy,placement) VALUES($1,$4,$4,$4,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}','default');
  INSERT INTO agents(environment_id,id,key) VALUES($1,$6,'second-agent');
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($1,$6,$4,$4,false,'{"kind":"unrestricted"}');
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$7,$6,$4,$7,0,$12);

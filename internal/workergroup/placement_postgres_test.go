@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -193,13 +194,13 @@ func TestPlacementsPostgres(t *testing.T) {
 	deployment := pgvalue.MustUUIDValue(f.group.ID)
 
 	placements, err := ListPlacements(t.Context(), f.q, f.env)
-	if err != nil || !slices.Equal(placements, []Placement{{Name: DefaultPlacement}}) {
+	if err != nil || !slices.Equal(placements, []Placement{{Name: definition.DefaultPlacement}}) {
 		t.Fatalf("initial placements = %+v, %v", placements, err)
 	}
 	for _, placement := range []Placement{
 		{Name: "secure", WorkerGroupID: &secure},
 		{Name: "edge"},
-		{Name: DefaultPlacement, WorkerGroupID: &lab},
+		{Name: definition.DefaultPlacement, WorkerGroupID: &lab},
 		{Name: "Zeta", WorkerGroupID: &lab},
 	} {
 		if err := SetPlacement(t.Context(), f.q, f.env, placement); err != nil {
@@ -210,7 +211,7 @@ func TestPlacementsPostgres(t *testing.T) {
 	if err := SetPlacement(t.Context(), f.q, f.env, Placement{Name: "secure", WorkerGroupID: &lab}); err != nil {
 		t.Fatal(err)
 	}
-	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: DefaultPlacement, WorkerGroupID: &lab}, {Name: "edge"}, {Name: "secure", WorkerGroupID: &lab}})
+	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: definition.DefaultPlacement, WorkerGroupID: &lab}, {Name: "edge"}, {Name: "secure", WorkerGroupID: &lab}})
 
 	// A group of another organization, another region or the deployment is
 	// never assignable.
@@ -239,7 +240,7 @@ func TestPlacementsPostgres(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE environment_placements SET worker_group_id=NULL WHERE environment_id=$1 AND name='default'`, f.env); pgErrorCode(err) != "23514" {
 		t.Fatalf("deployment default row error = %v, want check violation", err)
 	}
-	if err := SetPlacement(t.Context(), f.q, f.env, Placement{Name: DefaultPlacement}); err != nil {
+	if err := SetPlacement(t.Context(), f.q, f.env, Placement{Name: definition.DefaultPlacement}); err != nil {
 		t.Fatal(err)
 	}
 	removed, err := RemovePlacement(t.Context(), f.q, f.env, "edge")
@@ -249,7 +250,7 @@ func TestPlacementsPostgres(t *testing.T) {
 	if removed, err := RemovePlacement(t.Context(), f.q, f.env, "edge"); err != nil || removed {
 		t.Fatalf("second RemovePlacement(edge) = %t, %v", removed, err)
 	}
-	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: DefaultPlacement}, {Name: "secure", WorkerGroupID: &lab}})
+	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: definition.DefaultPlacement}, {Name: "secure", WorkerGroupID: &lab}})
 
 	// An assigned group's owner and region stay consistent with its placements.
 	if _, err := f.pool.Exec(t.Context(), `UPDATE worker_groups SET owner_org_id=$2 WHERE id=$1`, lab, f.otherOrg); pgErrorCode(err) != "23503" {
