@@ -482,7 +482,7 @@ func nativeKVMPrepare(t *testing.T, ctx context.Context, machine *guestMachine, 
 	defer stream.Close()
 	operation := uuid.NewV7().String()
 	authority := &computerv0.ComputerCommandAuthority{OperationId: operation, ComputerId: computer.ComputerID, ComputerInstanceId: instance, ChannelCredential: credential, WriterGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(), RequestFingerprint: operation}
-	nativeKVMMust(t, frameio.WriteProtoFrame(stream, &computerv0.ComputerBasicExecRequest{Envelope: authority, RequestJson: string(body)}))
+	nativeKVMMust(t, frameio.WriteProtoFrame(stream, &computerv0.ComputerBasicExecRequest{Envelope: authority, RequestJson: string(body), LogLimits: &computerv0.CommandLogLimits{ChunkBytes: 1 << 16, BufferBytes: 1 << 20, BufferRecords: 64}}))
 	for {
 		var event computerv0.ComputerBasicExecEvent
 		nativeKVMMust(t, frameio.ReadProtoFrameBounded(stream, 1<<20, &event))
