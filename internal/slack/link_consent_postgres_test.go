@@ -37,13 +37,13 @@ func TestSlackConsentIsOneUseAndLinkHasIndependentLifetime(t *testing.T) {
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	wrong := consent
 	wrong.BrowserHash = bytes.Repeat([]byte{4}, 32)
-	if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, wrong); !errors.Is(err, ErrUserLinkDenied) {
+	if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, wrong); !errors.Is(err, ErrUserLinkExpired) {
 		t.Fatal("other browser consumed consent", err)
 	}
 	if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, consent); err != nil {
 		t.Fatal(err)
 	}
-	if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, consent); !errors.Is(err, ErrUserLinkDenied) {
+	if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, consent); !errors.Is(err, ErrUserLinkExpired) {
 		t.Fatal("replayed consent", err)
 	}
 	var link uuid.UUID
@@ -99,7 +99,7 @@ func TestSlackConsentNeedsTheBrowserSessionThatSawIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := audit.FromPrincipal(f.Principal(t))
-	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, other, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, other, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkExpired) {
 		t.Fatal("another browser session completed consent", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, LinkConsent{ID: pending, BrowserHash: make([]byte, 32)}); !errors.Is(err, ErrUserLinkDenied) {
+			if err = LinkUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who, LinkConsent{ID: pending, BrowserHash: make([]byte, 32)}); !errors.Is(err, ErrUserLinkExpired) {
 				t.Fatal("pending consent survived", err)
 			}
 			if err = linkTestUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who); err != nil {
@@ -155,7 +155,7 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 }
 
 func TestSlackPendingConsentRetainsBrowserSessionAndMembership(t *testing.T) {
-	for _, change := range []string{"remove-reinvite", "browser-logout"} {
+	for change, want := range map[string]error{"remove-reinvite": ErrUserLinkExpired, "browser-logout": ErrUserLinkDenied} {
 		t.Run(change, func(t *testing.T) {
 			f, _, org := credentialFixture(t)
 			p := f.Principal(t)
@@ -172,7 +172,7 @@ func TestSlackPendingConsentRetainsBrowserSessionAndMembership(t *testing.T) {
 			case "browser-logout":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, p.SessionID)
 			}
-			if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
+			if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, want) {
 				t.Fatal("stale consent accepted", err)
 			}
 		})

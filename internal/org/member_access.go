@@ -24,6 +24,12 @@ func ChangeMemberAccess(ctx context.Context, tx pgx.Tx, manager ManagingMember, 
 	if err := manager.Authorize(ctx, tx, auth.PermissionMembersRemove); err != nil {
 		return err
 	}
+	// Resuming restores access; suspending and revoking only take it away.
+	if suspended != nil && !*suspended {
+		if err := auth.RequireRecentProof(manager.Human); err != nil {
+			return err
+		}
+	}
 	target, err := activeMember(ctx, db.New(tx), manager.OrgID, id)
 	if err != nil {
 		return err

@@ -238,21 +238,30 @@ func TestRoleAssignmentLevelsPreserveAgentRefinement(t *testing.T) {
 	}
 }
 
-func TestRecentAuthenticationCoversOnlyAccessAndDestructiveChanges(t *testing.T) {
+func TestRecentAuthenticationCoversOnlyAddedAuthority(t *testing.T) {
 	stale := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-3 * time.Hour)}
-	for _, permission := range []Permission{PermissionSecretsCreate, PermissionAgentConnectionsConfigure, PermissionAgentConnectionsRead, PermissionGroupsAddMember, PermissionGroupsRemoveMember, PermissionInvitationsCreate} {
+	for _, permission := range []Permission{
+		PermissionSecretsCreate, PermissionSecretsRotate, PermissionSecretsRevoke,
+		PermissionAgentConnectionsRead, PermissionAgentConnectionsConfigure, PermissionAgentConnectionsDelete,
+		PermissionGroupsAddMember, PermissionGroupsRemoveMember, PermissionGroupsDelete, PermissionInvitationsCreate,
+		PermissionRolesDelete, PermissionAssignmentsDelete, PermissionMembersRemove, PermissionAPIKeysRevoke,
+		PermissionAgentsDelete, PermissionComputersDelete,
+	} {
 		if err := RequireRecentFor(stale, permission); err != nil {
 			t.Fatalf("%s required recent sign-in: %v", permission, err)
 		}
 	}
-	for _, permission := range []Permission{PermissionSecretsRotate, PermissionSecretsRevoke, PermissionAgentConnectionsDelete, PermissionRolesUpdate, PermissionAssignmentsCreate, PermissionGroupsDelete, PermissionAPIKeysCreate, PermissionMembersRemove, PermissionAgentsDelete} {
+	for _, permission := range []Permission{
+		PermissionRolesCreate, PermissionRolesUpdate, PermissionAssignmentsCreate, PermissionAssignmentsUpdate,
+		PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate,
+	} {
 		if err := RequireRecentFor(stale, permission); !errors.Is(err, ErrRecentProofRequired) {
 			t.Fatalf("stale sign-in allowed %s: %v", permission, err)
 		}
 	}
 	recent := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now()}
-	if err := RequireRecentFor(recent, PermissionSecretsRotate); err != nil {
-		t.Fatalf("recent sign-in denied rotation: %v", err)
+	if err := RequireRecentFor(recent, PermissionAPIKeysCreate); err != nil {
+		t.Fatalf("recent sign-in denied API key creation: %v", err)
 	}
 }
 

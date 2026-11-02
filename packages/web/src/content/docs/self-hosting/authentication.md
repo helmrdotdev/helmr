@@ -129,15 +129,18 @@ thirty days after its last request. Removing an organization membership preserve
 the account and other organizations, and reinvitation creates a new membership
 lifetime.
 
-Changes that alter access or destroy something require a sign-in confirmed within
-the last two hours: Roles and assignments, ownership, Group membership changes for
-Groups that carry assignments, API keys, rotating or revoking Secrets, removing
-members, deleting Groups and connections, deleting or restoring Agents, updating or
-deleting Computers, shortening Session history retention, and adding or removing
-sign-in methods and changing your login email. Other changes, such as creating a
-Secret, setting up a Slack connection, lengthening retention, changing your display
-name, unlinking Slack or signing out, use your current sign-in. When confirmation is needed, the
-Console asks you to confirm your sign-in and then retry.
+Changes that add access or issue credentials require a sign-in confirmed within
+the last two hours: creating or editing Roles and assignments, changing ownership,
+adding a member to a Group that carries assignments, resuming a suspended member,
+issuing, updating or rotating API keys, and adding or removing sign-in methods and
+changing your login email. Changes that only take access away or delete something
+use your current sign-in and keep their own confirmation: removing, suspending or
+signing out members, deleting Roles, assignments and Groups, revoking API keys,
+rotating or revoking Secrets, deleting Agents, Computers and Slack connections,
+and changing Session history retention. So do creating a Secret or an
+organization, setting up a Slack connection, linking or unlinking your Slack
+account, changing your display name and signing out. When confirmation is needed,
+the Console asks you to confirm your sign-in and then retry.
 
 Use `helmr login` to authorize a CLI for the displayed account and organization.
 Approving a CLI login needs a browser that signed in within the last two hours; the

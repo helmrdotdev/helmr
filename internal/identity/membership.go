@@ -22,7 +22,7 @@ func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.O
 	}
 	var organization db.Organization
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := requireRecentAccount(ctx, tx, account); err != nil {
+		if _, err := currentAccount(ctx, tx, account); err != nil {
 			return err
 		}
 		if input.OwnerUserID != account.UserID {

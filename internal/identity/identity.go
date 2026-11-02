@@ -38,6 +38,7 @@ var (
 	ErrAPIKeyNotFound           = errors.New("api key not found")
 	ErrAPIKeyManagementRequired = errors.New("api key management permission is required")
 	ErrLastSignInMethod         = errors.New("add another sign-in method before removing this one")
+	ErrCurrentOperatorKey       = errors.New("sign in with another operator key before removing this one")
 )
 
 // InputError reports a caller-supplied value that the identity domain
