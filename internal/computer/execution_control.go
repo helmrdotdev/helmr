@@ -146,6 +146,9 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits executionli
 	return workergroup.RequireExecutionPlacement(ctx, tx, limits, env, id, before)
 }
 
+// A durable source must yield its slot to work already assigned to the host.
+var ErrRetainedHostCapacity = errors.New("retained Computer capacity is assigned to other work")
+
 // RequireRetainedHostCapacity runs under the Host lock before a paused source
 // becomes mandatory again. New real grants may have claimed its optional room.
 func RequireRetainedHostCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, epoch int64) error {
@@ -163,7 +166,7 @@ func RequireRetainedHostCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UU
 		return err
 	}
 	if !fits {
-		return ErrNotReady
+		return ErrRetainedHostCapacity
 	}
 	return nil
 }

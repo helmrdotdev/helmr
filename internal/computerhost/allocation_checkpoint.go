@@ -272,6 +272,7 @@ func (o *ComputerAllocationOwner) publishCheckpointOrContinue(ctx context.Contex
 			return errComputerHibernated
 		}
 		retained = true
+		o.machines.logInfo("Computer checkpoint source retained", "computer_id", o.identity.OwnerID, "allocation_id", o.identity.AllocationID, "checkpoint_id", request.CheckpointID)
 		completed = nil
 		return nil
 	}

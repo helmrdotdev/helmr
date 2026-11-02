@@ -45,6 +45,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
 | `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/output and Computer idempotency/exec |
 | `runtime/program-replacement.run.ts` | `cases/runtime` | Existing Session pins its Deployment; new Session uses promoted code on the same Computer |
+| `persistence/slot-handoff.run.ts` | `cases/persistence` | Start B while A is parked and retained, then restore A with its original memory and file; one one-slot Worker with source retention enabled |
 | `prepared-startup` | `cases/prepared-startup` | Warm adoption versus cold/zero policy, refill, fresh secrets, no preclaim Agent init and private writes; dedicated host with exact resource/Environment IDs |
 | `computer-command/seed-reuse.run.ts` | `cases/runtime` | Shared seed root, independent writes, deletion isolation and create-to-first-work timing; dedicated host and two VM slots |
 | `questions`, `question-isolation`, `question-cancel` | `cases/questions` | Pending questions, repeat response receipts, isolation between Sessions and cancellation |

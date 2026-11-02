@@ -1,9 +1,11 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -90,6 +92,21 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 			return errors.New("invalid or unordered physical allocation page")
 		}
 		previous = &identity
+	}
+	// Discovery still runs when all claim goroutines are occupied. A parked
+	// Computer can yield here; waiting for the next Claim would require the
+	// very owner slot that the parked Computer is holding.
+	if len(c.entries) == c.limit && slices.ContainsFunc(page.Allocations, func(id workerapi.AllocationIdentity) bool {
+		return id.Kind != "seed" && c.entries[id] == nil
+	}) {
+		// Keep asking the same eligible owner while its cleanup is in flight.
+		for _, id := range slices.SortedFunc(maps.Keys(c.entries), func(a, b workerapi.AllocationIdentity) int {
+			return cmp.Compare(a.AllocationID, b.AllocationID)
+		}) {
+			if parked, ok := c.entries[id].(interface{ RequestCheckpointRelease() bool }); ok && parked.RequestCheckpointRelease() {
+				break
+			}
+		}
 	}
 	for _, identity := range page.Allocations {
 		if c.entries[identity] != nil || len(c.pending) >= c.limit {
