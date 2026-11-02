@@ -95,6 +95,20 @@ type allocationSupply struct {
 // Every wait is bounded, including implicit FK/unique waits after Host UPDATE.
 // A failed candidate rolls back before the caller tries another Host.
 
+// requirePreparationTarget resolves a preparation spec's placement again under
+// the environment lock that placement edits take, so a queued attempt follows
+// the assignment committed before it is allocated.
+func requirePreparationTarget(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID, resolved workergroup.Target) error {
+	current, err := workergroup.ImageSpecTarget(ctx, tx, env, spec)
+	if err != nil {
+		return err
+	}
+	if !current.Equal(resolved) {
+		return ErrNotReady
+	}
+	return nil
+}
+
 // lockAllocationSupply admits only a Host whose group serves target. Work
 // never falls back between deployment and organization capacity.
 func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, target workergroup.Target, primary bool) (allocationSupply, error) {
@@ -224,13 +238,23 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		target := workergroup.Target{}
+		var spec uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM image_builds WHERE environment_id=$1 AND id=$2`, env, preparation).Scan(&spec); err != nil {
+			return err
+		}
+		target, err := workergroup.ImageSpecTarget(ctx, tx, env, spec)
+		if err != nil {
+			return err
+		}
 		supply, err := lockAllocationSupply(ctx, tx, env, host, target, true)
 		if err != nil {
 			return err
 		}
 		_, err = org.LockAdmission(ctx, tx, env)
 		if err != nil {
+			return err
+		}
+		if err := requirePreparationTarget(ctx, tx, env, spec, target); err != nil {
 			return err
 		}
 		before, err := workergroup.ReadExecutionPlacement(ctx, tx, a.limits, env, target)

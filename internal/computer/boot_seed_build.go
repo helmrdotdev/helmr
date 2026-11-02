@@ -79,6 +79,11 @@ func QueueDeploymentBootSeeds(ctx context.Context, tx pgx.Tx, env, deployment uu
  AND `+usableImageSecretsSQL+` ORDER BY i.seq DESC LIMIT 1)`, env, r.spec, r.maxAge).Scan(&image); err != nil {
 			return err
 		}
+		if accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, r.spec); err != nil {
+			return err
+		} else if !accepted {
+			continue
+		}
 		status := "waiting"
 		if image != nil {
 			status = "queued"
@@ -115,6 +120,9 @@ func QueueImageBootSeeds(ctx context.Context, tx pgx.Tx, env, spec, image uuid.U
 		return s, err
 	})
 	if err != nil {
+		return err
+	}
+	if accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, spec); err != nil || !accepted {
 		return err
 	}
 	for _, s := range shapes {

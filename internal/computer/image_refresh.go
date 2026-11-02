@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -60,6 +61,11 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 				return err
 			}
 			if successorPending {
+				return ErrNotReady
+			}
+			if accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, spec); err != nil {
+				return err
+			} else if !accepted {
 				return ErrNotReady
 			}
 			attempt = uuid.NewV7()

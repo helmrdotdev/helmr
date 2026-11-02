@@ -6,13 +6,15 @@ WITH RECURSIVE held AS (
  UNION
  SELECT s.environment_id,s.id,true FROM sessions s JOIN held h ON h.environment_id=s.environment_id AND h.session_id=s.parent_session_id AND h.propagates
 ), demand AS (
- SELECT p.environment_id,p.id owner_id,'preparation'::text kind,NULL::uuid pinned_worker_group_id,d.cpu_millis,d.memory_bytes,
+ SELECT p.environment_id,p.id owner_id,'preparation'::text kind,assigned.worker_group_id pinned_worker_group_id,d.cpu_millis,d.memory_bytes,
  NULL::uuid required_worker_group_id,''::text required_vm_platform_id,0::integer required_vm_vcpu_count,
  ''::text required_cpu_config_digest,0::bigint required_cpu_millis,0::bigint required_memory_bytes,
  0::bigint required_scratch_bytes
  FROM image_builds p
- JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
- WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
+ JOIN LATERAL (SELECT cpu_millis,memory_bytes,placement FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
+ LEFT JOIN environment_placements assigned ON assigned.environment_id=p.environment_id AND assigned.name=d.placement
+ WHERE (assigned.name IS NOT NULL OR d.placement='default')
+ AND p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
  WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.revoked_at IS NOT NULL)
  UNION ALL

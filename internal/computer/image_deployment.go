@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -59,6 +60,9 @@ func StartDeploymentImage(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	}
 	if successorPending {
 		return nil
+	}
+	if accepted, err := workergroup.LockPreparationTarget(ctx, tx, env, spec); err != nil || !accepted {
+		return err
 	}
 	id := uuid.NewV7()
 	if _, err := tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)

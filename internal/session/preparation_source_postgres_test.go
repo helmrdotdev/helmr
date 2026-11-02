@@ -8,6 +8,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 // Exercise the real published-generation fixture, including its certified image
@@ -77,5 +79,34 @@ func checkPreparationSourceAuthorization(t *testing.T, p *preparationPublication
 		t.Fatal("zero policy delivered source")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET optional_max_tasks=max_vm_slots WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, f.worker)
+	acknowledge()
+	// A source stays with the group that produced it, even for a host that
+	// otherwise qualifies.
+	group, host := organizationCapacity(t, f.fixture)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET worker_host_id=$3,worker_group_id=$4 WHERE environment_id=$1 AND id=$2`, f.env, build, host, group)
+	hints, err = computer.ListPreparationSources(t.Context(), f.pool, *f.host())
+	if err != nil || len(hints) != 0 {
+		t.Fatalf("another group's source advertised: %v %v", hints, err)
+	}
+	if s, err := broker.PreparationSource(t.Context(), *f.host(), key); err == nil || len(s.Disk.Keys) > 0 {
+		t.Fatal("another group's source delivered")
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET worker_host_id=$3,worker_group_id=$4 WHERE environment_id=$1 AND id=$2`, f.env, build, f.worker, f.group)
+	acknowledge()
+	// Once its placement resolves to another group, the producing group stops
+	// receiving the source.
+	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement, WorkerGroupID: &group}); err != nil {
+		t.Fatal(err)
+	}
+	hints, err = computer.ListPreparationSources(t.Context(), f.pool, *f.host())
+	if err != nil || len(hints) != 0 {
+		t.Fatalf("source advertised after its placement moved: %v %v", hints, err)
+	}
+	if s, err := broker.PreparationSource(t.Context(), *f.host(), key); err == nil || len(s.Disk.Keys) > 0 {
+		t.Fatal("source delivered after its placement moved")
+	}
+	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
+		t.Fatal(err)
+	}
 	acknowledge()
 }

@@ -24,11 +24,11 @@ func organizationCapacity(t *testing.T, f fixture) (group, host uuid.UUID) {
 	t.Helper()
 	group, pool, token := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	host = uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_group_tokens(id,token_hash) VALUES($4,decode(repeat('33',32),'hex'));
- INSERT INTO worker_groups(id,token_id,region_id,name,status,owner_org_id) SELECT $2,$4,g.region_id,'organization-group','active',e.org_id FROM worker_groups g JOIN environments e ON e.id=$7 WHERE g.id=$1;
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_group_tokens(id,token_hash) VALUES($4,decode(md5($4::text)||md5($2::text),'hex'));
+ INSERT INTO worker_groups(id,token_id,region_id,name,status,owner_org_id) SELECT $2,$4,g.region_id,'organization-'||$2::text,'active',e.org_id FROM worker_groups g JOIN environments e ON e.id=$7 WHERE g.id=$1;
  INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$3::uuid,'worker_group_id',$2::uuid))).* FROM worker_pools p JOIN worker_hosts h ON h.worker_pool_id=p.id WHERE h.id=$6;
  UPDATE worker_groups SET primary_pool_id=$3 WHERE id=$2;
- INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$5::uuid,'worker_group_id',$2::uuid,'worker_pool_id',$3::uuid,'resource_id','organization-host','current_service_id',$5::uuid))).* FROM worker_hosts h WHERE id=$6;
+ INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$5::uuid,'worker_group_id',$2::uuid,'worker_pool_id',$3::uuid,'resource_id','organization-'||$5::text,'current_service_id',$5::uuid))).* FROM worker_hosts h WHERE id=$6;
  INSERT INTO worker_pool_cpu_shapes SELECT (jsonb_populate_record(NULL::worker_pool_cpu_shapes,to_jsonb(s)||jsonb_build_object('worker_pool_id',$3::uuid))).* FROM worker_pool_cpu_shapes s JOIN worker_hosts h ON h.worker_pool_id=s.worker_pool_id WHERE h.id=$6`,
 		pgx.QueryExecModeSimpleProtocol, f.group, group, pool, token, host, f.worker, f.env)
 	return group, host
@@ -169,6 +169,10 @@ func TestPlacementDrainWaitsForPinnedComputersPostgres(t *testing.T) {
 		t.Fatal("drained a group with a pinned Computer")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, computerID)
+	// Queued preparation for the placement also waits on the group.
+	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
+		t.Fatal(err)
+	}
 	if err := drain(); err != nil {
 		t.Fatalf("drain after deletion: %v", err)
 	}
@@ -238,5 +242,78 @@ func TestPlacementRetiredGroupRejectsNewWorkAtOncePostgres(t *testing.T) {
 	}
 	if count("sessions") != sessions || count("computers") != computers {
 		t.Fatal("rejected work was queued")
+	}
+}
+
+func TestPlacementRunsImageBuildOnItsCapacityPostgres(t *testing.T) {
+	f, p, a := preparationAllocationFixture(t)
+	group, host := organizationCapacity(t, f.fixture)
+	assignDefault(t)(f.fixture, group)
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
+		t.Fatalf("organization preparation allocated on deployment capacity: %v", err)
+	}
+	if _, more, err := a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil || more {
+		t.Fatalf("reconcile: %v %v", more, err)
+	}
+	r, err := dispatch.ReadImageBuildAllocation(t.Context(), f.pool, f.env, p.ID)
+	if err != nil || r.HostID != host {
+		t.Fatalf("allocation = %+v %v, want organization host %s", r, err, host)
+	}
+	var producing uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT worker_group_id FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&producing); err != nil || producing != group {
+		t.Fatalf("producing group = %s %v, want %s", producing, err, group)
+	}
+}
+
+func TestPlacementUnassignedPreparationWaitsPostgres(t *testing.T) {
+	f, p, a := preparationAllocationFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET placement='secure' WHERE environment_id=$1`, f.env)
+	if _, err := a.AllocateImageBuild(t.Context(), f.env, p.ID, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
+		t.Fatalf("unassigned preparation allocated: %v", err)
+	}
+	if _, _, err := a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatch.ReadImageBuildAllocation(t.Context(), f.pool, f.env, p.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unassigned preparation discovered: %v", err)
+	}
+	queued, err := workergroup.HasQueuedDemand(t.Context(), f.pool, f.group)
+	if err != nil || queued {
+		t.Fatalf("unassigned preparation counted as deployment demand: %v %v", queued, err)
+	}
+}
+
+func TestPlacementDrainWaitsForQueuedPreparationPostgres(t *testing.T) {
+	f, _, _ := preparationAllocationFixture(t)
+	group, _ := organizationCapacity(t, f.fixture)
+	assignDefault(t)(f.fixture, group)
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), group, 1); err == nil {
+		t.Fatal("drained a group with queued preparation")
+	}
+}
+
+func TestPlacementPreparationIsNeverQueuedForARetiringGroupPostgres(t *testing.T) {
+	f, p, _ := preparationAllocationFixture(t)
+	group, _ := organizationCapacity(t, f.fixture)
+	assignDefault(t)(f.fixture, group)
+	accepts := func() bool {
+		t.Helper()
+		var accepted bool
+		if err := pgx.BeginFunc(t.Context(), f.pool, func(tx pgx.Tx) error {
+			var err error
+			accepted, err = workergroup.LockPreparationTarget(t.Context(), tx, f.env, p.SpecID)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return accepted
+	}
+	if !accepts() {
+		t.Fatal("an active group refused preparation")
+	}
+	// Drain won the race: it saw no queued preparation, so none may follow.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, group)
+	if accepts() {
+		t.Fatal("preparation queued for a draining group")
 	}
 }

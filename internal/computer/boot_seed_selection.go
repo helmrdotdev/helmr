@@ -70,7 +70,8 @@ func SelectBootSeed(ctx context.Context, database db.TxBeginner, host workergrou
  WHERE b.environment_id=$1 AND b.deployment_id=$2 AND b.image_id=$3 AND b.status='succeeded' AND b.payload_retired_at IS NULL
  AND b.vm_platform_id=$4 AND b.vm_vcpu_count=$5 AND b.cpu_config_digest=$6 AND b.reserved_memory_bytes=$7 AND b.reserved_scratch_bytes=$8
  AND ($9::uuid IS NULL OR b.id=$9) AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=b.environment_id AND l.computer_id=$10 AND l.boot_seed_build_id=b.id AND l.boot_seed_failed_at IS NOT NULL)
- ORDER BY b.id LIMIT 1 FOR KEY SHARE`, identity.EnvironmentID, deployment, image, shape.VMPlatformID, shape.VCPUCount, shape.CPUConfigDigest, shape.MemoryBytes, shape.ScratchBytes, selected, identity.ComputerID).Scan(&id, &raw)
+ AND b.worker_group_id=$11
+ ORDER BY b.id LIMIT 1 FOR KEY SHARE`, identity.EnvironmentID, deployment, image, shape.VMPlatformID, shape.VCPUCount, shape.CPUConfigDigest, shape.MemoryBytes, shape.ScratchBytes, selected, identity.ComputerID, host.GroupID).Scan(&id, &raw)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

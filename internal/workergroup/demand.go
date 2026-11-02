@@ -21,7 +21,8 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
  SELECT 1 FROM image_builds preparation
  JOIN environments e ON e.id=preparation.environment_id
  JOIN projects project ON project.id=e.project_id
- JOIN worker_groups g ON g.region_id=project.default_region_id AND g.owner_org_id IS NULL AND g.id=$1
+ CROSS JOIN LATERAL (SELECT preparation.environment_id,preparation.image_spec_id) prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
+ JOIN worker_groups g ON g.id=$1 AND `+db.ServesTargetSQL+`
  WHERE preparation.status='queued' AND preparation.worker_host_id IS NULL AND preparation.deadline_at>clock_timestamp()
  ) OR EXISTS(
  SELECT 1 FROM sessions s

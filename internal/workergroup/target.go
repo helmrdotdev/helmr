@@ -100,3 +100,26 @@ func (t Target) Serves(ctx context.Context, q db.DBTX, env, group uuid.UUID) (bo
  CROSS JOIN LATERAL (SELECT $3::uuid worker_group_id) target WHERE e.id=$1 AND `+db.ServesTargetSQL+`)`, env, group, t.Group).Scan(&serves)
 	return serves, err
 }
+
+// ImageSpecTarget resolves the placement of a preparation spec. Only queued
+// attempts are resolved; an attempt already assigned to a host is never
+// retargeted.
+func ImageSpecTarget(ctx context.Context, q db.DBTX, env, spec uuid.UUID) (Target, error) {
+	var placement string
+	if err := q.QueryRow(ctx, `SELECT placement FROM template_definitions WHERE environment_id=$1 AND image_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, spec).Scan(&placement); err != nil {
+		return Target{}, err
+	}
+	return ResolvePlacement(ctx, q, env, placement)
+}
+
+// LockPreparationTarget holds the organization group a spec's placement
+// resolves to while preparation for it is queued, and reports whether that
+// group still accepts it. Retirement locks the group before it counts queued
+// preparation, so the two serialize; preparation is never queued for a
+// draining or disabled group.
+func LockPreparationTarget(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) (bool, error) {
+	var retired bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (SELECT $1::uuid environment_id,$2::uuid image_spec_id) prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
+ JOIN LATERAL (SELECT status FROM worker_groups g WHERE g.id=target.worker_group_id FOR SHARE) g ON true WHERE g.status IN ('draining','disabled'))`, env, spec).Scan(&retired)
+	return !retired, err
+}

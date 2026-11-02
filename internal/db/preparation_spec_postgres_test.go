@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 )
 
@@ -14,7 +15,7 @@ func TestPreparationSpecJSONBRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	pool := newPostgresDB(t, ctx)
 	ids := seedPostgres(t, ctx, pool)
-	spec := artifact.ComputerPreparationSpec{PrepareNetworkPolicy: networkpolicy.Policy{Kind: networkpolicy.Allowlist, Domains: []networkpolicy.Domain{{Domain: "registry.example.com"}}}, APIVersion: artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "repo", Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+	spec := artifact.ComputerPreparationSpec{PrepareNetworkPolicy: networkpolicy.Policy{Kind: networkpolicy.Allowlist, Domains: []networkpolicy.Domain{{Domain: "registry.example.com"}}}, APIVersion: artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "repo", Placement: definition.DefaultPlacement, Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
 	canonical, err := artifact.CanonicalComputerPreparationSpec(spec)
 	if err != nil {
 		t.Fatal(err)

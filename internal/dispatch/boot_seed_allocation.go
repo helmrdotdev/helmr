@@ -38,12 +38,23 @@ func (a *Allocator) AllocateBootSeed(ctx context.Context, env, id, host uuid.UUI
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		supply, err := lockAllocationSupply(ctx, tx, env, host, workergroup.Target{}, true)
+		var spec uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM boot_seed_builds WHERE environment_id=$1 AND id=$2`, env, id).Scan(&spec); err != nil {
+			return err
+		}
+		target, err := workergroup.ImageSpecTarget(ctx, tx, env, spec)
+		if err != nil {
+			return err
+		}
+		supply, err := lockAllocationSupply(ctx, tx, env, host, target, true)
 		if err != nil {
 			return err
 		}
 		_, err = org.LockAdmission(ctx, tx, env)
 		if err != nil {
+			return err
+		}
+		if err := requirePreparationTarget(ctx, tx, env, spec, target); err != nil {
 			return err
 		}
 		build, err := computer.LockBootSeedBuild(ctx, tx, env, id)
