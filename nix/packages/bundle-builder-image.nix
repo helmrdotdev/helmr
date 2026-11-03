@@ -3,8 +3,7 @@
   runCommand,
   dockerTools,
   unzip,
-  skopeo,
-  umoci,
+  crane,
   openssl,
   baseImage,
   nodeArchive,
@@ -23,15 +22,16 @@ let
     runCommand "helmr-builder-trust-store"
       {
         nativeBuildInputs = [
-          skopeo
-          umoci
+          crane
           openssl
         ];
       }
       ''
-        skopeo --insecure-policy copy docker-archive:${baseImage} oci:base:bookworm
-        umoci unpack --rootless --image base:bookworm unpacked
-        root="$PWD/unpacked/rootfs"
+        root="$PWD/rootfs"
+        mkdir -p "$root"
+        crane export - - < ${baseImage} | tar -x -C "$root" --no-same-owner --no-same-permissions \
+          etc/ca-certificates.conf usr/sbin/update-ca-certificates \
+          usr/share/ca-certificates usr/local/share/ca-certificates etc/ssl/certs
         sed -i -E '/^mozilla\/emSign_(ECC_Root_CA_-_(C3|G3)|Root_CA_-_C1)\.crt$/s/^/!/' "$root/etc/ca-certificates.conf"
         sh -e "$root/usr/sbin/update-ca-certificates" --sysroot "$root" --fresh --hooksdir "$TMPDIR/no-hooks"
         mkdir -p "$out/etc/ssl"
