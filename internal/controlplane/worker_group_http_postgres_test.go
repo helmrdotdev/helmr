@@ -185,6 +185,9 @@ func TestOrganizationWorkerGroupHTTPHidesOtherGroups(t *testing.T) {
 			}
 		}
 	}
+	if after := state(); after != before {
+		t.Fatalf("refused requests changed state:\nbefore %s\nafter  %s", before, after)
+	}
 	// A host of the caller's group addressed through another group is missing too.
 	ownSecond := decodeAdmin[api.CreateWorkerGroupResponse](t, f.request(t, http.MethodPost, "/api/worker-groups", ownerToken,
 		`{"region_id":"deployment-test","name":"second"}`), http.StatusCreated).WorkerGroup
