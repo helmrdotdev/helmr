@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/solid-query";
 import { createResource, createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { getAccount, getAuthConfig, getMe, startGitHubLogin, type Me } from "../lib/auth";
 import { assertPasskey } from "../lib/passkey";
+import { startSSO } from "../lib/sso";
 import { AuthDivider } from "../ui/AuthWindow";
 import { Dialog } from "../ui/Dialog";
 import { Notice } from "../ui/Notice";
@@ -75,8 +76,15 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
   onMount(() => window.addEventListener("message", returned));
   onCleanup(() => { active = false; window.removeEventListener("message", returned); popup?.close(); });
 
-  const methods = () => config()?.methods ?? [];
-  const hasButtons = () => methods().includes("passkey") || methods().includes("github");
+  // An organization that requires single sign-on accepts fresh SSO, or a
+  // passkey or email code; GitHub does not confirm there. Confirming through the
+  // identity provider leaves this page.
+  const organization = () => knownAccount?.org_sso ? knownAccount : undefined;
+  const methods = () => (config()?.methods ?? []).filter(method => method !== "sso" && !(method === "github" && knownAccount?.org_sso_required));
+  const hasButtons = () => methods().includes("passkey") || methods().includes("github") || !!organization();
+  const sso = () => void run(async () => {
+    window.location.assign((await startSSO({ organization: organization()!.org_slug!, next: window.location.pathname + window.location.search, reauthenticate: true })).redirect_url);
+  });
   return (
     <ConfirmationDialog
       intro="Confirm it’s you to continue. Your form stays open; nothing is submitted for you."
@@ -92,6 +100,7 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
           <div class={ui.buttonGroup}>
             <Show when={methods().includes("passkey")}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await confirmed(); })}>Confirm with a passkey</button></Show>
             <Show when={methods().includes("github")}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={github}>Confirm with GitHub</button></Show>
+            <Show when={organization()}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={sso}>Confirm with company SSO</button></Show>
           </div>
         </Show>
         <Show when={methods().includes("email")}>

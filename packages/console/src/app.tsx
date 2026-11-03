@@ -37,6 +37,8 @@ import { AccountSecurity } from "./routes/account-security";
 import { Ownership } from "./routes/ownership";
 import { AuthGitHubCallback, AuthSSOOIDCCallback, AuthSSOSAMLCallback } from "./routes/auth-callback";
 import { SSOLinkPage } from "./routes/sso-link";
+import { SSORecover } from "./routes/sso-recover";
+import { SSOSettings } from "./routes/sso-settings";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
@@ -237,6 +239,7 @@ export function App() {
       <Route path="/sso/oidc/callback" component={AuthSSOOIDCCallback} />
       <Route path="/sso/callback" component={AuthSSOSAMLCallback} />
       <Route path="/sso/link" component={SSOLinkPage} />
+      <Route path="/sso/recover" component={() => <RequireAuth requirement="session"><SSORecover /></RequireAuth>} />
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
@@ -273,6 +276,7 @@ export function App() {
       <Route path="/settings/account" component={wrapSettings(AccountSettings, "session")} />
       <Route path="/settings/security" component={wrapSettings(AccountSecurity, "session")} />
       <Route path="/settings/ownership" component={wrapSettings(Ownership, "organization")} />
+      <Route path="/settings/sso" component={wrapSettings(SSOSettings, "organization")} />
       <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
