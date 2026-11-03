@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import os
 import subprocess
@@ -8,11 +9,63 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/release"))
-from security_scan import check_terraform_inputs, collect, tracked_source
+from security_scan import check_terraform_inputs, collect, guest_files, initramfs_inventory, tracked_source
 from security_policy import POLICY, load_policy, check_current
 
 
 class SecurityScanTest(unittest.TestCase):
+    def test_inventory_observes_both_guest_filesystems(self):
+        def entry(name, data=b""):
+            fields = [1, 0o100755, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(name) + 1, 0]
+            header = ("070701" + "".join(f"{v:08x}" for v in fields) + name).encode() + b"\0"
+            return header + bytes(-len(header) % 4) + data + bytes(-len(data) % 4)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            archive = work / "initramfs"
+            fs = work / "root"
+            fs.mkdir()
+            image = (entry("sbin/perf_6.12") + entry("lib/mlx5_core.ko", b"init copy")
+                     + entry("lib/ntfs3.ko.xz") + entry("TRAILER!!!"))
+            archive.write_bytes(gzip.compress(image))
+            listing, hashes = initramfs_inventory(archive)
+            (fs / "mlx5_core.ko").write_bytes(b"root copy")
+            (fs / "airoha-eth.ko.zst").touch()
+            modules, facts = guest_files(fs, listing, hashes, [], {"busybox"})
+            self.assertFalse(facts["perf_absent"])
+            self.assertFalse(facts["ntfs_absent"])
+            self.assertFalse(facts["airoha_ethernet_absent"])
+            self.assertEqual(modules, ["airoha_eth", "mlx5_core", "ntfs3"])
+            self.assertEqual(set(facts["mlx5_core_hashes"]), {"sha256:" + hashlib.sha256(data).hexdigest()
+                                      for data in (b"init copy", b"root copy")})
+            (fs / "perf").symlink_to("/another/path")
+            _, facts = guest_files(fs, [], set(), ["mlx5_core", "ntfs"], {"busybox"})
+            self.assertFalse(facts["perf_absent"])
+            self.assertFalse(facts["ntfs_absent"])
+            self.assertEqual(facts["mlx5_core_hashes"], [])
+            archive.write_bytes(gzip.compress(image + entry("bin/perf")))
+            with self.assertRaisesRegex(ValueError, "trailing"):
+                initramfs_inventory(archive)
+            archive.write_bytes(gzip.compress(image[:-16]))
+            with self.assertRaises(ValueError):
+                initramfs_inventory(archive)
+
+    def test_perf_aliases_packages_and_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fs = Path(directory)
+            header = fs / "usr/include/linux/perf_event.h"
+            header.parent.mkdir(parents=True)
+            header.touch()
+            def absent(packages):
+                return guest_files(fs, [], set(), [], packages)[1]["perf_absent"]
+            self.assertTrue(absent(["linux-headers"]))
+            for name in ("perf", "linux-perf", "linux-tools-6.12"):
+                self.assertFalse(absent([name]))
+            for name in ("perf.real", "linux-perf", "perf_6.12"):
+                tool = fs / name
+                tool.touch()
+                self.assertFalse(absent(["busybox"]))
+                tool.unlink()
+
     def test_scan_reads_tracked_files_even_with_export_ignore(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

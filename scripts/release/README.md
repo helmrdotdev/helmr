@@ -284,6 +284,17 @@ Each scan must identify that module in the optional build inventory, exclude it
 from the built-in inventory, and check its absence in both shipped filesystems.
 A changed kernel, changed advisory or newly shipped module reopens the finding.
 
+Other reviewed kernel findings can use a named `guest_fact` and its required
+value (`equals`). The scanner inventories the initramfs and root filesystem on
+every run. The perf rule checks both filesystems for the packaged command and its aliases,
+and the Wolfi package inventory for perf and linux-tools packages.
+The NTFS and Airoha rules check built-in and shipped drivers. The mlx5 rule
+compares the hashes of all shipped mlx5_core modules with the reviewed bytes.
+Driver rules also bind the reviewed kernel binary. Each rule binds the exact
+advisory revision. An unrelated root filesystem change preserves a matching
+decision. Missing evidence, changed relevant bytes or a newly present affected
+component cannot clear the finding.
+
 After a reviewer approves, a fresh read-only job scans the original bytes and
 reads the current policy from main again. Approval alone cannot clear a finding.
 If the decision is still pending or affected, the workflow records the verdict

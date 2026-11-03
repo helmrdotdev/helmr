@@ -278,8 +278,6 @@ ciApps
     pkgsUnstable.trivy
     pkgs.git
     pkgs.gnutar
-    pkgs.cpio
-    pkgs.gzip
     pkgs.skopeo
     helmrPackages.squashfsTools
   ] ''

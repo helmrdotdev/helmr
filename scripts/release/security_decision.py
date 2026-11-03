@@ -27,6 +27,20 @@ def classify(report, rules):
                        and i["advisory"] == rule["advisory"] and guest["digest"] == rule["kernel"]
                        and module in guest["optional"] and module not in guest["builtin"]
                        and module not in guest["modules"]]
+        elif "guest_fact" in rule:
+            fact = rule["guest_fact"]
+            expected = rule["equals"]
+            if fact == "mlx5_core_hashes":
+                valid = isinstance(expected, list) and expected and all(
+                    re.fullmatch(r"sha256:[0-9a-f]{64}", value) for value in expected)
+            else:
+                valid = fact in ("perf_absent", "ntfs_absent", "airoha_ethernet_absent") and expected is True
+            require(valid and status == "not_affected" and (fact == "perf_absent" or rule.get("kernel")),
+                    "invalid guest applicability predicate")
+            matched = [i for i in critical if i["component"] == "kernel" and i["id"] == rule["id"]
+                       and i["advisory"] == rule["advisory"]
+                       and ("kernel" not in rule or guest["digest"] == rule["kernel"])
+                       and guest.get("facts", {}).get(fact) == expected]
         else:
             require(re.fullmatch("[a-f0-9]{64}", rule["key"]), "invalid finding key")
             matched = [i for i in critical if i["id"] == rule["id"] and i["key"] == rule["key"]]

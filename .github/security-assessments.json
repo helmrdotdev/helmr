@@ -55,19 +55,15 @@
   },
   {
     "id": "CVE-2026-64122",
-    "key": "4f0ba5c3e435ccba6b56a594df98fb7d4a890e10258d0b99a2f3e568f5306798",
-    "basis": "component",
     "status": "not_affected",
     "reason": "The Linux CNA identifies the earliest affected stable series as 6.18.14. The verified packaged 6.12.114 kernel predates the affected mlx5 revision.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64122 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
-  },
-  {
-    "id": "CVE-2026-64122",
-    "key": "497f0fa38c94cbe18c644aedc70294d4be5ad2c422ea34305fcc7bebac329323",
-    "basis": "component",
-    "status": "not_affected",
-    "reason": "The Linux CNA identifies the earliest affected stable series as 6.18.14. The verified packaged 6.12.114 kernel predates the affected mlx5 revision.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64122 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json"
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64122 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json",
+    "advisory": "a9e5741b236eb2f0af8b7069a1c7edf40513e2a603d99635ce700683be3b7cbd",
+    "guest_fact": "mlx5_core_hashes",
+    "equals": [
+      "sha256:701d17cde736f4943af2856c0e9f7ed7233b3808bea5387af847bf4533e5374c"
+    ],
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712"
   },
   {
     "id": "CVE-2026-64160",
@@ -89,67 +85,42 @@
   },
   {
     "id": "CVE-2026-80617",
-    "key": "96434bb6d11572c009ecfbf412c58c0f5c4ea8a53976e6d9880101db7ca9d7e7",
-    "basis": "component",
     "status": "not_affected",
     "reason": "The Linux CNA identifies the Airoha regression in 6.18.33 and later branches. Its packet-processing driver is absent from the verified 6.12.114 kernel and guest module set.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80617 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
-  },
-  {
-    "id": "CVE-2026-80617",
-    "key": "a950477ef130c702126528b13e7f37750171cc0c27b9a18439fdba8d41812668",
-    "basis": "component",
-    "status": "not_affected",
-    "reason": "The Linux CNA identifies the Airoha regression in 6.18.33 and later branches. Its packet-processing driver is absent from the verified 6.12.114 kernel and guest module set.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80617 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json"
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80617 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json",
+    "advisory": "a295d11eb5b45fc64ef2157d2c23387fe3f6378aabf7408805a4590e84cf31bf",
+    "guest_fact": "airoha_ethernet_absent",
+    "equals": true,
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712"
   },
   {
     "id": "CVE-2026-80670",
-    "key": "24707cc2dbf5d7b29e2ae5088d555178c64541673e40b6fa06a7d0ba179af334",
-    "basis": "component",
     "status": "not_affected",
     "reason": "The vulnerable parser is in the perf userspace command. Neither the initramfs nor the root filesystem in this bundle ships that executable. The kernel perf event interface does not run the parser.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80670 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
-  },
-  {
-    "id": "CVE-2026-80670",
-    "key": "e803a97b4ce7adc089931c8a28135c5940d26f7da22b55e126e1f2e8caf61135",
-    "basis": "component",
-    "status": "not_affected",
-    "reason": "The vulnerable parser is in the perf userspace command. Neither the initramfs nor the root filesystem in this bundle ships that executable. The kernel perf event interface does not run the parser.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80670 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json"
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80670 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json",
+    "advisory": "addd6f9b771c85b66c2b8a550dcd3fd28f6c4b380a931cf8a08ad3b295646f31",
+    "guest_fact": "perf_absent",
+    "equals": true
   },
   {
     "id": "CVE-2026-89610",
-    "key": "ccb3f81f57e412537eac6deacd315136ac3e66ae435372298ae46fa209fdcd36",
-    "basis": "component",
     "status": "not_affected",
     "reason": "Processing an NTFS mapping pair requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89610 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
-  },
-  {
-    "id": "CVE-2026-89610",
-    "key": "b0f3b2225c9cd2e209459a1c1a582d6dbd10a0b2ba0c7cdae7eaa833d7d8257b",
-    "basis": "component",
-    "status": "not_affected",
-    "reason": "Processing an NTFS mapping pair requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89610 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json"
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89610 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json",
+    "advisory": "8b2e81be63029e0eccc3d1695644be9f6a4fbba739c3bed37a7a75560ea59639",
+    "guest_fact": "ntfs_absent",
+    "equals": true,
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712"
   },
   {
     "id": "CVE-2026-89611",
-    "key": "efc204d3b9acafa711c0d64c193cdc7a9a0ee8c1bc78ba5540c3553f70b0b44c",
-    "basis": "component",
     "status": "not_affected",
     "reason": "The affected attribute update requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89611 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
-  },
-  {
-    "id": "CVE-2026-89611",
-    "key": "67167c25ee216617a706a4c17d146628f12901d1720943680068a29b919b1f57",
-    "basis": "component",
-    "status": "not_affected",
-    "reason": "The affected attribute update requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
-    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89611 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json"
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89611 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.9/runtime-artifacts.json",
+    "advisory": "0d2dad6733f122a2d97893bbfcc47a5890941c157c5284ceb55e7b975d7ac577",
+    "guest_fact": "ntfs_absent",
+    "equals": true,
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712"
   },
   {
     "id": "CVE-2026-89637",

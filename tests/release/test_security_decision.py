@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +22,31 @@ class SecurityDecisionTest(unittest.TestCase):
             self.assertEqual(classify(dict(self.report, guest=dict(self.guest, **change)), [self.rule])["state"], "needs_review")
         self.item["advisory"] = "revised"
         self.assertEqual(classify(self.report, [self.rule])["state"], "needs_review")
+
+    def test_release_guest_predicates(self):
+        policy = Path(__file__).resolve().parents[2] / ".github/security-assessments.json"
+        rules = [rule for rule in json.loads(policy.read_text()) if "guest_fact" in rule]
+        self.assertEqual(len(rules), 5)
+        for rule in rules:
+            with self.subTest(advisory=rule["id"]):
+                fact, expected = rule["guest_fact"], rule["equals"]
+                item = dict(self.item, id=rule["id"], advisory=rule["advisory"])
+                guest = dict(digest=rule.get("kernel", "another kernel"), facts={fact: expected})
+                def state():
+                    return classify(dict(findings=[item], guest=guest), [rule])["state"]
+                self.assertEqual(state(), "clear")
+                item["key"] = "b"*64  # Unrelated runtime manifest change.
+                self.assertEqual(state(), "clear")
+                guest["facts"][fact] = False if expected is True else []
+                self.assertEqual(state(), "needs_review")
+                guest["facts"].clear()
+                self.assertEqual(state(), "needs_review")
+                guest["facts"][fact] = expected
+                guest["digest"] = "new"
+                self.assertEqual(state(), "needs_review" if "kernel" in rule else "clear")
+                guest["digest"] = rule.get("kernel", "new")
+                item["advisory"] = "changed"
+                self.assertEqual(state(), "needs_review")
 
     def test_findings_and_scanner_errors_are_distinct(self):
         self.assertEqual(classify(self.report, [])["state"], "needs_review")

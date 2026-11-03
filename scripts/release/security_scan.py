@@ -2,7 +2,10 @@
 import argparse
 import io
 import datetime as dt
+import gzip
 import hashlib
+import os
+import stat
 import json
 from pathlib import Path
 import re
@@ -122,6 +125,79 @@ def module_names(paths):
                    if (m := re.search(r"(?:^|/)([^/]+)\.ko(?:\.[^/]*)?$", path))})
 
 
+def initramfs_inventory(path):
+    # The guest builder emits gzip-compressed newc. Read every entry without
+    # extracting links or running guest code. Refuse uninspected trailing data.
+    names, mlx5 = [], set()
+    with gzip.open(path, "rb") as stream:
+        while True:
+            header = stream.read(110)
+            require(re.fullmatch(rb"070701[0-9a-fA-F]{104}", header), "unsupported guest initramfs")
+            mode = int(header[14:22], 16)
+            size = int(header[54:62], 16)
+            length = int(header[94:102], 16)
+            require(0 < length <= 4096, "invalid cpio name length")
+            raw = stream.read(length)
+            require(len(raw) == length and raw.endswith(b"\0") and b"\0" not in raw[:-1],
+                    "invalid cpio name")
+            name = os.fsdecode(raw[:-1])
+            stream.read(-(110 + length) % 4)
+            if name == "TRAILER!!!":
+                require(size == 0 and not any(stream.read(512)) and not stream.read(1),
+                        "unexpected trailing initramfs data")
+                return names, mlx5
+            names.append(name)
+            if is_mlx5_module(name):
+                require(size <= 64 * 1024**2, "oversized mlx5 module")
+                data = stream.read(size)
+                require(len(data) == size, "truncated mlx5 module")
+                mlx5.add("sha256:" + hashlib.sha256(data).hexdigest() if stat.S_ISREG(mode) else "nonregular")
+            else:
+                stream.seek(size, 1)
+            stream.read(-size % 4)
+
+
+def is_mlx5_module(name):
+    return re.fullmatch(r"mlx5[_-]core\.ko(?:\..+)?", Path(name).name) is not None
+
+
+def perf_name(name):
+    return re.search(r"(?:^|[-_.])perf(?:$|[-_.])", name.lower()) is not None
+
+
+def guest_files(fs, listing, mlx5, builtin, packages):
+    # Path.walk propagates traversal failures via on_error. Include links and
+    # versioned perf names; even an ambiguous matching entry requires review.
+    def unreadable(error):
+        raise error
+
+    perf_present = any(perf_name(Path(path).name) for path in listing) or any(
+        perf_name(name) or re.match(r"linux-tools(?:$|[-_.])", name) for name in packages)
+    paths = list(listing)
+    for directory, dirs, files in fs.walk(on_error=unreadable):
+        for name in dirs + files:
+            path = directory / name
+            relative = path.relative_to(fs)
+            paths.append(str(relative))
+            if perf_name(name):
+                # Linux headers such as perf_event.h are data, not the tool.
+                mode = path.lstat().st_mode
+                header = (relative.is_relative_to("usr/include") and name.endswith(".h")
+                          and stat.S_ISREG(mode) and not mode & 0o111)
+                if not header:
+                    perf_present = True
+            if is_mlx5_module(name):
+                mlx5.add(digest(path) if stat.S_ISREG(path.lstat().st_mode) else "nonregular")
+    shipped = module_names(paths)
+    drivers = set(shipped) | set(builtin)
+    return shipped, dict(
+        perf_absent=not perf_present,
+        ntfs_absent=drivers.isdisjoint({"ntfs", "ntfs3"}),
+        airoha_ethernet_absent="airoha_eth" not in drivers,
+        mlx5_core_hashes=sorted(mlx5) if "mlx5_core" not in builtin else [],
+    )
+
+
 def guest(work, assets):
     kernel, kernel_digest = guest_kernel(assets)
     manifest = read(assets / "runtime-artifacts.json")
@@ -137,14 +213,13 @@ def guest(work, assets):
     fs = work / "guest"
     run("unsquashfs", "-no-progress", "-d", fs, work / "rootfs.squashfs", stdout=subprocess.DEVNULL)
     rows = trivy(work, "rootfs", [str(fs)], "vuln")
-    require(any(r["Type"] == "wolfi" and r["Packages"] for r in rows), "missing Wolfi package inventory")
+    packages = {pkg["Name"] for row in rows if row["Type"] == "wolfi" for pkg in row["Packages"]}
+    require(packages, "missing Wolfi package inventory")
     # Trivy includes the temporary scan directory in the OS Target label.
     for row in rows:
         if row["Class"] == "os-pkgs":
             row["Target"] = row["Type"]
-    listing = run("bash", "-eo", "pipefail", "-c", 'gzip -dc "$1" | cpio -it',
-                  "scan", work / "initramfs", capture_output=True, text=True).stdout.splitlines()
-    shipped = module_names(listing + [str(p) for p in fs.rglob("*.ko*")])
+    listing, mlx5 = initramfs_inventory(work / "initramfs")
     orders = [n for n in listing if re.fullmatch(r"(?:\./)?lib/modules/[^/]+/modules.order", n)]
     require(len(orders) == 1, "ambiguous guest module inventory")
     order_path = "usr/" + orders[0].removeprefix("./")
@@ -152,12 +227,14 @@ def guest(work, assets):
                   capture_output=True, text=True).stdout.splitlines()
     builtin = run("unsquashfs", "-cat", work / "rootfs.squashfs", order_path.replace("modules.order", "modules.builtin"),
                   capture_output=True, text=True).stdout.splitlines()
+    builtin_modules = module_names(builtin)
+    shipped, facts = guest_files(fs, listing, mlx5, builtin_modules, packages)
     require(shipped and ordered and builtin, "incomplete guest module inventory")
     modified, data = current_database()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         linux = findings((json.loads(archive.read(n)) for n in archive.namelist() if n.endswith(".json")), kernel)
     inventory = dict(kernel=kernel, digest=kernel_digest, modules=shipped,
-                     optional=module_names(ordered), builtin=module_names(builtin), database_modified=modified)
+                     optional=module_names(ordered), builtin=builtin_modules, facts=facts, database_modified=modified)
     items = collect(rows, "guest-os", manifest["rootfs"]["digest"])
     for entry in linux["findings"]:
         score = entry["score"]
