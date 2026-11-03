@@ -10,7 +10,7 @@ async function choose(page: Page, menu: string, item: string) {
 
 test("Agent deletion previews prerequisites, cancels open Sessions and promotion restores the retained identity", async ({ page }, testInfo) => {
   await page.goto("/dev/login");
-  const { scope, base, environmentID, environmentInternalID, deploymentID } = await createAgentCatalog(page);
+  const { scope, base, environmentID, environmentInternalID, deploymentID } = await createAgentCatalog(page, [], { preparedImage: true });
   const { current_member: me } = await (await page.request.get("/api/organization")).json();
   const targets = await (await page.request.get("/api/projects/console-demo/access-targets")).json();
   const roleResponse = await page.request.post("/api/roles", { data: { name: `Deletion ${crypto.randomUUID()}`, permissions: ["agents.read", "agents.delete", "sessions.create", "sessions.read", "deployments.promote"] } });

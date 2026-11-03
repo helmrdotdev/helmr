@@ -32,6 +32,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, first.ID)
 	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +74,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, second.ID)
 	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), second.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +131,7 @@ func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, r.ID)
 	if _, err = f.pool.Exec(t.Context(), `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) SELECT environment_id,agent_id,deployment_id,'bad','invalid','UTC','null' FROM agent_definitions WHERE deployment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, r.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +151,7 @@ func TestDeploymentReadsUseNewDefinitionsAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, r.ID)
 	if _, err := GetCurrent(t.Context(), f.pool, f.principal(), f.scope()); !errors.Is(err, ErrNoCurrentDeployment) {
 		t.Fatal(err)
 	}
@@ -184,6 +188,7 @@ func TestPromotePreservesTextInputAndNULTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, r.ID)
 	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), r.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +279,7 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, record.ID)
 	principal := f.principal()
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_promotion_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_promotion_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_promotion_audit()`)
@@ -300,6 +306,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, first.ID)
 	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), first.ID, nil); err != nil {
 		t.Fatal(err)
 	}

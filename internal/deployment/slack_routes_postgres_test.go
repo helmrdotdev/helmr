@@ -35,6 +35,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			f.seedReadyImage(t, registered.ID)
 			// Without a connection the activation waits for Slack, with or without
 			// Slack configured, and no live channel check runs.
 			unreachable := triggerPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
@@ -132,6 +133,7 @@ func registerSlackSchedule(t *testing.T, f deploymentFinalizePostgresFixture, ch
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.seedReadyImage(t, registered.ID)
 	return registered
 }
 

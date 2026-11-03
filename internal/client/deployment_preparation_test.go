@@ -22,6 +22,9 @@ func TestPromoteDeploymentObservesPreparationBeforeRetry(t *testing.T) {
 						w.WriteHeader(http.StatusAccepted)
 					}
 				case http.MethodGet:
+					if r.URL.Query().Get("view") != "promotion-preparation" {
+						t.Errorf("unexpected observation URL %s", r.URL)
+					}
 					gets.Add(1)
 					response.PreparationState = state
 				default:

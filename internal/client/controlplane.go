@@ -589,8 +589,11 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, scope
 				return api.DeploymentResponse{}, ctx.Err()
 			case <-timer.C:
 			}
-			response, err = c.GetDeployment(ctx, deployment, scope)
+			req, err := c.newRequest(ctx, http.MethodGet, environmentScopedResourcePath(basePath, deployment, "?view=promotion-preparation"), nil)
 			if err != nil {
+				return api.DeploymentResponse{}, err
+			}
+			if err := c.doJSON(req, &response); err != nil {
 				return api.DeploymentResponse{}, err
 			}
 		}

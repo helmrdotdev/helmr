@@ -17,8 +17,11 @@ type preparationSpec struct {
 }
 
 func preparationSpecs(ctx context.Context, q db.DBTX, env, deployment uuid.UUID) ([]preparationSpec, error) {
-	rows, err := q.Query(ctx, `SELECT image_spec_id,min(3*refresh_every_ms) FROM template_definitions
- WHERE environment_id=$1 AND deployment_id=$2 AND prepare GROUP BY image_spec_id ORDER BY image_spec_id`, env, deployment)
+	rows, err := q.Query(ctx, `SELECT image_spec_id,min(3*refresh_every_ms) FROM template_definitions t
+ WHERE t.environment_id=$1 AND t.deployment_id=$2 AND (t.prepare OR EXISTS (
+   SELECT 1 FROM agent_definitions a
+   WHERE (a.environment_id,a.deployment_id,a.template_id)=(t.environment_id,t.deployment_id,t.template_id)
+ )) GROUP BY image_spec_id ORDER BY image_spec_id`, env, deployment)
 	if err != nil {
 		return nil, err
 	}

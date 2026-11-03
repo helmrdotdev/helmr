@@ -5,7 +5,7 @@ export const projectID = "console-demo";
 
 // Seed catalog definitions and synthetic capacity. Admission and controls use HTTP.
 // No Worker, executable bundle, VM or object-store behavior is represented.
-export async function createAgentCatalog(page: Page, environmentPermissions: string[] = []) {
+export async function createAgentCatalog(page: Page, environmentPermissions: string[] = [], { preparedImage = false } = {}) {
   if (process.env.HELMR_E2E_BASE_URL || process.env.DATABASE_URL) {
     throw new Error("Run Agent API acceptance with the disposable managed browser stack");
   }
@@ -17,7 +17,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: str
   const environment = await response.json() as { environment: string };
   const deploymentID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
   const agentID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
-  const environmentInternalID = execFileSync("bash", ["tests/browser/fixtures/agent-catalog.sh", environment.environment, deploymentID, agentID], { cwd: process.cwd(), encoding: "utf8" }).trim();
+  const environmentInternalID = execFileSync("bash", ["tests/browser/fixtures/agent-catalog.sh", environment.environment, deploymentID, agentID, String(preparedImage)], { cwd: process.cwd(), encoding: "utf8" }).trim();
   // Ownership does not confer workload access. Grant this fixture member access
   // only to its newly seeded Agent, through the real access API.
   const meResponse = await page.request.get("/api/organization");

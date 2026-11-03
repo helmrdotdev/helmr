@@ -69,11 +69,21 @@ func List(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.S
 }
 
 func Get(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, id uuid.UUID) (Record, error) {
+	return getPreparedRecord(ctx, q, principal, scope, id, auth.PermissionDeploymentsRead)
+}
+
+// PromotionPreparation exposes only the image readiness needed to finish promotion.
+func PromotionPreparation(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, id uuid.UUID) (string, error) {
+	record, err := getPreparedRecord(ctx, q, principal, scope, id, auth.PermissionDeploymentsPromote)
+	return record.PreparationState, err
+}
+
+func getPreparedRecord(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, id uuid.UUID, permission auth.Permission) (Record, error) {
 	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
 	if refreshErr != nil {
 		return Record{}, refreshErr
 	}
-	if err := authorizeRead(principal, scope); err != nil {
+	if err := authorize(principal, scope, permission); err != nil {
 		return Record{}, err
 	}
 	project, env, err := scopeIDs(scope)

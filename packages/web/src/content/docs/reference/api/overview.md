@@ -224,9 +224,19 @@ Rerun upload planning if an unfinalized input has expired.
 ### Deployment promotion
 
 `POST /v1/deployments/{deploymentID}/promote` returns 202 with
-`preparation_state: "preparing"` while Environment preparation runs; repeat the
-request after preparation finishes. A completed promotion returns 200 with the
-Deployment and, when non-empty:
+`preparation_state: "preparing"` while the candidate Deployment needs an image.
+Promotion waits for Templates that define `prepare` and for Templates referenced
+by an Agent in that Deployment. Agents sharing an image specification share its
+preparation. A callback-free Template used only to create Computers can still
+prepare its image on first use.
+
+Poll `GET /v1/deployments/{deploymentID}?view=promotion-preparation` with the
+same promotion credential. It returns only `preparation_state`. Repeat the
+promotion request once preparation is ready. If a build fails, the previous
+Deployment stays current. Send a new promotion request to retry the build.
+Promoting an earlier Deployment follows the same readiness check.
+
+A completed promotion returns 200 with the Deployment and, when non-empty:
 
 | Field | Meaning |
 | --- | --- |
