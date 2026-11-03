@@ -175,8 +175,24 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	}
 
 	stray := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
+	var refusedBefore int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND outcome='denied'`).Scan(&refusedBefore); err != nil {
+		t.Fatal(err)
+	}
 	if got := stray.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(got.Header().Get("Location"), "sso_error=authentication_invalid") {
 		t.Fatalf("unsolicited response = %s", got.Header().Get("Location"))
+	}
+	// A response that does not validate against this browser's own flow is a
+	// refused sign-in; an unsolicited post above is not recorded.
+	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"acme"}`, console, nil); got.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", got.Code, got.Body)
+	}
+	if got := stray.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(got.Header().Get("Location"), "sso_error=authentication_invalid") {
+		t.Fatalf("response to another request = %s", got.Header().Get("Location"))
+	}
+	var refusedAfter int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND outcome='denied'`).Scan(&refusedAfter); err != nil || refusedAfter != refusedBefore+1 {
+		t.Fatalf("refused SAML responses audited = %d, want %d (%v)", refusedAfter, refusedBefore+1, err)
 	}
 	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"unknown"}`, console, nil); got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "sso_not_available") {
 		t.Fatalf("unknown organization = %d %s", got.Code, got.Body)

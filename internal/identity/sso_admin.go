@@ -350,14 +350,19 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 }
 
 func requireSSORevocations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (int, int, error) {
-	sessions, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE channel='cli' AND org_id=$1 AND sso_proof_id IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp()`, orgID)
+	// Owners keep their ordinary sign-in, so their CLI sessions and Slack
+	// links stay.
+	sessions, err := tx.Exec(ctx, `UPDATE login_sessions s SET revoked_at=clock_timestamp() FROM org_members m
+ WHERE s.channel='cli' AND s.org_id=$1 AND s.sso_proof_id IS NULL AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()
+ AND m.id=s.member_id AND m.org_id=s.org_id AND NOT m.is_owner`, orgID)
 	if err != nil {
 		return 0, 0, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE device_codes SET status='denied' WHERE org_id=$1 AND status='approved'`, orgID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE device_codes d SET status='denied' FROM org_members m
+ WHERE d.org_id=$1 AND d.status='approved' AND m.id=d.decided_by_member_id AND m.org_id=d.org_id AND NOT m.is_owner`, orgID); err != nil {
 		return 0, 0, err
 	}
-	links, err := slack.RetireOrganizationLinks(ctx, tx, orgID)
+	links, err := slack.RetireMemberLinks(ctx, tx, orgID)
 	if err != nil {
 		return 0, 0, err
 	}

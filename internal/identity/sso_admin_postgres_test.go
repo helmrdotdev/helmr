@@ -90,6 +90,7 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	ordinaryCLI := f.cliSession(t, member, memberID, nil)
 	ownerProof := f.liveProof(t, f.ownerMember)
 	ssoCLI := f.cliSession(t, f.owner, f.ownerMember, &ownerProof)
+	ownerOrdinaryCLI := f.cliSession(t, f.owner, f.ownerMember, nil)
 	ordinaryBrowser := f.session(t, member, uuid.Nil())
 	_, token := f.invitation(t, f.org, "new@example.test", "member")
 
@@ -125,8 +126,8 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM slack_user_links WHERE id=$1`, slackLink).Scan(&slackRevoked); err != nil || !slackRevoked || result.RevokedSlackLinks != 1 {
 		t.Fatalf("Slack link after requiring SSO: revoked=%v count=%d, %v", slackRevoked, result.RevokedSlackLinks, err)
 	}
-	if !f.revoked(t, ordinaryCLI) || f.revoked(t, ssoCLI) {
-		t.Fatal("requiring SSO must revoke CLI sessions approved without SSO and keep those approved with it")
+	if !f.revoked(t, ordinaryCLI) || f.revoked(t, ssoCLI) || f.revoked(t, ownerOrdinaryCLI) {
+		t.Fatal("requiring SSO must revoke members' CLI sessions approved without SSO and keep those approved with it and owners'")
 	}
 	if _, err := f.admits(t, ordinaryBrowser, f.org); !errors.Is(err, ErrSSORequired) {
 		t.Fatalf("ordinary browser under required SSO: %v", err)

@@ -272,11 +272,14 @@ func (s *Server) ssoOIDCFinish(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 	var flow browserAuthFlow
 	fail := func(code string) {
-		// A refused response never reaches completion, so the refusal is
-		// recorded here, without the response itself.
-		event := audit.Event{Evidence: audit.Unauthenticated("failed", "sso_assertion"), Action: "identity.sign_in", TargetKind: "login_session", Outcome: "denied", Unresolved: true}
-		if err := audit.RecordFailure(r.Context(), s.tx, s.auditPolicy, event, code); err != nil {
-			s.log.Warn("record SAML refusal", "error", err)
+		// A refused response to this browser's own sign-in never reaches
+		// completion, so the refusal is recorded here, without the response
+		// itself. A post without a SAML flow is not a sign-in attempt.
+		if ssoStartKind(flow.Kind) {
+			event := audit.Event{Evidence: audit.Unauthenticated("failed", "sso_assertion"), Action: "identity.sign_in", TargetKind: "login_session", Outcome: "denied", Unresolved: true}
+			if err := audit.RecordFailure(r.Context(), s.tx, s.auditPolicy, event, "authentication_invalid"); err != nil {
+				s.log.Warn("record SAML refusal", "error", err)
+			}
 		}
 		page := "/login"
 		switch flow.Kind {
