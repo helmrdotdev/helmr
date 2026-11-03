@@ -14,3 +14,12 @@ func TestReleaseCommandAcceptsOnlyCompletePublishInvocation(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseHostsCommandRequiresEveryInput(t *testing.T) {
+	for _, args := range [][]string{{"publish-hosts"}, {"publish-hosts", "--store", "s3://bucket", "--version", "v1.2.3"}} {
+		if err := runReleaseCommand(context.Background(), args); err == nil ||
+			!strings.Contains(err.Error(), "release publish-hosts requires") {
+			t.Fatalf("args %v: error = %v", args, err)
+		}
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/release"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -520,5 +521,52 @@ func TestPreparationGrantsCoverOnlyBuildInputs(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), g.pool, `UPDATE image_builds SET status='failed',error_code='test',fenced_at=clock_timestamp(),fence_evidence='test fence' WHERE environment_id=$1 AND id=$2`, g.env, build)
 	if _, err := g.broker.Read(t.Context(), g.host, scope, "cas", artifact); !errors.Is(err, ErrDenied) {
 		t.Fatalf("read after the build ended = %v", err)
+	}
+}
+
+// A release read is granted only for an object of the named, recorded release
+// that the platform store holds; recording other bytes for a version conflicts.
+func TestReleaseReadsCoverOnlyThePublishedRelease(t *testing.T) {
+	f := newFixture(t)
+	platform := newGrantSigner("platform")
+	broker, err := NewStorageBroker(f.pool, (&grantKeyspaces{orgs: map[uuid.UUID]*grantSigner{}}).signer, platform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified := release.Index{Schema: release.IndexSchema, Version: "v1.2.3", Assets: map[string]release.Asset{}}
+	for i, name := range release.HostAssets {
+		verified.Assets[name] = release.Asset{Digest: digestOf(string(rune('a' + i))), SizeBytes: int64(i + 1)}
+	}
+	index := workergroup.ReleaseObject{Digest: digestOf("e"), SizeBytes: 10}
+	signature := workergroup.ReleaseObject{Digest: digestOf("f"), SizeBytes: 11}
+	if err := workergroup.RecordRelease(t.Context(), f.pool, verified, index, signature); err != nil {
+		t.Fatal(err)
+	}
+	other := workergroup.ReleaseObject{Digest: digestOf("9"), SizeBytes: 10}
+	if err := workergroup.RecordRelease(t.Context(), f.pool, verified, other, signature); err == nil {
+		t.Fatal("a version was recorded again with another index")
+	}
+	host := verified.Assets[release.HostArtifacts]
+	platform.stored[host.Digest] = cas.Descriptor{Digest: host.Digest, SizeBytes: host.SizeBytes}
+	platform.stored[index.Digest] = cas.Descriptor{Digest: index.Digest, SizeBytes: index.SizeBytes}
+
+	for _, digest := range []string{host.Digest, index.Digest} {
+		grant, err := broker.ReleaseRead(t.Context(), "v1.2.3", digest)
+		if err != nil || grant.Digest != digest || grant.Get.Method != "GET" || grant.Head.Method != "HEAD" {
+			t.Fatalf("release read %s = %+v, %v", digest, grant, err)
+		}
+	}
+	before := len(platform.calls())
+	for name, read := range map[string][2]string{
+		"recorded but not stored": {"v1.2.3", signature.Digest},
+		"another version":         {"v1.2.4", host.Digest},
+		"no release object":       {"v1.2.3", digestOf("8")},
+	} {
+		if _, err := broker.ReleaseRead(t.Context(), read[0], read[1]); !errors.Is(err, ErrDenied) {
+			t.Fatalf("%s read = %v", name, err)
+		}
+	}
+	if after := len(platform.calls()); after != before {
+		t.Fatalf("denied release reads were signed: %v", platform.calls()[before:])
 	}
 }

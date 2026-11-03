@@ -730,6 +730,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Post("/instance/challenge", s.workerHostChallenge)
 		r.Post("/instance/credential", s.workerIssueHostCredential)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
+		r.With(s.requireLiveWorker).Get("/release", s.workerRelease)
+		r.With(s.requireLiveWorker, limitRequestBody(4096)).Post("/release/reads", s.workerReleaseRead)
 		r.With(s.requireWorkerActivation).Post("/instance/activate", s.workerActivate)
 		r.With(s.requireWorker).Get("/instance", s.workerStatus)
 		r.With(s.requireWorkerDrainCompletion).Post("/instance/drain/complete", s.workerCompleteDrain)
