@@ -156,6 +156,7 @@ rec {
     pkgs.curl
     pkgs.gnumake
     pkgs.gnutar
+    pkgs.ruby
     pkgs.gzip
     pkgs.jq
     helmrPackages.nodejs

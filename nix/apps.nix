@@ -353,6 +353,8 @@ ciApps
         pkgs.gnugrep
         pkgs.gnumake
         pkgs.gnused
+        pkgs.gzip
+        pkgs.ruby
         pkgs.gnutar
         helmrPackages.goPackage
         pkgs.jq
