@@ -58,15 +58,10 @@ func commandError(err error, operation commandOperation) error {
 	case commandCreateOperation, commandGetOperation, commandCancelOperation:
 		return publicCommandError(err, operation)
 	}
+	if mapped := commandAdmissionError(err); mapped != nil {
+		return mapped
+	}
 	switch {
-	case errors.Is(err, computer.ErrExecutionSettling):
-		return conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true})
-	case errors.Is(err, workergroup.ErrCapacityUnavailable):
-		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
-	case errors.Is(err, workergroup.ErrCapacityIncompatible):
-		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
-	case errors.Is(err, workergroup.ErrCapacityExhausted):
-		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		return unauthorized(errors.New("worker authentication is required"))
 	case errors.Is(err, secret.ErrDeliveryRevoked):
@@ -88,6 +83,21 @@ func commandError(err error, operation commandOperation) error {
 	default:
 		return unavailable(errors.New("append command log failed"))
 	}
+}
+
+// commandAdmissionError maps execution refusals shared by Command creation and Worker operations.
+func commandAdmissionError(err error) error {
+	switch {
+	case errors.Is(err, computer.ErrExecutionSettling):
+		return conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true})
+	case errors.Is(err, workergroup.ErrCapacityUnavailable):
+		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
+	case errors.Is(err, workergroup.ErrCapacityIncompatible):
+		return conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()})
+	case errors.Is(err, workergroup.ErrCapacityExhausted):
+		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
+	}
+	return nil
 }
 
 func publicCommandError(err error, operation commandOperation) error {
@@ -128,19 +138,23 @@ func publicCommandError(err error, operation commandOperation) error {
 		case errors.Is(err, computer.ErrPreparationExhausted):
 			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
 		}
+		if mapped := commandAdmissionError(err); mapped != nil {
+			return mapped
+		}
 	}
 	return unavailable(codedError{code: "computer_authority_unavailable", message: errComputerAuthorityUnavailable.Error(), retryable: true})
 }
 
 // writeCommandError writes the API error of a public Command operation and
-// logs the errors it reports as unavailable.
+// logs unexpected service unavailability.
 func (s *Server) writeCommandError(w http.ResponseWriter, r *http.Request, err error, operation commandOperation) {
 	if errors.Is(err, audit.ErrCapture) {
 		s.writeOperationError(w, r, err)
 		return
 	}
 	mapped := commandError(err, operation)
-	if errorStatus(mapped) == http.StatusServiceUnavailable {
+	code, _ := errors.AsType[codedError](mapped)
+	if errorStatus(mapped) == http.StatusServiceUnavailable && (operation != commandCreateOperation || code.code != "execution_capacity_unavailable") {
 		s.log.Error(commandFailed[operation], "error", err)
 	}
 	s.writeOperationError(w, r, mapped)

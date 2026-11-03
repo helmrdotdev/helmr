@@ -62,6 +62,14 @@ The command prints the command ID once Helmr has accepted the command, which can
 be before a hibernated Computer has resumed. Each run admits a new command; pass
 the same `--idempotency-key` to retry one admission after a lost response.
 
+If Helmr cannot confirm capacity, command creation returns HTTP 503 with
+`execution_capacity_unavailable`. Retry the same request with the same
+idempotency key once capacity is available. HTTP 409 with
+`execution_capacity_incompatible` means the Computer needs a compatible Worker
+pool. For `execution_capacity_exhausted`, free capacity or raise the Worker
+limit before retrying. A retryable `execution_settling` conflict means an
+earlier execution is still settling.
+
 | Flag | Meaning |
 | --- | --- |
 | `--cwd PATH` | Working directory. Defaults to `/workspace`. |
