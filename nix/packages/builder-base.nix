@@ -7,6 +7,18 @@
 }:
 
 let
+  source =
+    file: sha256:
+    fetchurl {
+      urls = [
+        "https://deb.debian.org/debian/pool/main/o/openssh/${file}"
+        "https://snapshot.debian.org/archive/debian/20261103T160000Z/pool/main/o/openssh/${file}"
+      ];
+      inherit sha256;
+    };
+  upstream = source "openssh_10.0p1.orig.tar.gz" "021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c";
+  packaging = source "openssh_10.0p1-7+deb13u4.debian.tar.xz" "102e1065030c6002acabd7f896eeba1462bf54b4d7393bac34b0308312868ec6";
+
   # APT resolves these against the pinned slim base without Recommends.
   # Updates must keep the native toolchain compatible with the managed Runtime.
   archives = linkFarm "builder-debs" (
@@ -35,10 +47,6 @@ dockerTools.buildImage {
   diskSize = 4096;
   buildVMMemorySize = 2048;
   runAsRoot = ''
-    export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get --no-download --no-install-recommends -y install ${archives}/*.deb
-    dpkg --audit
-    rm -f /var/log/dpkg.log /var/log/apt/* /var/log/alternatives.log
+    /bin/sh ${./provision-builder.sh} ${archives} ${upstream} ${packaging} ${./openssh-client-rekey.patch}
   '';
 }
