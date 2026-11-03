@@ -52,7 +52,7 @@ WITH target AS (
        )
     RETURNING workers.*
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets AS host_secrets
+    UPDATE worker_host_keys AS host_secrets
        SET revoked_at = COALESCE(host_secrets.revoked_at, now())
       FROM target
      WHERE host_secrets.worker_host_id = target.id

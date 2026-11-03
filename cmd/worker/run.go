@@ -105,9 +105,9 @@ func run(log *slog.Logger) error {
 	}
 	var controlPlaneClient *workerclient.Client
 	phaseStarted = time.Now()
-	workerHostSecret, err := resolveAuthenticatedWorkerHostSecret(ctx, cfg, workDir, func(hostSecret workerHostSecretFile) error {
+	workerIdentity, err := resolveAuthenticatedWorkerIdentity(ctx, cfg, workDir, func(identity workerIdentityFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
-			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret),
+			workerclient.WithAuth(identity.WorkerHostID, identity.key()),
 			workerclient.WithService(serviceID),
 			workerclient.WithNetwork(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}),
 		)
@@ -375,7 +375,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
-	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerHostSecret.WorkerHostID)
+	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerIdentity.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}

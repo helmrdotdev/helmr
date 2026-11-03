@@ -230,7 +230,7 @@ def tool(name):
  p=shutil.which(name)
  if p is None:raise SystemExit('missing tool: '+name)
  return p
-worker={'WORKER_WORK_DIR':e+'/w','JAILER_CHROOT_DIR':e+'/w/jailer','WORKER_HOST_SECRET_PATH':e+'/w/host-secret.json',
+worker={'WORKER_WORK_DIR':e+'/w','JAILER_CHROOT_DIR':e+'/w/jailer','WORKER_IDENTITY_PATH':e+'/w/identity.json',
  'WORKER_IMAGES_DIR':c+'/images','WORKER_COMPUTER_DEVICES':'/dev/nbd0 /dev/nbd1',
  'WORKER_COMPUTER_STAGING_MIB':'1024',
  'WORKER_LOG_CHUNK_BYTES':'1024','WORKER_LOG_BUFFER_BYTES':'1048576','WORKER_LOG_BUFFER_RECORDS':'1024',

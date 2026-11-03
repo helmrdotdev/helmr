@@ -14,12 +14,20 @@ func TestEnrollmentTokenRoundTrip(t *testing.T) {
 	if !strings.HasPrefix(token.Raw, EnrollmentTokenPrefix) {
 		t.Fatalf("token = %q", token.Raw)
 	}
-	hash, err := ParseEnrollmentToken(token.Raw)
+	parsed, err := ParseEnrollmentToken(token.Raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(hash, token.Hash) || len(hash) != 32 {
-		t.Fatalf("hash length = %d", len(hash))
+	if !bytes.Equal(parsed.Hash, token.Hash) || len(parsed.Hash) != 32 || parsed.SingleUse {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+	single, err := GenerateSingleUseEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = ParseEnrollmentToken(single.Raw)
+	if err != nil || !strings.HasPrefix(single.Raw, SingleUseEnrollmentTokenPrefix) || !bytes.Equal(parsed.Hash, single.Hash) || !parsed.SingleUse {
+		t.Fatalf("single-use token %q parsed = %+v, %v", single.Raw, parsed, err)
 	}
 }
 

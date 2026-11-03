@@ -35,6 +35,7 @@ func (s *Server) mountWorkerGroupRoutes(r chi.Router) {
 	r.With(manage).Post("/worker-groups/{groupID}/drain", s.drainWorkerGroup)
 	r.With(manage).Post("/worker-groups/{groupID}/disable", s.disableWorkerGroup)
 	r.With(manage).Post("/worker-groups/{groupID}/token/rotate", s.rotateWorkerGroupToken)
+	r.With(manage).Post("/worker-groups/{groupID}/enrollment-tokens", s.issueWorkerEnrollmentToken)
 	r.With(manage).Post("/worker-groups/{groupID}/host-credentials/revoke", s.revokeWorkerGroupHostCredentials)
 	r.With(read).Get("/worker-groups/{groupID}/hosts", s.listWorkerGroupHosts)
 	r.With(manage).Post("/worker-groups/{groupID}/hosts/{hostID}/fence", s.fenceWorkerHost)
@@ -157,6 +158,26 @@ func (s *Server) rotateWorkerGroupToken(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, api.RotateWorkerGroupTokenResponse{EnrollmentToken: token})
+}
+
+// A single-use enrollment token admits one machine, so issuing it needs recent
+// proof.
+func (s *Server) issueWorkerEnrollmentToken(w http.ResponseWriter, r *http.Request) {
+	if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
+		s.writeOperationError(w, r, err)
+		return
+	}
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return
+	}
+	issued, err := workergroup.IssueEnrollmentToken(r.Context(), s.tx, s.auditPolicy, s.workerGroupOperator(r, auth.PermissionWorkerGroupsManage), groupID)
+	if err != nil {
+		s.writeOrganizationWorkerError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, api.IssueEnrollmentTokenResponse{EnrollmentToken: issued.Token, ExpiresAt: issued.ExpiresAt})
 }
 
 func (s *Server) revokeWorkerGroupHostCredentials(w http.ResponseWriter, r *http.Request) {

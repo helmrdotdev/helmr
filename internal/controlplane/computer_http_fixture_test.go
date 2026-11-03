@@ -20,8 +20,8 @@ type workerHTTPClient struct {
 
 func newWorkerHTTPClient(t *testing.T, handler http.Handler, pool *pgxpool.Pool, hostID uuid.UUID) workerHTTPClient {
 	t.Helper()
-	hostSecret := seedHostSecret(t, pool, hostID)
-	return workerHTTPClient{handler: handler, hostCredential: hostSecret.issue(t, handler)}
+	hostKey := seedHostKey(t, pool, hostID)
+	return workerHTTPClient{handler: handler, hostCredential: hostKey.issue(t, handler)}
 }
 
 // post sends body as JSON, requires the status and decodes a 200 response

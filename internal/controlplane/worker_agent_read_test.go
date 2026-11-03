@@ -23,7 +23,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	client := secret.client(t, server.URL)
 	origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[]`)})
 	if err != nil {

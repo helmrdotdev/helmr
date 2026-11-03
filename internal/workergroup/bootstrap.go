@@ -59,13 +59,16 @@ func Bootstrap(ctx context.Context, txb db.TxBeginner, cfg BootstrapConfig) erro
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("get bootstrap worker group: %w", err)
 		}
-		tokenHash, err := auth.ParseEnrollmentToken(cfg.EnrollmentToken)
+		token, err := auth.ParseEnrollmentToken(cfg.EnrollmentToken)
 		if err != nil {
 			return err
 		}
+		if token.SingleUse {
+			return errors.New("bootstrap worker group token must be a reusable group token")
+		}
 		created, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 			ID: pgvalue.UUID(uuid.NewV7()), TokenID: pgvalue.UUID(uuid.NewV7()),
-			TokenHash: tokenHash, RegionID: cfg.RegionID, Name: cfg.GroupName, Description: "",
+			TokenHash: token.Hash, RegionID: cfg.RegionID, Name: cfg.GroupName, Description: "",
 		})
 		if err != nil {
 			return fmt.Errorf("create bootstrap worker group: %w", err)

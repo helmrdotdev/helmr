@@ -16,12 +16,12 @@ type Querier interface {
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	// Each dependent stage locks one supply row before the next, matching runtime
 	// admission and lifecycle operations. A joined FOR UPDATE does not guarantee order.
-	AuthenticateWorkerHostSecret(ctx context.Context, arg AuthenticateWorkerHostSecretParams) (AuthenticateWorkerHostSecretRow, error)
-	AuthorizeActivatingWorkerHostSecret(ctx context.Context, arg AuthorizeActivatingWorkerHostSecretParams) (AuthorizeActivatingWorkerHostSecretRow, error)
-	AuthorizeRecoveringWorkerHostSecret(ctx context.Context, arg AuthorizeRecoveringWorkerHostSecretParams) (AuthorizeRecoveringWorkerHostSecretRow, error)
+	AuthenticateWorkerHostKey(ctx context.Context, arg AuthenticateWorkerHostKeyParams) (AuthenticateWorkerHostKeyRow, error)
+	AuthorizeActivatingWorkerHostKey(ctx context.Context, arg AuthorizeActivatingWorkerHostKeyParams) (AuthorizeActivatingWorkerHostKeyRow, error)
+	AuthorizeRecoveringWorkerHostKey(ctx context.Context, arg AuthorizeRecoveringWorkerHostKeyParams) (AuthorizeRecoveringWorkerHostKeyRow, error)
 	AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeWorkerDrainReplayParams) (AuthorizeWorkerDrainReplayRow, error)
 	AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeWorkerFenceReplayParams) (AuthorizeWorkerFenceReplayRow, error)
-	AuthorizeWorkerHostSecret(ctx context.Context, arg AuthorizeWorkerHostSecretParams) (AuthorizeWorkerHostSecretRow, error)
+	AuthorizeWorkerHostKey(ctx context.Context, arg AuthorizeWorkerHostKeyParams) (AuthorizeWorkerHostKeyRow, error)
 	// The data-modifying CTE always runs in the same statement. Certification does
 	// not depend on its inserted row count: every inherited key may already be direct.
 	CertifyDiskObject(ctx context.Context, arg CertifyDiskObjectParams) (int64, error)
@@ -59,7 +59,8 @@ type Querier interface {
 	DeleteEnvironmentPlacement(ctx context.Context, arg DeleteEnvironmentPlacementParams) (int64, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
-	// EnrollHost owns the deciding authority locks and physical-custody exclusion.
+	// EnrollHost resolves and locks the enrollment token and its group, and owns
+	// the physical-custody exclusion, before this statement.
 	EnrollWorkerHost(ctx context.Context, arg EnrollWorkerHostParams) (EnrollWorkerHostRow, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	EnsureRegion(ctx context.Context, arg EnsureRegionParams) error
@@ -68,6 +69,9 @@ type Querier interface {
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
 	GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrgMemberByUserParams) (OrgMember, error)
+	// The key a host answers credential challenges with. AuthenticateWorkerHostKey
+	// then locks it with the host and rechecks it is current.
+	GetActiveWorkerHostKey(ctx context.Context, workerHostID pgtype.UUID) (GetActiveWorkerHostKeyRow, error)
 	GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams) (AuthIdentity, error)
 	// A NULL owner_org_id reads deployment hosts, which the capacity protocol
 	// sees; organization groups are fixed capacity their organization operates

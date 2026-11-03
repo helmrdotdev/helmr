@@ -131,8 +131,9 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 	}
 }
 
-// The worker exchanges its host secret for host credentials it never verifies;
-// signing and verifying them is workergroup's, in the control plane.
+// The worker answers challenges with its machine key for host credentials it
+// never verifies; signing and verifying them is workergroup's, in the control
+// plane.
 func TestWorkerDoesNotLinkHostCredentialSigning(t *testing.T) {
 	root := repositoryRoot(t)
 	for _, goos := range []string{"linux", "darwin"} {

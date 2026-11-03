@@ -23,7 +23,7 @@ func TestCapacityAgentProviderAbsenceRequiresAuthorityAndFencesExactHost(t *test
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
  SELECT environment_id,$4,epoch,$2,worker_epoch,expires_at,$5,channel_credential_digest,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$3`, pgx.QueryExecModeSimpleProtocol, f.Worker, otherHost, f.Computer, otherComputer, uuid.NewV7())
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CapacityToken = capacityTestToken() })
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	credential := secret.issue(t, handler)
 	request := func(method, path, token string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -59,8 +59,8 @@ func TestCapacityAgentProviderAbsenceRequiresAuthorityAndFencesExactHost(t *test
 		t.Fatalf("cross-host physical fence %v %v", exact, err)
 	}
 	var revoked bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT bool_and(revoked_at IS NOT NULL) FROM worker_host_secrets WHERE worker_host_id=$1`, f.Worker).Scan(&revoked); err != nil || !revoked {
-		t.Fatalf("host secret survives loss %v %v", revoked, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT bool_and(revoked_at IS NOT NULL) FROM worker_host_keys WHERE worker_host_id=$1`, f.Worker).Scan(&revoked); err != nil || !revoked {
+		t.Fatalf("host key survives loss %v %v", revoked, err)
 	}
 	if w := request(http.MethodGet, "/worker/v1/instance", credential); w.Code != http.StatusUnauthorized {
 		t.Fatalf("old credential survived %d: %s", w.Code, w.Body.String())

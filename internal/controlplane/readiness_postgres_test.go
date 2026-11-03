@@ -84,7 +84,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				fixture := sessiontest.New(t)
-				secret := seedHostSecret(t, fixture.Pool, fixture.Worker)
+				secret := seedHostKey(t, fixture.Pool, fixture.Worker)
 				runtime := readinessRuntimePool(t, fixture.Pool)
 				cfg := runtime.Config()
 				cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
@@ -159,7 +159,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				} else {
 					cycle(false, 1)
 					var lost, revoked bool
-					if err := fixture.Pool.QueryRow(t.Context(), `SELECT status='lost', NOT EXISTS(SELECT 1 FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&lost, &revoked); err != nil {
+					if err := fixture.Pool.QueryRow(t.Context(), `SELECT status='lost', NOT EXISTS(SELECT 1 FROM worker_host_keys WHERE worker_host_id=$1 AND revoked_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&lost, &revoked); err != nil {
 						t.Fatal(err)
 					}
 					if !lost || !revoked {
@@ -187,7 +187,7 @@ func assertServingHostPreserved(t *testing.T, fixture sessiontest.Fixture, drain
 	}
 	var status string
 	var secrets, instances int
-	if err := fixture.Pool.QueryRow(t.Context(), `SELECT status, (SELECT count(*) FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL), (SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&status, &secrets, &instances); err != nil {
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT status, (SELECT count(*) FROM worker_host_keys WHERE worker_host_id=$1 AND revoked_at IS NULL), (SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&status, &secrets, &instances); err != nil {
 		t.Fatal(err)
 	}
 	if status != want || secrets != 1 || instances != 1 {

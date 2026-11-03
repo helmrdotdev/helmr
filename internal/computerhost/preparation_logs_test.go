@@ -3,6 +3,7 @@ package computerhost
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -105,6 +106,9 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 					}
 				}
 				transport := preparationLogRoundTrip(func(r *http.Request) (*http.Response, error) {
+					if r.URL.Path == "/worker/v1/instance/challenge" {
+						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"challenge":"fixture","expires_in_seconds":60}`)), Header: make(http.Header)}, nil
+					}
 					if r.URL.Path == "/worker/v1/instance/credential" {
 						return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"credential":"fixture","expires_in_seconds":3600,"worker_epoch":7}`)), Header: make(http.Header)}, nil
 					}
@@ -123,7 +127,7 @@ func TestPreparationLogHTTPRejectionIsolatedFromOtherStreamAndPublication(t *tes
 					body, _ := json.Marshal(workerapi.DiagnosticLogReceipt{ThroughSequence: request.ThroughSequence, AcceptedAt: now, ExpiresAt: now.Add(90 * 24 * time.Hour)})
 					return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}, nil
 				})
-				actual, err := workerclient.New("http://127.0.0.1", workerclient.WithAuth("host", "secret"), workerclient.WithService("fixture"), workerclient.WithHTTPClient(&http.Client{Transport: transport}))
+				actual, err := workerclient.New("http://127.0.0.1", workerclient.WithAuth("host", ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))), workerclient.WithService("fixture"), workerclient.WithHTTPClient(&http.Client{Transport: transport}))
 				if err != nil {
 					t.Fatal(err)
 				}

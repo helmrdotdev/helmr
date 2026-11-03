@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -28,6 +29,8 @@ func TestWorkerObservationRecoversAfterHungRequest(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				switch r.URL.Path {
+				case "/worker/v1/instance/challenge":
+					_ = json.NewEncoder(w).Encode(workerapi.HostChallengeResponse{Challenge: "challenge", ExpiresInSeconds: 60})
 				case "/worker/v1/instance/credential":
 					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 				case "/worker/v1/instance/observations":
@@ -42,7 +45,7 @@ func TestWorkerObservationRecoversAfterHungRequest(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client, err := workerclient.New(server.URL, workerclient.WithAuth("host", "secret"), workerclient.WithService("service"))
+			client, err := workerclient.New(server.URL, workerclient.WithAuth("host", ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))), workerclient.WithService("service"))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -18,7 +18,7 @@ func TestWorkerAgentReadyUsesCurrentAttachment(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.Session)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
 	first, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {

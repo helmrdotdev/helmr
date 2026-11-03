@@ -22,11 +22,27 @@ const (
 	LogStreamStderr LogStream = "stderr"
 )
 
+// HostChallengeRequest asks for a challenge the host answers with its machine
+// key to obtain a host credential.
+type HostChallengeRequest struct {
+	APIVersion   string `json:"api_version"`
+	WorkerHostID string `json:"worker_host_id"`
+	ServiceID    string `json:"service_id"`
+}
+
+type HostChallengeResponse struct {
+	Challenge        string `json:"challenge"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+}
+
+// HostCredentialRequest answers a challenge: Signature is the machine key's
+// Ed25519 signature of the challenge message.
 type HostCredentialRequest struct {
-	APIVersion       string `json:"api_version"`
-	WorkerHostID     string `json:"worker_host_id"`
-	WorkerHostSecret string `json:"worker_host_secret"`
-	ServiceID        string `json:"service_id"`
+	APIVersion   string `json:"api_version"`
+	WorkerHostID string `json:"worker_host_id"`
+	ServiceID    string `json:"service_id"`
+	Challenge    string `json:"challenge"`
+	Signature    []byte `json:"signature"`
 }
 
 type HostCredentialResponse struct {
@@ -36,16 +52,18 @@ type HostCredentialResponse struct {
 }
 
 type EnrollmentResponse struct {
-	WorkerHostID     string `json:"worker_host_id"`
-	WorkerGroupID    string `json:"worker_group_id"`
-	WorkerPoolID     string `json:"worker_pool_id"`
-	WorkerHostSecret string `json:"worker_host_secret"`
+	WorkerHostID  string `json:"worker_host_id"`
+	WorkerGroupID string `json:"worker_group_id"`
+	WorkerPoolID  string `json:"worker_pool_id"`
 }
 
+// EnrollmentRequest carries the public half of the machine key the host
+// generated; the private key never leaves the machine.
 type EnrollmentRequest struct {
 	APIVersion string `json:"api_version"`
 	ResourceID string `json:"resource_id"`
 	PoolName   string `json:"pool_name"`
+	PublicKey  []byte `json:"public_key"`
 }
 
 type ActivateRequest struct {

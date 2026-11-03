@@ -170,7 +170,7 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 
 // RotateGroupToken replaces a worker group's enrollment token and returns the
 // new raw token. The previous token stops enrolling hosts at once. Hosts that
-// already enrolled keep their host secrets and keep running; revoke them with
+// already enrolled keep their machine keys and keep running; revoke them with
 // RevokeGroupHostCredentials.
 func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) (string, error) {
 	if operator.safety {
@@ -205,13 +205,14 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditp
 }
 
 // RevokeGroupHostCredentials fences every registering, active and draining
-// host of a worker group as lost and revokes every host secret the group has
-// issued, then returns the fenced host IDs. Each host's claim version
+// host of a worker group as lost and revokes every machine key registered in
+// the group, then returns the fenced host IDs. Each host's claim version
 // advances, so every later authorization check of their host credentials,
 // allocations and Secret proxy grants fails; a request whose authorization
 // committed before the revocation may still complete. Their allocations are
-// reconciled as host loss. A fenced machine can return only by enrolling again with the
-// group's enrollment token, which this operation does not change.
+// reconciled as host loss. A fenced machine can return only by enrolling again
+// with a new key and a valid enrollment token; this operation does not rotate
+// the group's token.
 func RevokeGroupHostCredentials(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) ([]uuid.UUID, error) {
 	var fenced []uuid.UUID
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {

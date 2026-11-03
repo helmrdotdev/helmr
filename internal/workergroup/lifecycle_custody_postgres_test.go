@@ -1,6 +1,7 @@
 package workergroup
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
@@ -23,9 +24,9 @@ func retainedPreparation(t *testing.T, f sessiontest.Fixture) uuid.UUID {
  SELECT $1,$2,$3,'failed-but-owned','failed',clock_timestamp()-interval '1 hour','fixture_failure',1,id,1,$4,decode(repeat('00',32),'hex'),536870912,1073741824,vm_platform_id,1,cpu_environment_digest,worker_group_id FROM worker_hosts WHERE id=$5`, f.Environment, id, f.Deployment, uuid.NewV7(), f.Worker)
 	return id
 }
-func hostSecret(t *testing.T, f sessiontest.Fixture) {
+func hostKey(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,secret_hash) VALUES($1,$2,$3,'fixture',decode(repeat('12',32),'hex'))`, uuid.NewV7(), f.Group, f.Worker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_keys(id,worker_group_id,worker_host_id,public_key) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.Group, f.Worker, []byte(newMachineKey(t).Public().(ed25519.PublicKey)))
 }
 func fenceFixtureComputer(t *testing.T, f sessiontest.Fixture) {
 	t.Helper()
@@ -40,7 +41,7 @@ func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 	for _, kind := range []string{"computer", "preparation", "both"} {
 		t.Run(kind, func(t *testing.T) {
 			f := sessiontest.New(t)
-			hostSecret(t, f)
+			hostKey(t, f)
 			if kind != "computer" {
 				retainedPreparation(t, f)
 			}
@@ -61,7 +62,7 @@ func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 				}
 			}
 			var active bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM worker_host_secrets WHERE worker_host_id=$1`, f.Worker).Scan(&active); err != nil || !active {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM worker_host_keys WHERE worker_host_id=$1`, f.Worker).Scan(&active); err != nil || !active {
 				t.Fatalf("incomplete drain revoked cleanup credentials: %v %v", active, err)
 			}
 			fenceFixtureComputer(t, f)
@@ -74,7 +75,7 @@ func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 			if err != nil || replay.TerminationReadyAt != completed.TerminationReadyAt || replay.ClaimVersion != completed.ClaimVersion {
 				t.Fatalf("replay=%+v %v", replay, err)
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM worker_host_secrets WHERE worker_host_id=$1`, f.Worker).Scan(&active); err != nil || active {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM worker_host_keys WHERE worker_host_id=$1`, f.Worker).Scan(&active); err != nil || active {
 				t.Fatalf("completed drain retained credentials: %v %v", active, err)
 			}
 		})
@@ -85,7 +86,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 	for _, path := range []string{"provider drift", "worker fence", "stale observation"} {
 		t.Run(path, func(t *testing.T) {
 			f := sessiontest.New(t)
-			hostSecret(t, f)
+			hostKey(t, f)
 			retainedPreparation(t, f)
 			q := db.New(f.Pool)
 			var err error
@@ -105,7 +106,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 			if err = f.Pool.QueryRow(t.Context(), `SELECT h.status='lost' AND s.revoked_at IS NOT NULL
  AND EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$2 AND fenced_at IS NULL)
  AND EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$2 AND fenced_at IS NULL)
- FROM worker_hosts h JOIN worker_host_secrets s ON s.worker_host_id=h.id WHERE h.id=$1`, f.Worker, f.Environment).Scan(&kept); err != nil || !kept {
+ FROM worker_hosts h JOIN worker_host_keys s ON s.worker_host_id=h.id WHERE h.id=$1`, f.Worker, f.Environment).Scan(&kept); err != nil || !kept {
 				t.Fatalf("loss released physical custody or kept credentials: %v %v", kept, err)
 			}
 		})

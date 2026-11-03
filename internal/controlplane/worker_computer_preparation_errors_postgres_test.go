@@ -59,7 +59,7 @@ func TestPreparationKeyFailuresClearMaterialAndHideResponseCause(t *testing.T) {
 			keys := &rejectedPreparationKeys{DataKeyWrapper: local, failure: failure}
 			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = keys }))
 			defer server.Close()
-			auth := seedHostSecret(t, f.Pool, f.Worker)
+			auth := seedHostKey(t, f.Pool, f.Worker)
 			raw, _ := json.Marshal(request)
 			response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/image-build/key", raw)
 			defer response.Body.Close()

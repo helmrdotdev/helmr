@@ -56,7 +56,7 @@ func preparationCalls() []preparationCall {
 
 func preparationClient(t *testing.T, url string, h *http.Client) *Client {
 	t.Helper()
-	c, e := New(url, WithHTTPClient(h), WithAuth(uuid.NewV7().String(), "fixture"), WithService(uuid.NewV7().String()))
+	c, e := New(url, WithHTTPClient(h), WithAuth(uuid.NewV7().String(), testMachineKey), WithService(uuid.NewV7().String()))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -72,6 +72,9 @@ func TestPreparationRetriesIdenticalRequests(t *testing.T) {
 				var mu sync.Mutex
 				var bodies [][]byte
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveHostChallenge(w, r) {
+						return
+					}
 					if r.URL.Path != operation.path {
 						t.Errorf("unexpected path %s", r.URL.Path)
 						w.WriteHeader(404)
@@ -206,6 +209,9 @@ func TestPreparationRefreshThenRetriesWithoutChangingPayload(t *testing.T) {
 			var bodies [][]byte
 			credentials := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveHostChallenge(w, r) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				if r.URL.Path == "/worker/v1/instance/credential" {
@@ -267,6 +273,9 @@ func TestPreparationRefreshesOnlyOnce(t *testing.T) {
 			var mu sync.Mutex
 			requests, credentials := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveHostChallenge(w, r) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				if r.URL.Path == "/worker/v1/instance/credential" {

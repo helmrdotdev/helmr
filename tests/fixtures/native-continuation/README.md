@@ -493,7 +493,7 @@ and Worker/driver/CP logs, ordinary result/publication/save observations,
 `cross-host-ready.json`, `cross-host-continuation.json`,
 `checkpoint-observations.json.handoff-receipt`, `retirement-complete.json`,
 `target-prepared.json`, `target-start.json`, and the named before/after inventories. Exclude all config,
-enrollment, host-secret and `*-private.json` files. Source-only success is not a
+enrollment, machine identity and `*-private.json` files. Source-only success is not a
 cross-host verdict. This case does not prove source-EC2 outage, real provider
 sign-in, arbitrary platform compatibility, hours-long idle or performance distributions.
 

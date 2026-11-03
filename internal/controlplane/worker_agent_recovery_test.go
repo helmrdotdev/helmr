@@ -29,7 +29,7 @@ func TestWorkerAgentStartupRecoveryFencesOnlyReportedPriorAllocations(t *testing
 	handler := newPostgresServer(t, f.Pool)
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	oldCredential := secret.issue(t, handler)
 	secret.serviceID = uuid.NewV7()
 	client := secret.client(t, server.URL)
@@ -102,11 +102,12 @@ func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrolled, err := enrollmentClient.EnrollWorker(t.Context(), token.Raw, workerapi.EnrollmentRequest{ResourceID: "native-startup-host", PoolName: "startup"})
+	public, key := newMachineKey(t)
+	enrolled, err := enrollmentClient.EnrollWorker(t.Context(), token.Raw, workerapi.EnrollmentRequest{ResourceID: "native-startup-host", PoolName: "startup", PublicKey: public})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := workerclient.New(server.URL, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(uuid.NewV7().String()), workerclient.WithNetwork(networkpolicy.Installation{}))
+	client, err := workerclient.New(server.URL, workerclient.WithAuth(enrolled.WorkerHostID, key), workerclient.WithService(uuid.NewV7().String()), workerclient.WithNetwork(networkpolicy.Installation{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +128,7 @@ func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
 }
 
 func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
+	registrationKey, _ := newMachineKey(t)
 	f := sessiontest.New(t)
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
@@ -135,7 +137,7 @@ func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_group_tokens SET token_hash=$1 WHERE id=(SELECT token_id FROM worker_groups WHERE id=$2)`, token.Hash, f.Group)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	secret.serviceID = uuid.NewV7()
 	owner := secret.client(t, server.URL)
 	if err := owner.AuthenticateWorker(t.Context()); err != nil {
@@ -145,10 +147,10 @@ func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = registration.EnrollWorker(t.Context(), token.Raw, workerapi.EnrollmentRequest{ResourceID: "host", PoolName: "pool"}); !httpclient.IsStatus(err, http.StatusConflict) {
+	if _, err = registration.EnrollWorker(t.Context(), token.Raw, workerapi.EnrollmentRequest{ResourceID: "host", PoolName: "pool", PublicKey: registrationKey}); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("registration took ownership of a retained VM: %v", err)
 	}
-	// Rejected enrollment must preserve the existing host secret and physical owner.
+	// Rejected enrollment must preserve the existing host key and physical owner.
 	if err := owner.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{Quarantined: []string{f.Computer.String()}}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +161,7 @@ func TestWorkerAgentEnrollmentCannotTakeOverUnfencedAllocation(t *testing.T) {
 }
 
 func TestWorkerAgentEnrollmentRechecksAllocationAfterAuthorityLock(t *testing.T) {
+	registrationKey, _ := newMachineKey(t)
 	f := sessiontest.New(t)
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
@@ -167,7 +170,7 @@ func TestWorkerAgentEnrollmentRechecksAllocationAfterAuthorityLock(t *testing.T)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_group_tokens SET token_hash=$1 WHERE id=(SELECT token_id FROM worker_groups WHERE id=$2)`, token.Hash, f.Group)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	secret.serviceID = uuid.NewV7()
 	if err := secret.client(t, server.URL).AuthenticateWorker(t.Context()); err != nil {
 		t.Fatal(err)
@@ -200,7 +203,7 @@ func TestWorkerAgentEnrollmentRechecksAllocationAfterAuthorityLock(t *testing.T)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := client.EnrollWorker(ctx, token.Raw, workerapi.EnrollmentRequest{ResourceID: "host", PoolName: "pool"})
+		_, err := client.EnrollWorker(ctx, token.Raw, workerapi.EnrollmentRequest{ResourceID: "host", PoolName: "pool", PublicKey: registrationKey})
 		done <- err
 	}()
 	for {

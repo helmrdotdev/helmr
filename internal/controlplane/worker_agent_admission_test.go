@@ -67,7 +67,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 					handler.ServeHTTP(w, r)
 				}))
 				defer server.Close()
-				secret := seedHostSecret(t, f.Pool, f.Worker)
+				secret := seedHostKey(t, f.Pool, f.Worker)
 				client := secret.client(t, server.URL)
 				payload := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "retained-decision"}
 				if placed {
@@ -128,7 +128,7 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 	f, _, _ := runtimeAdmissionOrigin(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	for _, method := range []workerapi.AgentOperationMethod{workerapi.AgentMethodStart, workerapi.AgentMethodSpawn} {
 		for _, test := range []struct{ name, payload, turn, code string }{
 			{"missing key", `{"agent":"agent","input":[{"type":"text","text":"work"}]}`, "", "invalid_arguments"},
@@ -167,7 +167,7 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
 			f, origin, execution := runtimeAdmissionOrigin(t)
 			server := httptest.NewServer(newPostgresServer(t, f.Pool))
 			defer server.Close()
-			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+			client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 			arguments := map[string]any{"agent": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "durable-model-decision"}
 			payload := func() json.RawMessage {
 				b, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
@@ -251,7 +251,7 @@ func TestWorkerAgentDeletedPinnedSpawnIsTerminalRejection(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'deleted-child',clock_timestamp()); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	payload, _ := json.Marshal(map[string]any{"tool": "spawn", "arguments": map[string]any{"agent": "deleted-child", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "deleted-child"}})
 	response, err := secret.client(t, server.URL).AgentOperation(t.Context(), workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "deleted-target", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload})
 	if err != nil || response.Error == nil || response.Error.Code != "agent_deleted" {

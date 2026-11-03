@@ -44,7 +44,7 @@ locals {
     WORKER_NETWORK_RESOLVER_IPV4          = local.network_resolver_ipv4
     WORKER_NETWORK_TRANSLATION_POOL       = var.network_translation_pool
     WORKER_WORK_DIR                       = "/var/lib/helmr"
-    WORKER_HOST_SECRET_PATH               = "/var/lib/helmr/worker-host-secret.json"
+    WORKER_IDENTITY_PATH                  = "/var/lib/helmr/worker-identity.json"
     WORKER_POOL_NAME                      = var.worker_pool_name
     WORKER_IMAGES_DIR                     = "/var/lib/helmr/images"
     JAILER_CHROOT_DIR                     = "/var/lib/helmr/jailer"

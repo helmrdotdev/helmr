@@ -36,7 +36,7 @@ func TestWorkerSessionLogDurableReceiptAndFences(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	auth := seedHostSecret(t, f.Pool, f.Worker)
+	auth := seedHostKey(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
 	session := runtimeTestSession(f)
 	attachment, err := client.AcquireAgentAttachment(t.Context(), session)

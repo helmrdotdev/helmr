@@ -11,71 +11,75 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
+func TestWorkerEnrollmentRegistersTheHostPublicKey(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	params := db.EnrollWorkerHostParams{
-		TokenHash:    make([]byte, 32),
-		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
-		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
-		CurrentServiceID: pgvalue.NewUUIDv7(), HostSecretID: pgvalue.NewUUIDv7(),
-		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
-	}
-	credential, err := q.EnrollWorkerHost(ctx, params)
+	workerID := uuid.NewV7()
+	params := enrollmentParams(workerID, "enrollment-host", newHostPublicKey(t))
+	enrolled, err := q.EnrollWorkerHost(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerGroupID != dbtest.DefaultWorkerGroupID {
-		t.Fatalf("credential = %+v", credential)
+	if enrolled.WorkerGroupID != dbtest.DefaultWorkerGroupID || enrolled.ID != params.HostKeyID || !bytes.Equal(enrolled.PublicKey, params.PublicKey) {
+		t.Fatalf("enrolled = %+v", enrolled)
 	}
-	var used bool
-	if err := pool.QueryRow(ctx, `
-		SELECT token.last_used_at IS NOT NULL
-		  FROM worker_group_tokens AS token
-		  JOIN worker_groups AS group_record ON group_record.token_id = token.id
-		 WHERE group_record.id = $1
-	`, dbtest.DefaultWorkerGroupID).Scan(&used); err != nil {
+	active, err := q.GetActiveWorkerHostKey(ctx, pgvalue.UUID(workerID))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !used {
-		t.Fatal("enrollment token use was not recorded")
+	if active.ID != params.HostKeyID || !bytes.Equal(active.PublicKey, params.PublicKey) {
+		t.Fatalf("active key = %+v, want %+v", active, params)
+	}
+
+	// Enrolling the registering host again replaces its key.
+	again := enrollmentParams(workerID, "enrollment-host", newHostPublicKey(t))
+	if _, err := q.EnrollWorkerHost(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	active, err = q.GetActiveWorkerHostKey(ctx, pgvalue.UUID(workerID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.ID != again.HostKeyID || !bytes.Equal(active.PublicKey, again.PublicKey) {
+		t.Fatalf("active key after re-enrollment = %+v, want %+v", active, again)
+	}
+	var revoked bool
+	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_host_keys WHERE id=$1`, params.HostKeyID).Scan(&revoked); err != nil || !revoked {
+		t.Fatalf("replaced key revoked = %v, %v", revoked, err)
+	}
+	if _, err := q.GetActiveWorkerHostKey(ctx, pgvalue.NewUUIDv7()); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unknown host key error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
-func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
+func TestWorkerEnrollmentRejectsReusedAndMalformedPublicKeys(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	base := db.EnrollWorkerHostParams{
-		TokenHash:    make([]byte, 32),
-		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
-		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
-		CurrentServiceID: pgvalue.NewUUIDv7(), HostSecretID: pgvalue.NewUUIDv7(),
-		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
-	}
-	unknown := base
-	unknown.TokenHash = bytes.Repeat([]byte{1}, 32)
-	if _, err := q.EnrollWorkerHost(ctx, unknown); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("unknown token error = %v", err)
-	}
-	if _, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetStatus: string(db.WorkerGroupStatusPaused), ExpectedClaimVersion: 1,
-	}); err != nil {
+	key := newHostPublicKey(t)
+	first := enrollmentParams(uuid.NewV7(), "first-key-host", key)
+	if _, err := q.EnrollWorkerHost(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetStatus: string(db.WorkerGroupStatusDraining), ExpectedClaimVersion: 2,
-	}); err != nil {
-		t.Fatal(err)
+	for name, params := range map[string]db.EnrollWorkerHostParams{
+		// A revoked key never registers again, so the same host re-enrolling
+		// with it is refused as well.
+		"same host":    enrollmentParams(uuid.NewV7(), "first-key-host", key),
+		"another host": enrollmentParams(uuid.NewV7(), "second-key-host", key),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var pgErr *pgconn.PgError
+			if _, err := q.EnrollWorkerHost(ctx, params); !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "worker_host_keys_public_key_key" {
+				t.Fatalf("reused key error = %v", err)
+			}
+		})
 	}
-	draining := base
-	draining.WorkerHostID = pgvalue.NewUUIDv7()
-	draining.HostSecretID = pgvalue.NewUUIDv7()
-	draining.ResourceID = "draining-host"
-	if _, err := q.EnrollWorkerHost(ctx, draining); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("draining group enrollment error = %v", err)
+	var pgErr *pgconn.PgError
+	if _, err := q.EnrollWorkerHost(ctx, enrollmentParams(uuid.NewV7(), "short-key-host", key[:31])); !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("short key error = %v", err)
 	}
 }

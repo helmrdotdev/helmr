@@ -51,7 +51,7 @@ func TestWorkerPreparationAuthorityAndTerminalCustody(t *testing.T) {
 	}
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper }))
 	defer server.Close()
-	auth := seedHostSecret(t, f.Pool, f.Worker)
+	auth := seedHostKey(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
 	renewed, err := client.RenewPreparation(t.Context(), request)
 	if err != nil || renewed.ExpiresAt.IsZero() {
@@ -145,7 +145,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 				opener := &preparationSecretOpener{opener: secrets}
 				server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.SecretDelivery = opener }))
 				defer server.Close()
-				client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+				client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 				opener.after = func() {
 					var count int
 					if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.Environment, request.Identity.OwnerID).Scan(&count); err != nil || count != 1 {
@@ -222,7 +222,7 @@ func TestWorkerPreparationPublishesEncryptedDiskThroughHTTP(t *testing.T) {
 		cfg.CAS = everyOrganization[cas.UploadStore](store)
 	}))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	key, err := client.PreparationWriteKey(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +347,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			}
 			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = everyOrganization[cas.UploadStore](store) }))
 			defer server.Close()
-			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+			client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
 			if mode == "seed-only" {
 				if err != nil || !start.SeedOnly || start.Program.Artifact != (workerapi.CASObject{}) || start.Program.IndexDigest != "" || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest {
@@ -405,7 +405,7 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 		cfg.SecretDelivery = opener
 	}))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	start, err := client.PreparationStart(t.Context(), request)
 	if err != nil || !start.SeedOnly || start.Program.Artifact != (workerapi.CASObject{}) {
 		t.Fatalf("seed-only start: %+v %v", start, err)

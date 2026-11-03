@@ -22,7 +22,7 @@ func TestWorkerComputerProcessListingRequiresExactAllocation(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	allocations, err := client.ListAllocations(t.Context(), nil)
 	if err != nil || len(allocations.Allocations) != 1 {
 		t.Fatalf("allocations: %+v %v", allocations, err)
@@ -52,7 +52,7 @@ func TestWorkerAllocationListingAndPhysicalStop(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.Environment)
 	page, err := client.ListAllocations(t.Context(), nil)
 	if err != nil || len(page.Allocations) != 1 {
@@ -79,7 +79,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	worker := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	worker := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	scope := computer.Scope{EnvironmentID: f.Environment}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {

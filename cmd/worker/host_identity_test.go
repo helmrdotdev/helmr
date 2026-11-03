@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +20,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
+
+func testMachineKey() []byte {
+	return bytes.Repeat([]byte{7}, ed25519.SeedSize)
+}
 
 func TestReadWorkerEnrollmentToken(t *testing.T) {
 	token, err := auth.GenerateEnrollmentToken()
@@ -71,10 +78,10 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 	}
 }
 
-// A control plane on another worker API version rejects the stored secret's
-// host credential request with a 409, not a 401: the worker keeps its stored
-// secret and neither re-enrolls nor retries.
-func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
+// A control plane on another worker API version rejects the stored identity's
+// first host credential request, its challenge, with a 409, not a 401: the worker keeps its stored
+// identity and neither re-enrolls nor retries.
+func TestWorkerIdentitySurvivesAPIVersionMismatch(t *testing.T) {
 	requests := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.URL.Path]++
@@ -88,15 +95,15 @@ func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored := workerHostSecretFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
-	path := workerHostSecretPath(workDir, "")
-	if err := writeWorkerHostSecret(path, stored); err != nil {
+	stored := workerIdentityFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
+	path := workerIdentityPath(workDir, "")
+	if err := writeWorkerIdentity(path, stored); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL}
-	_, err = resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, workDir, func(hostSecret workerHostSecretFile) error {
+	_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, workDir, func(identity workerIdentityFile) error {
 		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
-			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret), workerclient.WithService("service"))
+			workerclient.WithAuth(identity.WorkerHostID, identity.key()), workerclient.WithService("service"))
 		if err != nil {
 			return err
 		}
@@ -106,15 +113,15 @@ func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.APIVersionMismatchCode {
 		t.Fatalf("error = %v, want version mismatch", err)
 	}
-	if kept, err := readWorkerHostSecret(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
-		t.Fatalf("stored host secret = %+v, err = %v; want it kept", kept, err)
+	if kept, err := readWorkerIdentity(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
+		t.Fatalf("stored identity = %+v, err = %v; want it kept", kept, err)
 	}
-	if len(requests) != 1 || requests["/worker/v1/instance/credential"] != 1 {
-		t.Fatalf("requests = %v, want one host credential request", requests)
+	if len(requests) != 1 || requests["/worker/v1/instance/challenge"] != 1 {
+		t.Fatalf("requests = %v, want one host challenge request", requests)
 	}
 }
 
-func TestWorkerHostSecretBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
+func TestWorkerIdentityBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 	for _, change := range []string{"work", "jailer", "missing", "alias", "retarget"} {
 		t.Run(change, func(t *testing.T) {
 			base := t.TempDir()
@@ -125,15 +132,15 @@ func TestWorkerHostSecretBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 			if jailer != filepath.Join(work, "vms", "jailer") {
 				t.Fatal("incorrect default jailer root")
 			}
-			secret := workerHostSecretFile{WorkerHostID: "host", WorkerHostSecret: "secret", WorkDir: work, JailerDir: jailer}
-			cfg := config.Worker{WorkerHostSecretPath: filepath.Join(base, "credential"), JailerChrootDir: jailer}
+			identity := workerIdentityFile{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: work, JailerDir: jailer}
+			cfg := config.Worker{WorkerIdentityPath: filepath.Join(base, "credential"), JailerChrootDir: jailer}
 			switch change {
 			case "work":
 				work = filepath.Join(base, "other-work")
 			case "jailer":
 				cfg.JailerChrootDir = filepath.Join(base, "other-jailer")
 			case "missing":
-				secret.WorkDir, secret.JailerDir = "", ""
+				identity.WorkDir, identity.JailerDir = "", ""
 			case "alias", "retarget":
 				alias := filepath.Join(base, "alias")
 				if err := os.Symlink(work, alias); err != nil {
@@ -152,11 +159,11 @@ func TestWorkerHostSecretBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 					}
 				}
 			}
-			if err := writeWorkerHostSecret(cfg.WorkerHostSecretPath, secret); err != nil {
+			if err := writeWorkerIdentity(cfg.WorkerIdentityPath, identity); err != nil {
 				t.Fatal(err)
 			}
 			called := false
-			_, err = resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, work, func(workerHostSecretFile) error { called = true; return nil })
+			_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, work, func(workerIdentityFile) error { called = true; return nil })
 			if change == "alias" {
 				if err != nil || !called {
 					t.Fatalf("equivalent alias rejected: %v", err)
@@ -164,8 +171,8 @@ func TestWorkerHostSecretBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 			} else if err == nil || called {
 				t.Fatalf("root change authenticated: called=%v err=%v", called, err)
 			}
-			kept, err := readWorkerHostSecret(cfg.WorkerHostSecretPath)
-			if err != nil || kept != secret {
+			kept, err := readWorkerIdentity(cfg.WorkerIdentityPath)
+			if err != nil || !reflect.DeepEqual(kept, identity) {
 				t.Fatal("binding rejection modified stored credential")
 			}
 		})

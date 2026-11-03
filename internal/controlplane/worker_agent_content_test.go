@@ -16,7 +16,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
 	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "content", Input: json.RawMessage(`[]`)})
 	if err != nil {

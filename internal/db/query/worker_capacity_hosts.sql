@@ -110,12 +110,12 @@ WITH target AS MATERIALIZED (
               worker_hosts.termination_ready_at, worker_hosts.lost_at,
               worker_hosts.created_at, worker_hosts.updated_at
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
-       SET revoked_at = COALESCE(worker_host_secrets.revoked_at, now())
+    UPDATE worker_host_keys
+       SET revoked_at = COALESCE(worker_host_keys.revoked_at, now())
       FROM transitioned
-     WHERE worker_host_secrets.worker_host_id = transitioned.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = transitioned.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 
 )
 SELECT transitioned.id, transitioned.resource_id,

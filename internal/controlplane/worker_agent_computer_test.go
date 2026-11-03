@@ -71,7 +71,7 @@ func TestWorkerAgentComputerSourceAbortRoundTrip(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
 	request, result, capture := beginWorkerAgentCapture(t, f, client)
 	repeated, err := client.BeginAgentComputerCapture(t.Context(), request)
@@ -169,7 +169,7 @@ func TestWorkerAgentComputerCancellationRequiresOwnedEvidence(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
 	request, _, _ := beginWorkerAgentCapture(t, f, client)
 	cancel := workerapi.AgentComputerUnsealedRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID}
@@ -190,7 +190,7 @@ func TestWorkerAgentComputerRejectsForeignHostAndMalformedRequests(t *testing.T)
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	auth := seedHostSecret(t, f.Pool, f.Worker)
+	auth := seedHostKey(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
 	request, _, capture := beginWorkerAgentCapture(t, f, client)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
@@ -245,7 +245,7 @@ func TestWorkerAgentComputerRejectsForeignHostAndMalformedRequests(t *testing.T)
 	}
 }
 
-func postAgentComputerJSON(t *testing.T, server *httptest.Server, auth seededHostSecret, path string, raw []byte) *http.Response {
+func postAgentComputerJSON(t *testing.T, server *httptest.Server, auth seededHostKey, path string, raw []byte) *http.Response {
 	t.Helper()
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+path, bytes.NewReader(raw))
 	if err != nil {
@@ -264,7 +264,7 @@ func TestWorkerAgentComputerTargetRoundTripAndLateMemoryLoss(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	foreign := foreignAgentComputerClient(t, f, server.URL)
 	request, result, _ := beginWorkerAgentCapture(t, f, client)
 	prepare, instance := seedWorkerAgentRestoreTarget(t, f, request, result)
@@ -362,7 +362,7 @@ func foreignAgentComputerClient(t *testing.T, f sessiontest.Fixture, baseURL str
 	t.Helper()
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::uuid,'resource_id',$2::text,'current_service_id',$2::uuid))).* FROM worker_hosts h WHERE id=$1`, f.Worker, other)
-	return seedHostSecret(t, f.Pool, other).client(t, baseURL)
+	return seedHostKey(t, f.Pool, other).client(t, baseURL)
 }
 func assertAgentComputerErrorCode(t *testing.T, err error, code string) {
 	t.Helper()
@@ -389,7 +389,7 @@ func assertForeignAgentComputer(t *testing.T, f sessiontest.Fixture, call func()
 func TestWorkerAgentComputerOversizedChunkedBody(t *testing.T) {
 	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
-	credential := seedHostSecret(t, f.Pool, f.Worker).issue(t, handler)
+	credential := seedHostKey(t, f.Pool, f.Worker).issue(t, handler)
 	// An unknown Content-Length must still preserve the decoder's 413 result.
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/agent-computers/capture/begin", strings.NewReader(`{"channel_credential":"`+strings.Repeat("x", 32768)+`"}`))
 	request.ContentLength = -1
