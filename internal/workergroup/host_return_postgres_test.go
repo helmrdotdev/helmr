@@ -82,3 +82,25 @@ func TestLostHostDoesNotReturnOverAReplacement(t *testing.T) {
 		t.Fatalf("lost host returned over its replacement: %v", err)
 	}
 }
+
+// A host that was draining when it went lost is being retired: it does not
+// return, so its drain never reopens to new work.
+func TestDrainingHostDoesNotReturn(t *testing.T) {
+	f := newSupplyFixture(t)
+	cfg := testHostAuthConfig(t)
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	started := f.start(t, cfg, "default", "machine", validHostTemplate(t))
+	if err := BeginHostDrain(t.Context(), f.pool, started.principal); err != nil {
+		t.Fatal(err)
+	}
+	_, claim := f.hostState(t, started.enrolled.HostID)
+	if _, err := MarkHostLost(t.Context(), f.pool, policy, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "machine", started.enrolled.HostID, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IssueHostCredential(t.Context(), f.pool, policy, cfg, signedExchange(t, cfg, started.enrolled, uuid.NewV7().String()), time.Now); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("drained host returned: %v", err)
+	}
+	if status, _ := f.hostState(t, started.enrolled.HostID); status != db.WorkerHostStatusLost {
+		t.Fatalf("drained host status = %s, want lost", status)
+	}
+}

@@ -690,6 +690,13 @@ WITH locked_group AS MATERIALIZED (
      WHERE worker_hosts.id = $2
        AND worker_hosts.worker_pool_id = locked_pool.id
        AND worker_hosts.status = 'lost'
+       -- A host that was draining, or that its capacity owner is retiring,
+       -- stays retired: returning would reopen admission its drain closed.
+       AND worker_hosts.draining_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM worker_scale_in_operations
+            WHERE worker_scale_in_operations.worker_host_id = worker_hosts.id
+              AND worker_scale_in_operations.completed_at IS NULL)
        AND NOT EXISTS (
            SELECT 1 FROM worker_hosts AS current_worker
             WHERE current_worker.worker_group_id = worker_hosts.worker_group_id
