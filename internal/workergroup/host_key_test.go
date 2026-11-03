@@ -281,3 +281,41 @@ func validAuthority() hostCredentialAuthority {
 func validExchangeInput() exchangeInput {
 	return exchangeInput{ServiceID: uuid.MustParse("00000000-0000-0000-0000-000000000003")}
 }
+
+// fencedBetweenQuerier sees the host live when the return runs and lost by the
+// time authentication runs, once, as when the stale-host fencer lands between
+// the two statements.
+type fencedBetweenQuerier struct {
+	machineKeyQuerier
+	returns, authentications *int
+}
+
+func (q fencedBetweenQuerier) ReturnLostWorkerHost(context.Context, db.ReturnLostWorkerHostParams) (db.ReturnLostWorkerHostRow, error) {
+	*q.returns++
+	if *q.returns == 1 {
+		return db.ReturnLostWorkerHostRow{}, pgx.ErrNoRows
+	}
+	return db.ReturnLostWorkerHostRow{ID: pgvalue.UUID(q.hostID)}, nil
+}
+
+func (q fencedBetweenQuerier) AuthenticateWorkerHostKey(context.Context, db.AuthenticateWorkerHostKeyParams) (db.AuthenticateWorkerHostKeyRow, error) {
+	*q.authentications++
+	if *q.authentications == 1 {
+		return db.AuthenticateWorkerHostKeyRow{}, pgx.ErrNoRows
+	}
+	return db.AuthenticateWorkerHostKeyRow{}, errReachedHostKeyAuthentication
+}
+
+// A verified key is not refused because the host was fenced between the
+// return and the authentication: the exchange returns it and tries again.
+func TestIssueHostCredentialReturnsAHostFencedMidExchange(t *testing.T) {
+	cfg := testHostAuthConfig(t)
+	key := newMachineKey(t)
+	host, service := uuid.NewV7(), uuid.NewV7().String()
+	var returns, authentications int
+	q := fencedBetweenQuerier{machineKeyQuerier: machineKeyQuerier{hostID: host, publicKey: key.Public().(ed25519.PublicKey)}, returns: &returns, authentications: &authentications}
+	_, err := issueHostCredential(t.Context(), q, cfg, signedHostCredentialRequest(t, cfg, host.String(), service, key, time.Now()), time.Now)
+	if !errors.Is(err, errReachedHostKeyAuthentication) || returns != 2 || authentications != 2 {
+		t.Fatalf("err = %v, returns = %d, authentications = %d; want a second, returning attempt", err, returns, authentications)
+	}
+}

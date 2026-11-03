@@ -355,9 +355,18 @@ func TestPermanentLossReleasesOrganizationHostCustody(t *testing.T) {
 	if err := declare(workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane))); err == nil {
 		t.Fatal("the deployment operator declared an organization host lost")
 	}
+	// A host still reporting is not declared lost; fencing it keeps its
+	// custody until the declaration.
+	var conflicting workergroup.ConflictError
+	if err := declare(member(org)); !errors.As(err, &conflicting) {
+		t.Fatalf("declared a live host lost: %v", err)
+	}
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, member(org), f.group, "host", uuid.Nil(), 1); err != nil {
+		t.Fatal(err)
+	}
 	var custody int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL`, f.worker).Scan(&custody); err != nil || custody == 0 {
-		t.Fatalf("fixture host holds no custody: %d %v", custody, err)
+		t.Fatalf("fenced host holds no custody: %d %v", custody, err)
 	}
 	if err := declare(member(org)); err != nil {
 		t.Fatal(err)

@@ -220,34 +220,43 @@ func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, 
 	}
 	// A lost host that proves its key returns before the exchange starts its
 	// new epoch. The new epoch's startup recovery reports and stops what the
-	// machine still runs, which settles the earlier epochs' custody.
+	// machine still runs, which settles the earlier epochs' custody. A host
+	// fenced between the two statements is returned on the second attempt,
+	// so a verified key is not refused over that race.
 	var returned *returnedHost
-	back, err := q.ReturnLostWorkerHost(ctx, db.ReturnLostWorkerHostParams{
-		HostKeyID: key.ID, WorkerHostID: pgvalue.UUID(hostID), RetiredServiceID: pgvalue.UUID(uuid.NewV7()),
-	})
-	switch {
-	case err == nil:
-		returned = &returnedHost{hostID: hostID}
-		if back.OwnerOrgID.Valid {
-			returned.ownerOrgID = uuid.UUID(back.OwnerOrgID.Bytes)
+	var hostKey db.AuthenticateWorkerHostKeyRow
+	for attempt := 0; ; attempt++ {
+		back, err := q.ReturnLostWorkerHost(ctx, db.ReturnLostWorkerHostParams{
+			HostKeyID: key.ID, WorkerHostID: pgvalue.UUID(hostID), RetiredServiceID: pgvalue.UUID(uuid.NewV7()),
+		})
+		switch {
+		case err == nil:
+			returned = &returnedHost{hostID: hostID}
+			if back.OwnerOrgID.Valid {
+				returned.ownerOrgID = uuid.UUID(back.OwnerOrgID.Bytes)
+			}
+		case db.IsUniqueViolation(err):
+			// A replacement enrolled under the same resource while this
+			// return waited for the group: the lost host stays lost.
+			return HostCredential{}, ErrUnauthenticated
+		case !errors.Is(err, pgx.ErrNoRows):
+			return HostCredential{}, fmt.Errorf("return worker host %s: %w", hostID, err)
 		}
-	case db.IsUniqueViolation(err):
-		// A replacement enrolled under the same resource while this return
-		// waited for the group: the lost host stays lost.
-		return HostCredential{}, ErrUnauthenticated
-	case !errors.Is(err, pgx.ErrNoRows):
-		return HostCredential{}, fmt.Errorf("return worker host %s: %w", hostID, err)
-	}
-	hostKey, err := q.AuthenticateWorkerHostKey(ctx, db.AuthenticateWorkerHostKeyParams{
-		WorkerHostID: pgvalue.UUID(hostID),
-		HostKeyID:    key.ID,
-		ServiceID:    pgvalue.UUID(serviceID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return HostCredential{}, ErrUnauthenticated
-	}
-	if err != nil {
-		return HostCredential{}, fmt.Errorf("authenticate worker host %s key: %w", hostID, err)
+		hostKey, err = q.AuthenticateWorkerHostKey(ctx, db.AuthenticateWorkerHostKeyParams{
+			WorkerHostID: pgvalue.UUID(hostID),
+			HostKeyID:    key.ID,
+			ServiceID:    pgvalue.UUID(serviceID),
+		})
+		if errors.Is(err, pgx.ErrNoRows) && returned == nil && attempt == 0 {
+			continue
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return HostCredential{}, ErrUnauthenticated
+		}
+		if err != nil {
+			return HostCredential{}, fmt.Errorf("authenticate worker host %s key: %w", hostID, err)
+		}
+		break
 	}
 	hostKeyID, err := pgvalue.UUIDValue(hostKey.ID)
 	if err != nil {
