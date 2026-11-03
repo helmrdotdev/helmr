@@ -306,12 +306,12 @@ func TestOrdinarySignInKeepsSSOProofsOfTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	session, _ := f.admits(t, result.Session, uuid.Nil())
-	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "alice-github", Email: "alice@example.test", EmailVerified: true}, result.Session, session.SessionID)
+	_, err = SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "alice-github", Email: "alice@example.test", EmailVerified: true}, result.Session, session.SessionID)
 	if !errors.Is(err, ErrAccountProofRequired) {
 		t.Fatalf("an unlinked provider confirmed the account: %v", err)
 	}
 	f.exec(t, `INSERT INTO auth_identities(id,user_id,provider,subject) VALUES($1,$2,'github','alice-github')`, uuid.NewV7(), user)
-	raw, err = SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "alice-github", Email: "alice@example.test", EmailVerified: true}, result.Session, session.SessionID)
+	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "alice-github", Email: "alice@example.test", EmailVerified: true}, result.Session, session.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
