@@ -7,6 +7,9 @@ cd "$work"
 apt-mark showmanual > original-manual
 apt-get -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=- --no-install-recommends -y install "$1"/*.deb
 
+# Stop if a refreshed lock introduces a newer Debian SSH package. Review
+# whether Debian has shipped the fix before carrying the backport forward.
+test "$(dpkg-query -W -f='${Version}' openssh-client)" = '1:10.0p1-7+deb13u4'
 tar xf "$2"
 cd openssh-10.0p1
 tar xf "$3"

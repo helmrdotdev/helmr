@@ -94,6 +94,8 @@ docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
     assert.ok(builder[0] < runtime[0] || (builder[0] === runtime[0] && builder[1] <= runtime[1]), `builder glibc ${builder} exceeds Runtime glibc ${runtime}`)
     console.log(JSON.stringify({builderGlibc: builder.join("."), runtimeGlibc: runtime.join(".")}))
   '
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" build -o "$tmp/ssh-rekey" ./tests/build/testdata/ssh-rekey
+docker run --rm --platform linux/amd64 --network none --env TMPDIR=/tmp --volume "$tmp/ssh-rekey:/probe:ro" --entrypoint /probe bundle-builder:0
 printf '%s\n' '{"default":[{"type":"insecureAcceptAnything"}]}' >"$tmp/containers-policy.json"
 skopeo --policy "$tmp/containers-policy.json" copy \
   --dest-tls-verify=false \
