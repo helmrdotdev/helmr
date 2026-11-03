@@ -1,2 +1,2 @@
-DROP TABLE saml_consumed_assertions;
-DROP TABLE org_sso_connections;
+DROP TABLE sso_consumed_assertions;
+DROP TABLE sso_connections;

@@ -65,7 +65,7 @@ func (s *Store) CreateOIDC(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 	if err != nil {
 		return Connection{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO org_sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id)
+	_, err = tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id)
  VALUES($1,$2,'oidc','candidate',$3,$4,$5,$6,$7)`, id, org, cfg.Issuer, cfg.ClientID, ciphertext, nonce, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -80,7 +80,7 @@ func (s *Store) CreateSAML(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 		return Connection{}, err
 	}
 	id := uuid.NewV7()
-	_, err := tx.Exec(ctx, `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
+	_, err := tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
  VALUES($1,$2,'saml','candidate',$3,$4,$5,$6)`, id, org, idp.EntityID, idp.SSOURL, idp.Certificates, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -98,7 +98,7 @@ func (s *Store) RotateOIDCSecret(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 	if err != nil {
 		return err
 	}
-	return affected(tx.Exec(ctx, `UPDATE org_sso_connections SET oidc_secret_ciphertext=$3,oidc_secret_nonce=$4,tested_at=NULL
+	return affected(tx.Exec(ctx, `UPDATE sso_connections SET oidc_secret_ciphertext=$3,oidc_secret_nonce=$4,tested_at=NULL
  WHERE org_id=$1 AND id=$2 AND protocol='oidc' AND state<>'retired'`, org, id, ciphertext, nonce))
 }
 
@@ -116,7 +116,7 @@ func (s *Store) UpdateSAMLMaterial(ctx context.Context, tx pgx.Tx, org, id uuid.
 	if err := idp.Validate(); err != nil {
 		return err
 	}
-	return affected(tx.Exec(ctx, `UPDATE org_sso_connections SET saml_sso_url=$3,saml_certificates=$4,tested_at=NULL
+	return affected(tx.Exec(ctx, `UPDATE sso_connections SET saml_sso_url=$3,saml_certificates=$4,tested_at=NULL
  WHERE org_id=$1 AND id=$2 AND protocol='saml' AND state<>'retired'`, org, id, idp.SSOURL, idp.Certificates))
 }
 
@@ -124,13 +124,13 @@ func (s *Store) UpdateSAMLMaterial(ctx context.Context, tx pgx.Tx, org, id uuid.
 // Get (which locks it) and validates the test sign-in against that material in
 // the same transaction, so a concurrent material change cannot be marked tested.
 func (s *Store) MarkTested(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
-	return affected(tx.Exec(ctx, `UPDATE org_sso_connections SET tested_at=clock_timestamp()
+	return affected(tx.Exec(ctx, `UPDATE sso_connections SET tested_at=clock_timestamp()
  WHERE org_id=$1 AND id=$2 AND state='candidate'`, org, id))
 }
 
 // DiscardCandidate removes an unused candidate connection.
 func (s *Store) DiscardCandidate(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
-	return affected(tx.Exec(ctx, `DELETE FROM org_sso_connections WHERE org_id=$1 AND id=$2 AND state='candidate'`, org, id))
+	return affected(tx.Exec(ctx, `DELETE FROM sso_connections WHERE org_id=$1 AND id=$2 AND state='candidate'`, org, id))
 }
 
 // Get reads one connection with its client secret, locking it for the caller's
@@ -142,7 +142,7 @@ func (s *Store) Get(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (Connecti
 	var certs []string
 	err := tx.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
  saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
- FROM org_sso_connections WHERE org_id=$1 AND id=$2 FOR UPDATE`, org, id).Scan(&c.ID, &c.OrgID, &c.Protocol, &c.State,
+ FROM sso_connections WHERE org_id=$1 AND id=$2 FOR UPDATE`, org, id).Scan(&c.ID, &c.OrgID, &c.Protocol, &c.State,
 		&issuer, &clientID, &ciphertext, &nonce, &entityID, &ssoURL, &certs, &c.TestedAt, &c.CreatedAt, &c.ActivatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Connection{}, ErrConnectionNotFound
@@ -166,7 +166,7 @@ func (s *Store) Get(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (Connecti
 // ConsumeAssertion records a SAML assertion ID once per connection. A second
 // use within its validity window is a replay.
 func ConsumeAssertion(ctx context.Context, q db.DBTX, connection uuid.UUID, a SAMLAssertion) error {
-	tag, err := q.Exec(ctx, `INSERT INTO saml_consumed_assertions(connection_id,assertion_id,expires_at) VALUES($1,$2,$3)
+	tag, err := q.Exec(ctx, `INSERT INTO sso_consumed_assertions(connection_id,assertion_id,expires_at) VALUES($1,$2,$3)
  ON CONFLICT DO NOTHING`, connection, a.ID, a.NotOnOrAfter.Add(clockSkew))
 	if err != nil {
 		return err
@@ -198,7 +198,7 @@ func RunAssertionRetention(ctx context.Context, q db.DBTX, log *slog.Logger) err
 }
 
 func purgeConsumedAssertions(ctx context.Context, q db.DBTX) (int64, error) {
-	tag, err := q.Exec(ctx, `DELETE FROM saml_consumed_assertions WHERE expires_at<clock_timestamp()`)
+	tag, err := q.Exec(ctx, `DELETE FROM sso_consumed_assertions WHERE expires_at<clock_timestamp()`)
 	return tag.RowsAffected(), err
 }
 
@@ -214,7 +214,7 @@ func affected(tag pgconn.CommandTag, err error) error {
 
 func candidateError(err error) error {
 	var pg *pgconn.PgError
-	if errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == "org_sso_connections_candidate" {
+	if errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == "sso_connections_candidate" {
 		return ErrCandidateExists
 	}
 	return err
