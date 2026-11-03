@@ -166,7 +166,8 @@ new key and a valid enrollment token.
 A group has a reusable enrollment token, for fleets that keep it in their own
 secret store. An organization can also issue a single-use enrollment token for
 its group (`POST /api/worker-groups/{id}/enrollment-tokens`), which admits one
-machine and expires after an hour.
+machine and expires after an hour. It has no revoke of its own: rotating the
+group's token expires every single-use token not yet used.
 
 Two Admin API operations change worker group credentials, with different effects:
 
