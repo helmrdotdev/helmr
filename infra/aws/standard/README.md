@@ -6,10 +6,8 @@ secret values out of state.
 
 The default Control Plane task security group allows every outbound protocol to
 every IPv4 destination through NAT. This supports operator-selected integrations,
-including ClickHouse and SMTP. For a restricted installation, set
-`restrict_platform_egress = true` on the Control Plane module and provide rules
-for the required services and integrations before applying. The Private example
-shows how to connect tasks to endpoints and a proxy.
+including ClickHouse and SMTP. See [Restrict platform egress](#restrict-platform-egress)
+for an opt-in example.
 
 ## Baseline
 
@@ -26,6 +24,68 @@ shows how to connect tasks to endpoints and a proxy.
 - Worker Auto Scaling resources are optional and private-subnet ready, with zero default capacity
 - RDS defaults to deletion protection, automated backups, final snapshots, encrypted storage, and
   longer recovery windows
+
+## Restrict platform egress
+
+This example assumes private connectivity to ClickHouse, private-DNS AWS
+interface endpoints and an operator-managed CONNECT proxy. Install the endpoint
+interfaces for ECR API/DKR, Secrets Manager and CloudWatch Logs, plus KMS when
+used. Mirror the released Control Plane image into a private regional ECR
+repository, preserving the release manifest digest. Set both the mirrored URI
+and matching repository ARN so the Fargate execution roles can pull the image.
+Use the Standard VPC's regional S3 gateway endpoint for artifact and ECR layer
+downloads. The proxy must allow the external GitHub, Slack and email
+providers you enable. SMTP uses a direct connection to your relay. Dispatcher
+also needs direct HTTPS to its configured Control Plane URL. Supply a maintained
+IPv4 prefix list that covers the actual frontend addresses reached from the task
+subnets (including CloudFront if enabled). A public ALB's current DNS answers
+are not a permanent allowlist. Confirm how the list tracks address changes; use
+a different controlled origin path if you cannot maintain it.
+These are prerequisites; the example creates only task egress rules.
+
+1. Copy [restricted-egress.tf.example](restricted-egress.tf.example) to
+   `restricted-egress.tf` in your Standard root. Inside the **existing**
+   `module "controlplane"` block in `main.tf`, add both arguments:
+
+   ```hcl
+   restrict_platform_egress = true
+   outbound_proxy_url       = "http://${var.restricted_egress.proxy_hostname}:3128"
+   ```
+
+2. Set the new input in your tfvars. Replace the illustrative values with
+   actual reachable destination security groups and the port in `clickhouse_url`:
+
+   ```hcl
+   controlplane_image                = "111122223333.dkr.ecr.us-east-1.amazonaws.com/helmr/control-plane@sha256:<release-manifest-digest>"
+   controlplane_image_repository_arn = "arn:aws:ecr:us-east-1:111122223333:repository/helmr/control-plane"
+   restricted_egress = {
+     origin_prefix_list_id = "pl-00000000000000001"
+     aws_endpoint_sg_id = "sg-00000000000000001"
+     clickhouse_sg_id   = "sg-00000000000000002"
+     clickhouse_port    = 443
+     proxy_sg_id        = "sg-00000000000000003"
+     proxy_hostname     = "proxy.platform.example"
+     # For email_provider = "smtp", also set smtp_sg_id and smtp_port to
+     # the relay's security group and the port in smtp_addr.
+   }
+   ```
+
+3. Permit ingress on the corresponding destination groups from the platform
+   task group. Verify routes, DNS and endpoint policies. Check the external URL
+   of any additional enabled integration. For public endpoints without a
+   referenceable security group, supply a controlled route and destination rule
+   suited to that endpoint. All security groups on an ENI contribute permissions;
+   inspect `additional_controlplane_security_group_ids` for broader grants.
+4. Review the plan. The general platform egress rule must disappear. Expect
+   TCP 5432 to RDS, 443 to AWS endpoints, the S3 and origin prefix lists, the configured
+   ClickHouse port, 3128 to the proxy and the SMTP relay rule only when enabled.
+   In a disposable deployment, check image pull, secret retrieval, bootstrap
+   and migration exit codes, both ECS services reaching steady state, a platform object
+   read and a CAS write/read, and a request through each enabled integration.
+   Confirm an unlisted destination is unreachable directly from the task network.
+
+This example changes platform tasks only. Worker, guest and build networking
+retain their own policies.
 
 ## Initialize
 

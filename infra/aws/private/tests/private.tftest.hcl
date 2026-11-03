@@ -40,6 +40,29 @@ mock_provider "http" {
 }
 mock_provider "random" {}
 
+# Mock providers can reuse an ID across security groups. Give the groups in
+# the platform egress contract distinct identities for the composed-state check.
+override_resource {
+  target = module.controlplane.aws_security_group.controlplane
+  values = { id = "sg-00000000000000010" }
+}
+override_resource {
+  target = aws_security_group.proxy
+  values = { id = "sg-00000000000000011" }
+}
+override_resource {
+  target = aws_security_group.endpoints
+  values = { id = "sg-00000000000000012" }
+}
+override_resource {
+  target = module.controlplane.aws_security_group.postgres
+  values = { id = "sg-00000000000000013" }
+}
+override_resource {
+  target = module.controlplane.aws_security_group.alb
+  values = { id = "sg-00000000000000014" }
+}
+
 variables {
   controlplane_idle_timeout_seconds = 240
   worker_environment = {

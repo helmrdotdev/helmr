@@ -60,6 +60,14 @@ and spending operation; review the saved plan and use your normal approval proce
 | Managed wrapping | KMS endpoint only when `deployment_mode=managed-cloud`; self-hosted wrapping is local |
 | Proxy | HTTPS CONNECT to exact GitHub domains, enabled Slack domains, and Resend when selected; rejects other methods/ports, numeric authorities and private/metadata addresses |
 
+The proxy is a trusted enforcement point for platform integration traffic. The
+Control Plane and Dispatcher must not be able to reach external providers
+directly. The proxy task itself has outbound TCP 443 to arbitrary IPv4
+addresses. A process controlling that task can initiate connections without
+passing through Squid's ACL. If that threat is in scope, enforce allowed
+destinations independently on the proxy subnet's upstream path and verify all
+routes traverse it. Worker, build and guest traffic have separate boundaries.
+
 Tasks have no general internet egress rule or public IP. The proxy alone has
 external HTTPS egress. NAT remains for the proxy and for excluded worker/build
 paths. IPv6 is not configured. DNS requests to the VPC resolver do not obey
@@ -141,7 +149,15 @@ Firecracker, snapshot or storage compatibility requirements.
 Local source gates are `nix run .#ci-infra-test`, Product Go/PostgreSQL and Console
 checks, and `python3 infra/aws/private/tests/test_proxy.py` with Docker available.
 The proxy test uses test-owned local TLS endpoints, the pinned image and no Slack
-credentials. These checks do not prove AWS routing or a real Slack installation.
+credentials. To validate the unmodified template, inspect the rendered platform
+task security groups and every egress grant in the mock state. The platform
+groups can initiate connections only to the private services, S3 prefix list and
+proxy listed above. An internet route alone grants no task egress. The pinned
+proxy fixture exercises allow and deny behavior. The Product transport and Slack
+Socket Mode outage tests verify that a failed proxy connection causes an error
+without a direct retry. These checks cover the declared configuration and
+tested clients. The live steps below qualify a specific deployment, including
+its actual routes, extra security groups, DNS and running image revisions.
 
 Before declaring a deployment ready, preserve exact image/source/configuration
 identities and verify:
@@ -160,6 +176,19 @@ identities and verify:
    proxy: its client must fail without directly accessing the internet.
 5. Arbitrary HTTPS, alternate ports, direct IPs, unapproved DNS and metadata/private
    targets through the proxy fail. Record enabled destination policy and DNS results.
+   For the platform egress checks, record cluster, task definition, image digest,
+   subnet, security groups, routes and proxy replicas. Use a disposable target:
+   - From the platform task network, establish TLS to an approved host through
+     the proxy. Record CONNECT success and certificate validation.
+   - From the same network, CONNECT to an unapproved host and require an
+     explicit proxy denial. A DNS or TLS error alone is inconclusive.
+   - Bypass the proxy and attempt TCP 443 directly to a known reachable
+     external IPv4 address. Pair this with a successful connection to the same
+     address and port from an independent positive control.
+   - With approval to interrupt the disposable proxy, stop all replicas and
+     verify the actual application client cannot complete the same previously
+     successful external operation. Observe the attempted path and check for
+     direct fallback. Restore the original replica count and verify recovery.
 6. Worker-host registration, heartbeat and replacement succeed while a guest on
    that same host cannot reach any management/company prefix.
 7. Run the same Product image in the public standard recipe with HTTP delivery,

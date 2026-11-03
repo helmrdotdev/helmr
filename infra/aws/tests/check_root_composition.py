@@ -142,11 +142,32 @@ for service in ('controlplane', 'dispatcher'):
         assert env['CONTROL_PLANE_URL'] == env['APP_ORIGIN']
     network = resources[f'module.controlplane.aws_ecs_service.{service}[0]']['network_configuration'][0]
     assert network['assign_public_ip'] is False
-for address, value in resources.items():
-    if address.startswith('aws_vpc_security_group_egress_rule.platform_'):
-        assert value.get('cidr_ipv4') != '0.0.0.0/0', (address, value)
-        assert value['ip_protocol'] == 'tcp'
-        assert value['from_port'] == value['to_port']
+    assert network['security_groups'] == [resources['module.controlplane.aws_security_group.controlplane']['id']]
+platform_group = resources['module.controlplane.aws_security_group.controlplane']
+proxy_group = resources['aws_security_group.proxy']
+assert not platform_group['egress'] and not proxy_group['egress']
+assert resources['aws_ecs_service.proxy[0]']['network_configuration'][0]['security_groups'] == [proxy_group['id']]
+expected_egress = {
+    (platform_group['id'], 'referenced_security_group_id', resources['aws_security_group.endpoints']['id'], 443),
+    (platform_group['id'], 'referenced_security_group_id', resources['module.controlplane.aws_security_group.postgres']['id'], 5432),
+    (platform_group['id'], 'referenced_security_group_id', resources['module.controlplane.aws_security_group.alb']['id'], 443),
+    (platform_group['id'], 'referenced_security_group_id', proxy_group['id'], 3128),
+    (platform_group['id'], 'referenced_security_group_id', 'sg-0123456789abcdef0', 8443),  # Mock ClickHouse
+    (platform_group['id'], 'prefix_list_id', resources['module.controlplane_network.aws_vpc_endpoint.s3[0]']['prefix_list_id'], 443),
+    (proxy_group['id'], 'cidr_ipv4', '0.0.0.0/0', 443),
+}
+actual_egress = set()
+for r in private_resources:
+    v = r['values']
+    if v.get('security_group_id') not in (platform_group['id'], proxy_group['id']):
+        continue
+    if r['type'] == 'aws_security_group_rule':
+        assert v['type'] != 'egress', r['address']
+    if r['type'] == 'aws_vpc_security_group_egress_rule':
+        (kind, destination), = [(k, v[k]) for k in ('referenced_security_group_id', 'prefix_list_id', 'cidr_ipv4', 'cidr_ipv6') if v.get(k)]
+        assert v['ip_protocol'] == 'tcp' and v['from_port'] == v['to_port'], r['address']
+        actual_egress.add((v['security_group_id'], kind, destination, v['to_port']))
+assert actual_egress == expected_egress, actual_egress.symmetric_difference(expected_egress)
 assert resources['aws_route53_resolver_firewall_config.platform']['firewall_fail_open'] == 'DISABLED'
 assert resources['aws_route53_resolver_firewall_rule.block']['action'] == 'BLOCK'
 assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*.']
