@@ -93,13 +93,16 @@ var ErrExecutionSettling = errors.New("previous execution deadline elapsed; retr
 
 var ErrExecutionLimit = errors.New("environment execution limit reached; raise the limit or release an unused Computer")
 
+// leaseHasReadyCheckpointSQL matches a ready checkpoint to its exact source lease l.
+const leaseHasReadyCheckpointSQL = `EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready')`
+
 // RequireExecutionCapacity checks new execution under the Environment admission
 // lock. An existing allocation already owns its entitlement, so follow-up input
 // does not need room for another VM.
 func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, limits executionlimit.Limits, env, id uuid.UUID) error {
 	var allocated bool
 	var cpu, memory int64
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready')),
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT `+leaseHasReadyCheckpointSQL+`),
  COALESCE((SELECT l.reserved_cpu_millis FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(cp.environment_id,cp.computer_id,cp.source_lease_epoch) WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status='ready'),(c.cpu_millis+999)/1000*1000),
  COALESCE((SELECT l.reserved_memory_bytes FROM checkpoints cp JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(cp.environment_id,cp.computer_id,cp.source_lease_epoch) WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status='ready'),c.memory_bytes)
  FROM computers c WHERE c.environment_id=$1 AND c.id=$2`, env, id).Scan(&allocated, &cpu, &memory)

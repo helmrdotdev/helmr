@@ -2,6 +2,7 @@ package computer
 
 import (
 	"context"
+	"errors"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
@@ -30,6 +31,26 @@ func notifyComputerReaders(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) er
 		topics = append(topics, "worker:"+host.String())
 	}
 	return dbnotify.Notify(ctx, tx, topics...)
+}
+
+// NotifyCommandReaders wakes the lease holder for new work. An unallocated
+// Computer or a retained checkpoint source also needs placement reconciliation.
+func NotifyCommandReaders(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+	var host uuid.UUID
+	var retained bool
+	err := tx.QueryRow(ctx, `SELECT l.worker_host_id,`+leaseHasReadyCheckpointSQL+`
+ FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.fenced_at IS NULL`, env, id).Scan(&host, &retained)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbnotify.Notify(ctx, tx, "dispatch")
+	}
+	if err != nil {
+		return err
+	}
+	worker := "worker:" + host.String()
+	if retained {
+		return dbnotify.Notify(ctx, tx, "dispatch", worker)
+	}
+	return dbnotify.Notify(ctx, tx, worker)
 }
 
 func notifyImageBuildChanged(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
