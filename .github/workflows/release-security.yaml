@@ -1,0 +1,68 @@
+name: Assess release security
+on:
+  workflow_call:
+    inputs:
+      selection:
+        required: true
+        type: string
+      tools_commit:
+        required: true
+        type: string
+      published:
+        required: true
+        type: boolean
+    outputs:
+      security_state:
+        description: Final release security verdict
+        value: ${{ jobs.scan.outputs.state == 'needs_review' && jobs.review.outputs.state || jobs.scan.outputs.state }}
+      security_policy:
+        description: Reviewed applicability policy digest
+        value: ${{ jobs.review.outputs.policy || jobs.scan.outputs.policy }}
+      security_checked:
+        description: Scan start in Unix seconds
+        value: ${{ jobs.review.outputs.checked || jobs.scan.outputs.checked }}
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    outputs:
+      state: ${{ steps.assess.outputs.state }}
+      policy: ${{ steps.assess.outputs.policy }}
+      checked: ${{ steps.assess.outputs.checked }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tools_commit }}
+          path: tools
+          persist-credentials: false
+      - id: assess
+        uses: ./tools/.github/actions/assess-release
+        with:
+          selection: ${{ inputs.selection }}
+          published: ${{ inputs.published }}
+          phase: scan
+  review:
+    name: Review unresolved Critical findings
+    needs: scan
+    if: needs.scan.outputs.state == 'needs_review'
+    environment: release
+    runs-on: ubuntu-24.04
+    outputs:
+      state: ${{ steps.assess.outputs.state }}
+      policy: ${{ steps.assess.outputs.policy }}
+      checked: ${{ steps.assess.outputs.checked }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ inputs.tools_commit }}
+          path: tools
+          persist-credentials: false
+      - id: assess
+        uses: ./tools/.github/actions/assess-release
+        with:
+          selection: ${{ inputs.selection }}
+          published: ${{ inputs.published }}
+          phase: review

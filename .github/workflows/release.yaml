@@ -54,6 +54,21 @@ jobs:
     with:
       selection: ${{ needs.admission.outputs.selection }}
       tools_commit: ${{ github.workflow_sha }}
+  security:
+    needs: [admission, build]
+    if: >-
+      always() && needs.admission.result == 'success' &&
+      (needs.build.result == 'success' ||
+       (needs.admission.outputs.complete == 'true' && fromJSON(needs.admission.outputs.selection).build.mode == 'main'))
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/release-security.yaml
+    with:
+      selection: ${{ needs.admission.outputs.selection }}
+      tools_commit: ${{ github.workflow_sha }}
+      published: ${{ needs.admission.outputs.complete == 'true' }}
   integration:
     needs: admission
     if: needs.admission.outputs.complete != 'true'
@@ -72,12 +87,13 @@ jobs:
       - uses: ./.github/actions/setup-nix
       - run: nix run ".#$CI_APP"
   publish-preview:
-    needs: [admission, build, integration]
+    needs: [admission, build, integration, security]
     if: >-
       always() &&
       needs.admission.result == 'success' &&
       needs.admission.outputs.complete != 'true' &&
       needs.build.result == 'success' &&
+      needs.security.result == 'success' && needs.security.outputs.security_state == 'clear' &&
       needs.integration.result == 'success' &&
       fromJSON(needs.admission.outputs.selection).build.mode != 'tag'
     outputs:
@@ -87,6 +103,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: preview
     permissions:
+      pull-requests: read
       contents: read
       actions: read
       packages: write
@@ -105,6 +122,12 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
+      - name: Verify the assessment is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY: ${{ needs.security.outputs.security_policy }}
+          CHECKED: ${{ needs.security.outputs.security_checked }}
+        run: python3 scripts/release/security_policy.py check "$POLICY" "$CHECKED"
       - name: Assume preview publisher role
         run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Publish preview cohort to fixed-origin object store
@@ -122,12 +145,13 @@ jobs:
           rm -rf "$RUNNER_TEMP/assets"
           SH
   publish-tag:
-    needs: [admission, build, integration]
+    needs: [admission, build, integration, security]
     if: >-
       always() &&
       needs.admission.result == 'success' &&
       needs.admission.outputs.complete != 'true' &&
       needs.build.result == 'success' &&
+      needs.security.result == 'success' && needs.security.outputs.security_state == 'clear' &&
       needs.integration.result == 'success' &&
       fromJSON(needs.admission.outputs.selection).build.mode == 'tag'
     outputs:
@@ -140,6 +164,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     permissions:
+      pull-requests: read
       contents: write
       actions: read
       packages: write
@@ -155,6 +180,12 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
+      - name: Verify the assessment is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY: ${{ needs.security.outputs.security_policy }}
+          CHECKED: ${{ needs.security.outputs.security_checked }}
+        run: python3 scripts/release/security_policy.py check "$POLICY" "$CHECKED"
       - name: Publish formal tag cohort through GitHub releases
         id: stage_tag
         env:
@@ -236,7 +267,7 @@ jobs:
           consumer(root, root/'helmr-linux-amd64.tar.gz', root/'consumer')
           PY
   complete-preview:
-    needs: [admission, publish-preview, publish-tag, verify]
+    needs: [admission, publish-preview, publish-tag, verify, security]
     if: >-
       always() &&
       needs.verify.result == 'success' &&
@@ -247,6 +278,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: preview
     permissions:
+      pull-requests: read
+      actions: read
       contents: read
       id-token: write # Complete preview index signing. security-check: allow-id-token
     env:
@@ -263,6 +296,12 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
+      - name: Verify the assessment is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY: ${{ needs.security.outputs.security_policy }}
+          CHECKED: ${{ needs.security.outputs.security_checked }}
+        run: python3 scripts/release/security_policy.py check "$POLICY" "$CHECKED"
       - name: Assume preview publisher role
         run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Complete preview index last and verify public readback
@@ -273,7 +312,7 @@ jobs:
         run: |
           nix develop .#release -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" --build-digest "$BUILD_DIGEST"
   complete-tag:
-    needs: [admission, publish-preview, publish-tag, verify]
+    needs: [admission, publish-preview, publish-tag, verify, security]
     if: >-
       always() &&
       needs.verify.result == 'success' &&
@@ -282,6 +321,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     permissions:
+      pull-requests: read
+      actions: read
       contents: write
       id-token: write # Formal tag completion. security-check: allow-id-token
     env:
@@ -295,6 +336,12 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
+      - name: Verify the assessment is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY: ${{ needs.security.outputs.security_policy }}
+          CHECKED: ${{ needs.security.outputs.security_checked }}
+        run: python3 scripts/release/security_policy.py check "$POLICY" "$CHECKED"
       - name: Publish formal tag complete index last and verify public readback
         id: finalize_tag
         env:
@@ -305,14 +352,17 @@ jobs:
           nix develop .#release -c python3 scripts/release/main.py finalize --directory "$RUNNER_TEMP/complete" \
             --release-id "$RELEASE_ID" --build-digest "$BUILD_DIGEST"
   discovery:
-    needs: [admission, complete-preview, complete-tag]
+    needs: [admission, complete-preview, complete-tag, security]
     if: >-
       always() && needs.admission.result == 'success' &&
+      needs.security.result == 'success' && needs.security.outputs.security_state == 'clear' &&
       (needs.complete-preview.result == 'success' || needs.admission.outputs.complete == 'true') &&
       fromJSON(needs.admission.outputs.selection).build.mode == 'main'
     runs-on: ubuntu-24.04
     environment: preview
     permissions:
+      pull-requests: read
+      actions: read
       contents: read
       id-token: write # Preview channel pointer CAS. security-check: allow-id-token
     env:
@@ -330,6 +380,12 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
+      - name: Verify the assessment is still current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLICY: ${{ needs.security.outputs.security_policy }}
+          CHECKED: ${{ needs.security.outputs.security_checked }}
+        run: python3 scripts/release/security_policy.py check "$POLICY" "$CHECKED"
       - name: Assume preview publisher role
         run: nix develop .#release -c bash scripts/release/assume-preview-role.sh
       - name: Update preview channel pointer without regression

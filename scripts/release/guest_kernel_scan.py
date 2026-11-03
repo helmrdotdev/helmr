@@ -1,16 +1,11 @@
 """Check the kernel in the packaged guest against OSV's Linux database."""
-import argparse
 import datetime
 import hashlib
-import io
 import json
 import re
-import sys
 import tarfile
 import urllib.request
-import zipfile
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 
 from cvss import CVSS2, CVSS3, CVSS4
 from cvss.exceptions import CVSSError
@@ -137,6 +132,7 @@ def findings(records, kernel):
         except (ValueError, TypeError, KeyError, CVSSError) as exc:
             raise ValueError(f"invalid advisory {record.get('id')}: {exc}") from exc
         if finding:
+            finding["advisory"] = hashlib.sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             matches.append(finding)
         ranges_checked += checked
     if not ranges_checked:
@@ -151,56 +147,3 @@ def current_database():
         if not datetime.timedelta(0) <= age <= datetime.timedelta(days=2):
             raise ValueError(f"OSV Linux database timestamp outside freshness window: {modified}")
         return modified.isoformat(), response.read()
-
-
-def blockers(report):
-    return {item["id"]: item for item in report["findings"]
-            if item["score"] is not None and item["score"] >= 9 and item["fixes"]}
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("directory", type=Path)
-    parser.add_argument("--release", required=True)
-    parser.add_argument("--report", type=Path, required=True)
-    parser.add_argument("--previous", type=Path, help="previous daily report, for notification comparison only")
-    args = parser.parse_args()
-    kernel, digest = guest_kernel(args.directory)
-    modified, data = current_database()
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        report = findings((json.loads(archive.read(name)) for name in archive.namelist()
-                           if name.endswith(".json")), kernel)
-    report.update(release=args.release, digest=digest, database_modified=modified)
-    blocking = blockers(report)
-    print(f"{args.release} Linux {kernel} {digest}: {len(report['findings'])} matches, {len(blocking)} critical with a fix")
-    previous = {}
-    if args.previous and args.previous.exists():
-        previous = json.loads(args.previous.read_bytes())
-    changes = changed_blockers(report, previous)
-    prior = blockers(previous) if changes and previous.get("release") == args.release else {}
-    for item in changes.values():
-        old = prior.get(item["id"])
-        score = f"{old['score']} -> {item['score']}" if old else str(item["score"])
-        print(f"{item['id']} CVSS {score}, upstream fixed versions: {', '.join(item['fixes'])}")
-    if blocking and not changes:
-        print("No new or worsened blocking findings since the previous daily report.")
-    args.report.write_text(json.dumps(report, indent=2) + "\n")
-    return bool(changes)
-
-
-def changed_blockers(report, previous):
-    current = blockers(report)
-    if (report["digest"], report["release"]) != (previous.get("digest"), previous.get("release")):
-        return current
-    prior = blockers(previous)
-    return {key: item for key, item in current.items()
-            if key not in prior or item["score"] > prior[key]["score"]}
-
-
-if __name__ == "__main__":
-    try:
-        result = main()
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as exc:
-        print(f"Guest kernel scan incomplete: {exc}", file=sys.stderr)
-        sys.exit(2)
-    raise SystemExit(result)

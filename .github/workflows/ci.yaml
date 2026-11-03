@@ -53,13 +53,41 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/helmr-ci-bwrap
       - run: nix run ".#ci-fast-$CI_CHECK"
+  security:
+    name: Source dependency and configuration scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - id: db
+        run: echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cache/trivy/db
+            ~/.cache/trivy/policy
+          key: source-vulndb-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ steps.db.outputs.day }}
+          restore-keys: source-vulndb-${{ runner.os }}-${{ hashFiles('flake.lock') }}-
+      - run: nix run .#security-scan -- --source . --report "$RUNNER_TEMP/findings.json"
+      - run: python3 scripts/release/security_decision.py "$RUNNER_TEMP/findings.json" .github/security-assessments.json "$RUNNER_TEMP/decision.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: source-security
+          path: |
+            ${{ runner.temp }}/findings.json
+            ${{ runner.temp }}/decision.json
+          overwrite: true
+          if-no-files-found: error
   ci-complete:
     name: ci complete
     if: always()
-    needs: checks
+    needs: [checks, security]
     runs-on: ubuntu-24.04
     steps:
       - name: Require all source checks
         env:
           CHECKS_RESULT: ${{ needs.checks.result }}
-        run: test "$CHECKS_RESULT" = success
+          SECURITY_RESULT: ${{ needs.security.result }}
+        run: test "$CHECKS_RESULT" = success && test "$SECURITY_RESULT" = success

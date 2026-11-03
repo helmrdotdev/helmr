@@ -1,0 +1,46 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/release"))
+from security_decision import classify
+
+
+class SecurityDecisionTest(unittest.TestCase):
+    def setUp(self):
+        self.item = dict(id="example", key="a"*64, component="kernel", severity="CRITICAL", advisory="rev")
+        self.guest = dict(optional=["driver"], modules=[], builtin=[], digest="kernel")
+        self.report = dict(findings=[self.item], guest=self.guest)
+        self.rule = dict(id="example", status="not_affected", reason="Requires the optional driver",
+                         evidence="upstream advisory and module inventory", advisory="rev",
+                         kernel="kernel", absent_module="driver")
+
+    def test_kernel_applicability_reopens(self):
+        self.assertEqual(classify(self.report, [self.rule])["state"], "clear")
+        for change in [dict(modules=["driver"]), dict(builtin=["driver"]), dict(optional=[]), dict(digest="new")]:
+            self.assertEqual(classify(dict(self.report, guest=dict(self.guest, **change)), [self.rule])["state"], "needs_review")
+        self.item["advisory"] = "revised"
+        self.assertEqual(classify(self.report, [self.rule])["state"], "needs_review")
+
+    def test_findings_and_scanner_errors_are_distinct(self):
+        self.assertEqual(classify(self.report, [])["state"], "needs_review")
+        entry = dict(id="example", status="affected", key=self.item["key"], basis="component", reason="callable", evidence="source")
+        self.assertEqual(classify(self.report, [entry])["state"], "affected")
+        self.assertEqual(classify(self.report, [dict(entry, status="not_affected")])["state"], "clear")
+        product = dict(entry, status="not_affected", basis="product", source="c"*64)
+        self.assertEqual(classify(dict(self.report, source="c"*64), [product])["state"], "clear")
+        self.assertEqual(classify(dict(self.report, source="d"*64), [product])["state"], "needs_review")
+        with self.assertRaises(KeyError):
+            classify(self.report, [{k: v for k, v in entry.items() if k != "basis"}])
+        self.item["key"] = "b"*64
+        self.assertEqual(classify(self.report, [entry])["state"], "needs_review")
+        with self.assertRaises(ValueError):
+            classify(self.report, [dict(entry, status="accept_risk")])
+        with self.assertRaises(KeyError):
+            classify({}, [])
+        self.item.update(component="source", severity="HIGH", kind="secret")
+        self.assertEqual(classify(self.report, [])["state"], "needs_review")
+
+
+if __name__ == "__main__":
+    unittest.main()

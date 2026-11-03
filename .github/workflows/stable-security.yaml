@@ -1,0 +1,86 @@
+name: Rescan stable release security
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  attestations: read
+  pull-requests: read
+jobs:
+  scan:
+    concurrency: stable-security-scan
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      attention: ${{ steps.assess.outputs.attention }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - name: Fetch the current stable release
+        run: |
+          tag=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -ser '
+            [ .[][] | select(.draft == false and .prerelease == false)
+              | .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) ]
+            | max_by(ltrimstr("v") | split(".") | map(tonumber))')
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/guest"
+          for asset in runtime-artifacts.tar runtime-artifacts.json release-index.json bundle-builder.json controlplane.json worker-host-artifacts.tar control-plane-linux-amd64.tar.gz helmr-{darwin,linux}-{amd64,arm64}.tar.gz; do
+            gh release download "$tag" -p "$asset" -D "$RUNNER_TEMP/guest"
+            gh release verify-asset "$tag" "$RUNNER_TEMP/guest/$asset"
+          done
+          commit=$(jq -er '.sourceCommit | select(test("^[a-f0-9]{40}$"))' "$RUNNER_TEMP/guest/release-index.json")
+          echo "SOURCE_SHA=$commit" >> "$GITHUB_ENV"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: stable
+          persist-credentials: false
+      - name: Read the previous daily report if available
+        run: |
+          runs=$(gh run list --workflow stable-security.yaml --branch "$GITHUB_REF_NAME" --limit 30 --json databaseId --jq '.[].databaseId')
+          for previous in $runs; do
+            [[ "$previous" != "$GITHUB_RUN_ID" ]] || continue
+            available=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous/artifacts" --jq 'any(.artifacts[]; .name == "stable-security" and (.expired | not))')
+            if [[ "$available" == true ]]; then
+              gh run download "$previous" -n stable-security -D "$RUNNER_TEMP/previous"
+              break
+            fi
+          done
+      - name: Scan stable assets and matching source
+        env:
+          GH_TOKEN: ''
+        run: nix run .#security-scan -- --source stable --assets "$RUNNER_TEMP/guest" --published --report "$RUNNER_TEMP/findings.json"
+      - name: Evaluate applicability
+        id: assess
+        run: |
+          python3 scripts/release/security_policy.py "$RUNNER_TEMP/assessments.json"
+          python3 scripts/release/security_decision.py "$RUNNER_TEMP/findings.json" "$RUNNER_TEMP/assessments.json" "$RUNNER_TEMP/decision.json" --previous "$RUNNER_TEMP/previous/decision.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: stable-security
+          retention-days: 30
+          overwrite: true
+          path: |
+            ${{ runner.temp }}/decision.json
+            ${{ runner.temp }}/findings.json
+          if-no-files-found: error
+  notify:
+    concurrency:
+      group: stable-security-notification
+      cancel-in-progress: true
+    name: Review new stable-release security findings
+    needs: scan
+    if: needs.scan.outputs.attention == 'true'
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions: {}
+    steps:
+      - run: echo 'Acknowledged. See the scan summary for findings. Release publication requires separate evidence.'

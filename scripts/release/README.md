@@ -1,7 +1,7 @@
 # Product release checkpoints
 
-PRs and main pushes run the same three fixed source checks: workflow/security
-policy, Go command compilation and unit tests, and TypeScript types and unit tests.
+PRs and main pushes run workflow policy, Go and TypeScript checks, and a
+source dependency, secret and configuration scan.
 The `ci complete` gate rejects failure, cancellation or a skipped check. Source CI
 never produces distribution artifacts. There is no changed-path classifier or
 full-check label. Repository-wide databases, browser acceptance, generated-source
@@ -228,25 +228,71 @@ definition and artifact digests match those current-cohort bytes. The original A
 build identity stays intact. A byte mismatch, OS or recipe change requires a new
 image; unavailable or unverified images must not be accepted.
 
-## Guest kernel advisories
+## Security assessment
 
-The guest build inspects the ELF kernel from the runtime bundle, including restored
-preview parts. It verifies the kernel against the runtime manifest and compares
-the embedded Alpine virt version with the OSV Linux database. A database older
-than 48 hours, an unreadable kernel, an invalid manifest or an unparseable
-advisory used in the comparison fails the check.
-The JSON report lists upstream version matches. These are candidates for review:
-kernel configuration, reachable drivers and distribution backports can affect
-applicability. Preview and tag releases fail on every current match with a
-base CVSS score of 9.0 or higher and a published fix, including matches seen
-on the preceding release. When OSV ranges overlap across stable branches,
-the scanner prefers the fix range for the guest's branch. For an explicitly
-affected git tag without a matching numeric range, it reports newer upstream
-fixed versions. These can belong to another kernel series.
+A completed scan produces findings and a separate applicability decision. Source
+CI checks Go modules, Bun and npm lockfiles, tracked source for exposed secrets,
+and Terraform configurations. Release scans also inspect the four CLI binaries,
+the Worker and Control Plane Go binaries, the packaged guest kernel, the Wolfi rootfs, and the exact
+Control Plane and bundle-builder images. Builds submit their frozen bytes and
+the scheduled scan downloads the latest immutable stable release and its source
+commit. The workflow verifies release asset attestations and selects OCI images
+by digest. The kernel scan uses OSV Linux ranges and explicit tags. Trivy uses
+its vulnerability database and configuration checks. A missing expected package
+inventory, unreadable input, stale vulnerability database or scanner failure
+fails the job. Inline Terraform suppressions prevent a complete scan and are
+rejected. Use reviewed applicability evidence instead. Package-based matching cannot establish full coverage of copied
+native libraries, stripped binaries, host kernels or deployed AWS settings.
 
-The daily workflow checks the latest stable GitHub release, verifies its asset
-attestations and records the same report. A new release, newly blocking advisory
-or increased blocking score raises a workflow failure. An unchanged finding
-remains visible in the report. Missing prior evidence starts a fresh comparison.
-This check covers the shipped guest kernel. Worker host kernels are managed by
-the operator.
+Unscored kernel entries remain visible in the report. Critical observations
+(including those without a fix) and High secret findings need an applicability decision.
+The JSON artifacts include lesser findings for investigation. Secret observations
+contain rule and location metadata only. Source CI reports findings without failing
+the scan. Publication requires a successful build and an explicit `clear` verdict.
+
+- **clear** — no open findings at the review threshold.
+- **needs_review** — both preview and tag publication wait at the existing
+  protected `release` environment. Inspect the findings and record evidence
+  before approving the waiting review job.
+- **affected** — fix the product and submit a new candidate. Publication jobs
+  are skipped. There is no risk-acceptance status.
+- **Scan error** — resolve the missing evidence or technical failure. A scan
+  error cannot produce permission to publish.
+
+Maintain decisions in `.github/security-assessments.json` on main. A required
+user reviewer of the release environment must inspect the complete policy and
+post a new, unedited comment `security-assessments-sha256 <SHA256 of the complete file>` on the PR
+that introduces that blob on main. This authorizes the entire file, including
+inherited entries. A merge or environment approval alone is insufficient.
+Release and scheduled scans verify the comment, exact main blob and current
+reviewer membership using the hosted runner’s GitHub CLI for the unedited
+comment check. Advisory metadata updates can reopen a finding conservatively.
+A direct finding assessment uses the exact
+`id` and `key` copied from the report, `status` (`affected` or `not_affected`),
+`reason`, and `evidence` identifying the necessary attack condition and the
+inspected source or artifact. Only use facts bound to the scanned candidate.
+For evidence contained entirely in the scanned component, set `basis` to
+`component`. When reachability depends on product source or configuration, use
+`basis: product` and copy the report's `source` fingerprint. A changed component
+or advisory reopens a finding. Product-scoped evidence also expires when the
+source changes.
+Editing only the assessments does not invalidate all findings.
+
+For a kernel path known to require a loadable module, a reviewed rule may
+instead bind the exact advisory fingerprint and kernel digest to `absent_module`.
+Each scan must identify that module in the optional build inventory, exclude it
+from the built-in inventory, and check its absence in both shipped filesystems.
+A changed kernel, changed advisory or newly shipped module reopens the finding.
+
+After a reviewer approves, a fresh read-only job scans the original bytes and
+reads the current policy from main again. Approval alone cannot clear a finding.
+If the decision is still pending or affected, the workflow records the verdict
+and ends without publishing. Resolve the findings before starting a fresh
+checkpoint. Follow the tag recovery rules above for an unpublished tag.
+The publisher checks policy identity and a 24-hour assessment window before
+writing. Frozen parts expire after seven days.
+
+Daily scans retain reports for 30 days. A new or changed unresolved observation
+requests reviewer attention through GitHub's protected environment. Acknowledging
+that notification does not authorize a release. Identical findings continue to
+appear in the next report without another notification.

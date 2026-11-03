@@ -42,6 +42,8 @@ let
           actionlint
           scripts/security-checks.sh
           python3 tests/release/test_guest_kernel_scan.py
+          python3 tests/release/test_security_decision.py
+          python3 tests/release/test_security_scan.py
         '';
     ci-fast-go =
       app "ci-fast-go" "compile commands, lint Go and test bundle finalization"
@@ -271,11 +273,18 @@ let
 in
 ciApps
 // {
-  guest-kernel-scan = app "guest-kernel-scan" "inspect the packaged guest kernel for known vulnerabilities"
-    [ (pkgs.python3.withPackages (ps: [ ps.cvss ])) ]
-    ''
-      exec python3 ${../scripts/release/guest_kernel_scan.py} "$@"
-    '';
+  security-scan = app "security-scan" "scan release dependencies, configurations and shipped images" [
+    (pkgs.python3.withPackages (ps: [ ps.cvss ]))
+    pkgsUnstable.trivy
+    pkgs.git
+    pkgs.gnutar
+    pkgs.cpio
+    pkgs.gzip
+    pkgs.skopeo
+    helmrPackages.squashfsTools
+  ] ''
+    exec python3 ${../scripts/release}/security_scan.py "$@"
+  '';
   default = helmrApp;
   helmr = helmrApp;
   ci-checks = app "ci-checks" "run repository checks for CI" [ ] ''

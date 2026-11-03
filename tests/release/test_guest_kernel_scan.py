@@ -20,7 +20,7 @@ class GuestKernelScanTest(unittest.TestCase):
         record = dict(id="CVE-2026-98432", affected=[affected], severity=[
             dict(type="CVSS_V3", score="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")])
         old = scan.findings([record], "6.12.51")
-        self.assertEqual(scan.blockers(old)[record["id"]]["fixes"], ["6.12.113"])
+        self.assertEqual(old["findings"][0]["fixes"], ["6.12.113"])
         for release in ("6.12.113", "6.12.114"):
             self.assertEqual(scan.findings([record], release)["findings"], [])
         affected["ranges"][1]["events"][0] = {"introduced": "6.7.0"}
@@ -28,26 +28,15 @@ class GuestKernelScanTest(unittest.TestCase):
         record["affected"].append(dict(versions=["v6.12.114"], ranges=[
             dict(type="GIT", repo="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")]))
         explicit = scan.findings([record], "6.12.114")
-        self.assertEqual(scan.blockers(explicit)[record["id"]]["fixes"], ["6.18.56"])
+        self.assertEqual(explicit["findings"][0]["fixes"], ["6.18.56"])
         record["severity"] = []
         self.assertTrue(scan.findings([record], "6.12.51")["findings"])
-        self.assertFalse(scan.blockers(scan.findings([record], "6.12.51")))
+        self.assertIsNone(scan.findings([record], "6.12.51")["findings"][0]["score"])
 
     def test_successive_stable_fixes(self):
         events = [{"introduced": "5.5.0"}, {"fixed": "5.10.96"}, {"fixed": "5.15.19"}]
         self.assertEqual(scan.affected_range(events, scan.version("5.15.18")), (True, "5.15.19"))
         self.assertEqual(scan.affected_range(events, scan.version("5.10.96")), (False, None))
-
-    def test_daily_changes(self):
-        a = dict(id="A", score=9.0, fixes=["6.12.113"])
-        b = dict(id="B", score=9.8, fixes=["6.12.114"])
-        previous = dict(digest="same", release="v0.2.8", findings=[a])
-        report = dict(previous, findings=[a, b])
-        self.assertEqual(scan.changed_blockers(report, previous), {"B": b})
-        self.assertEqual(scan.changed_blockers(report, report), {})
-        raised = dict(a, score=9.9)
-        self.assertEqual(scan.changed_blockers(dict(report, findings=[raised, b]), report), {"A": raised})
-        self.assertEqual(scan.changed_blockers(dict(report, release="v0.2.9"), report), {"A": a, "B": b})
 
     def test_packaged_kernel(self):
         with tempfile.TemporaryDirectory() as tmp:

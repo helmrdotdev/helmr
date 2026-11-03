@@ -1,0 +1,150 @@
+[
+  {
+    "id": "CVE-2026-31536",
+    "status": "not_affected",
+    "advisory": "9ab1ea41dc35848ca8869b28571b5647d47344a4636c136cf023a7a113381ad9",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "ksmbd",
+    "reason": "The affected SMB Direct path requires the optional ksmbd module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-31536"
+  },
+  {
+    "id": "CVE-2026-31608",
+    "status": "not_affected",
+    "advisory": "8792dc5b08906b16106a2e1474f1a732fb5d7738d677816be0e418cc94757600",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "ksmbd",
+    "reason": "The affected SMB Direct path requires the optional ksmbd module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-31608"
+  },
+  {
+    "id": "CVE-2026-31609",
+    "status": "not_affected",
+    "advisory": "ca3bffc4f260e55e50a2f1cec147c6a701d0dfd1b4dcb20a52b3b39a56986ad2",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "cifs",
+    "reason": "The affected SMB Direct path requires the optional cifs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-31609"
+  },
+  {
+    "id": "CVE-2026-53246",
+    "status": "not_affected",
+    "advisory": "ab4067d684145640e8bba25ba823eef9ede32ff8267ab1a6d9860176b527b645",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "sctp",
+    "reason": "The affected guest code requires the optional sctp module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-53246"
+  },
+  {
+    "id": "CVE-2026-64066",
+    "status": "not_affected",
+    "advisory": "8d05852a30b19dafb964ca3f86539a3ccdbe18ea054dc4165a6ebf432a814eaf",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "netfs",
+    "reason": "The affected guest code requires the optional netfs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64066"
+  },
+  {
+    "id": "CVE-2026-64067",
+    "status": "not_affected",
+    "advisory": "5f44e02c8a508214d8d9ff43ecbe73add376ebaa343f54e88fda04fdf919db66",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "netfs",
+    "reason": "The affected guest code requires the optional netfs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64067"
+  },
+  {
+    "id": "CVE-2026-64122",
+    "key": "4f0ba5c3e435ccba6b56a594df98fb7d4a890e10258d0b99a2f3e568f5306798",
+    "basis": "component",
+    "status": "not_affected",
+    "reason": "The Linux CNA identifies the earliest affected stable series as 6.18.14. The verified packaged 6.12.114 kernel predates the affected mlx5 revision.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64122 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
+  },
+  {
+    "id": "CVE-2026-64160",
+    "status": "not_affected",
+    "advisory": "6ca10d6a5064501c8986558e7cb1595035f76cdf3c7d93aaa3e2482a0cbcc26d",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "netfs",
+    "reason": "The affected guest code requires the optional netfs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-64160"
+  },
+  {
+    "id": "CVE-2026-72355",
+    "status": "not_affected",
+    "advisory": "0dd65956303159631550df4dc2dba878bf153cc0c198aad878454275e880df9a",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "netfs",
+    "reason": "The affected guest code requires the optional netfs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-72355"
+  },
+  {
+    "id": "CVE-2026-80617",
+    "key": "96434bb6d11572c009ecfbf412c58c0f5c4ea8a53976e6d9880101db7ca9d7e7",
+    "basis": "component",
+    "status": "not_affected",
+    "reason": "The Linux CNA identifies the Airoha regression in 6.18.33 and later branches. Its packet-processing driver is absent from the verified 6.12.114 kernel and guest module set.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80617 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
+  },
+  {
+    "id": "CVE-2026-80670",
+    "key": "24707cc2dbf5d7b29e2ae5088d555178c64541673e40b6fa06a7d0ba179af334",
+    "basis": "component",
+    "status": "not_affected",
+    "reason": "The vulnerable parser is in the perf userspace command. Neither the initramfs nor the root filesystem in this bundle ships that executable. The kernel perf event interface does not run the parser.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-80670 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
+  },
+  {
+    "id": "CVE-2026-89610",
+    "key": "ccb3f81f57e412537eac6deacd315136ac3e66ae435372298ae46fa209fdcd36",
+    "basis": "component",
+    "status": "not_affected",
+    "reason": "Processing an NTFS mapping pair requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89610 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
+  },
+  {
+    "id": "CVE-2026-89611",
+    "key": "efc204d3b9acafa711c0d64c193cdc7a9a0ee8c1bc78ba5540c3553f70b0b44c",
+    "basis": "component",
+    "status": "not_affected",
+    "reason": "The affected attribute update requires the NTFS filesystem driver. The verified Alpine virt configuration makes NTFS filesystems modular. Neither the initramfs nor the root filesystem contains an NTFS module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89611 | https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot-3.22.7/config-6.12.114-0-virt | https://github.com/helmrdotdev/helmr/releases/download/v0.2.8/runtime-artifacts.json"
+  },
+  {
+    "id": "CVE-2026-89637",
+    "status": "not_affected",
+    "advisory": "3fb2891bb75a133620e58eff4afa52428ed896ff39a529cfcbfd70a85fb98bc3",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "cifs",
+    "reason": "The affected guest code requires the optional cifs module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89637"
+  },
+  {
+    "id": "CVE-2026-89675",
+    "status": "not_affected",
+    "advisory": "07cb4051d0e9533a76003537295f34b812e0a3a47dd1095c16be571bbe5e3ca7",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "nfsd",
+    "reason": "The affected guest code requires the optional nfsd module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-89675"
+  },
+  {
+    "id": "CVE-2026-99153",
+    "status": "not_affected",
+    "advisory": "bd1ba009aff44b5e756bf3d04b123702407905d2943cb2c6f787aa7f5034888b",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "libiscsi",
+    "reason": "The affected guest code requires the optional libiscsi module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-99153"
+  },
+  {
+    "id": "CVE-2026-99154",
+    "status": "not_affected",
+    "advisory": "8d1bc862a6e71a3e354818f93bc1c44737d268b97e2583cdd7e89782b582d2e7",
+    "kernel": "sha256:332a9b9f46655b8c7c011c4029630a6e66e9a1759db0cffc2decc65b83ef2712",
+    "absent_module": "libiscsi",
+    "reason": "The affected guest code requires the optional libiscsi module.",
+    "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-99154"
+  }
+]
