@@ -65,7 +65,7 @@ func (s *Store) CreateOIDC(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 	if err != nil {
 		return Connection{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id)
+	_, err = tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,created_by_member_id)
  VALUES($1,$2,'oidc','candidate',$3,$4,$5,$6,$7)`, id, org, cfg.Issuer, cfg.ClientID, ciphertext, nonce, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -80,7 +80,7 @@ func (s *Store) CreateSAML(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 		return Connection{}, err
 	}
 	id := uuid.NewV7()
-	_, err := tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
+	_, err := tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
  VALUES($1,$2,'saml','candidate',$3,$4,$5,$6)`, id, org, idp.EntityID, idp.SSOURL, idp.Certificates, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -98,7 +98,7 @@ func (s *Store) RotateOIDCSecret(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 	if err != nil {
 		return err
 	}
-	return affected(tx.Exec(ctx, `UPDATE sso_connections SET oidc_secret_ciphertext=$3,oidc_secret_nonce=$4,tested_at=NULL
+	return affected(tx.Exec(ctx, `UPDATE sso_connections SET oidc_client_secret_ciphertext=$3,oidc_client_secret_nonce=$4,tested_at=NULL
  WHERE org_id=$1 AND id=$2 AND protocol='oidc' AND state<>'retired'`, org, id, ciphertext, nonce))
 }
 
@@ -140,8 +140,8 @@ func (s *Store) Get(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (Connecti
 	var issuer, clientID, entityID, ssoURL *string
 	var ciphertext, nonce []byte
 	var certs []string
-	err := tx.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	err := tx.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE org_id=$1 AND id=$2 FOR UPDATE`, org, id).Scan(&c.ID, &c.OrgID, &c.Protocol, &c.State,
 		&issuer, &clientID, &ciphertext, &nonce, &entityID, &ssoURL, &certs, &c.TestedAt, &c.CreatedAt, &c.ActivatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {

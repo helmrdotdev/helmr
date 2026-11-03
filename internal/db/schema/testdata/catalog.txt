@@ -1068,14 +1068,14 @@ column sso_connections.created_at timestamp with time zone not null default cloc
 column sso_connections.created_by_member_id uuid not null
 column sso_connections.id uuid not null
 column sso_connections.oidc_client_id text
+column sso_connections.oidc_client_secret_ciphertext bytea
+column sso_connections.oidc_client_secret_nonce bytea
 column sso_connections.oidc_issuer text
-column sso_connections.oidc_secret_ciphertext bytea
-column sso_connections.oidc_secret_nonce bytea
 column sso_connections.org_id uuid not null
 column sso_connections.protocol text not null
 column sso_connections.retired_at timestamp with time zone
 column sso_connections.saml_certificates text[]
-column sso_connections.saml_idp_entity_id text
+column sso_connections.saml_entity_id text
 column sso_connections.saml_sso_url text
 column sso_connections.state text not null
 column sso_connections.tested_at timestamp with time zone
@@ -2238,15 +2238,15 @@ constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) 
 constraint slack_work_items f FOREIGN KEY (post_id, thread_id, environment_id) REFERENCES slack_posts(id, thread_id, environment_id)
 constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
 constraint sso_connections c CHECK (cardinality(saml_certificates) >= 1)
-constraint sso_connections c CHECK (octet_length(oidc_secret_ciphertext) >= 16)
-constraint sso_connections c CHECK (octet_length(oidc_secret_nonce) = 12)
+constraint sso_connections c CHECK (octet_length(oidc_client_secret_ciphertext) >= 16)
+constraint sso_connections c CHECK (octet_length(oidc_client_secret_nonce) = 12)
 constraint sso_connections c CHECK (oidc_client_id <> ''::text)
 constraint sso_connections c CHECK (oidc_issuer ~~ 'https://%'::text)
 constraint sso_connections c CHECK (protocol = ANY (ARRAY['oidc'::text, 'saml'::text]))
-constraint sso_connections c CHECK (saml_idp_entity_id <> ''::text)
+constraint sso_connections c CHECK (saml_entity_id <> ''::text)
 constraint sso_connections c CHECK (saml_sso_url ~~ 'https://%'::text)
 constraint sso_connections c CHECK (state = ANY (ARRAY['candidate'::text, 'active'::text, 'retired'::text]))
-constraint sso_connections c sso_connections_protocol_shape CHECK (protocol = 'oidc'::text AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 4 AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 0 OR protocol = 'saml'::text AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 3 AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 0)
+constraint sso_connections c sso_connections_protocol_shape CHECK (protocol = 'oidc'::text AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_client_secret_ciphertext, oidc_client_secret_nonce) = 4 AND num_nonnulls(saml_entity_id, saml_sso_url, saml_certificates) = 0 OR protocol = 'saml'::text AND num_nonnulls(saml_entity_id, saml_sso_url, saml_certificates) = 3 AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_client_secret_ciphertext, oidc_client_secret_nonce) = 0)
 constraint sso_connections c sso_connections_state_shape CHECK (state = 'candidate'::text AND activated_at IS NULL AND retired_at IS NULL OR state = 'active'::text AND activated_at IS NOT NULL AND retired_at IS NULL OR state = 'retired'::text AND retired_at IS NOT NULL)
 constraint sso_connections f FOREIGN KEY (org_id) REFERENCES organizations(id)
 constraint sso_connections f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id)
