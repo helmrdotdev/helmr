@@ -142,7 +142,7 @@ func TestCommandAdmissionNotifications(t *testing.T) {
 	topics := dbtest.ListenChanges(t, f.Pool)
 
 	created := f.create(t, "resident")
-	if got := topics(); len(got) != 2 || !got["dispatch"] || !got["worker:"+f.Worker.String()] {
+	if got := topics(); len(got) != 1 || !got["worker:"+f.Worker.String()] {
 		t.Fatalf("resident command notified %v", got)
 	}
 	if f.create(t, "resident").ID != created.ID {
@@ -181,6 +181,20 @@ func TestCommandAdmissionNotifications(t *testing.T) {
 	f.create(t, "after-fence")
 	if got := topics(); len(got) != 1 || !got["dispatch"] {
 		t.Fatalf("command with fenced lease notified %v", got)
+	}
+}
+
+func TestRetainedCommandWakesDispatchAndSourceWorker(t *testing.T) {
+	f := commandFixture(t)
+	sessiontest.ObserveProvisioning(t, f.Fixture)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_saves(environment_id,computer_id,id,computer_lease_epoch,seq,status,requested_at,flush_acknowledged_at,captured_at,captured_root_digest,capture_evidence,root_id,publication_evidence,published_at)
+    SELECT environment_id,id,$3,1,1,'published',statement_timestamp(),statement_timestamp(),statement_timestamp(),initial_root_digest,'fixture',initial_root_id,'fixture',clock_timestamp() FROM computers WHERE environment_id=$1 AND id=$2;
+    INSERT INTO checkpoints(environment_id,computer_id,id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,manifest,vm_platform_id,ready_at,capture_digest)
+    SELECT environment_id,computer_id,$4,1,1,$3,'ready',convert_to('{}','UTF8'),clock_timestamp()+interval '1 minute',convert_to('{}','UTF8'),vm_platform_id,clock_timestamp(),decode(repeat('11',32),'hex') FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, uuid.NewV7(), uuid.NewV7())
+	topics := dbtest.ListenChanges(t, f.Pool)
+	f.create(t, "retained")
+	if got := topics(); len(got) != 2 || !got["dispatch"] || !got["worker:"+f.Worker.String()] {
+		t.Fatalf("retained command notified %v", got)
 	}
 }
 

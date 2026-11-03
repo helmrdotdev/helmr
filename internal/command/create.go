@@ -389,7 +389,7 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, limits executio
 		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: request.EnvironmentID, ComputerID: request.ComputerID, Action: "command.admitted", Outcome: "accepted", TargetKind: "command", TargetID: pgvalue.MustUUIDValue(created.ID), Details: audit.LifecycleDetails{}}); err != nil {
 			return idempotency.Completion{}, err
 		}
-		if err = computer.NotifyReaders(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
+		if err = computer.NotifyCommandReaders(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
 		result = created
