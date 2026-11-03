@@ -16,7 +16,7 @@ var (
 	ErrUntested          = errors.New("test the connection before activating it")
 	ErrNoRecoveryCodes   = errors.New("generate recovery codes before requiring single sign-on")
 	ErrRecoveryCodeUsed  = errors.New("the recovery code is invalid or already used")
-	ErrEnforcerNotLinked = errors.New("sign in through the connection again yourself; the policy would not admit your current single sign-on")
+	ErrEnforcerNotLinked = errors.New("the enforcing owner has no linked single sign-on that the policy admits")
 )
 
 // BindingProof reports whether proof is a live proof from a binding rather than
