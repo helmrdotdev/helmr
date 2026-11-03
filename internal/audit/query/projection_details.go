@@ -28,6 +28,8 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditAPIKeyChangedDetails{Before: api.AuditAPIKeyPolicy(d.Before), After: api.AuditAPIKeyPolicy(d.After)}, nil
 	case audit.PermissionsDetails:
 		return api.AuditPermissionsDetails(d), nil
+	case audit.PlacementDetails:
+		return api.AuditPlacementDetails(d), nil
 	case audit.RetentionChangedDetails:
 		return api.AuditRetentionChangedDetails(d), nil
 	case audit.AccessChangeDetails:

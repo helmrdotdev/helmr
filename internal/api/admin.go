@@ -29,6 +29,9 @@ type AdminWorkerGroup struct {
 	Status        string `json:"status"`
 	ClaimVersion  int64  `json:"claim_version"`
 	PrimaryPoolID string `json:"primary_pool_id,omitempty"`
+	// OwnerOrgID is the organization that operates the group; the operator
+	// sees such groups as inventory and may only disable them.
+	OwnerOrgID string `json:"owner_org_id,omitempty"`
 }
 
 type AdminWorkerGroupsResponse struct {

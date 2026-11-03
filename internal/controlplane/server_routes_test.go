@@ -64,6 +64,7 @@ DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/sla
 DELETE /api/projects/{project}/environments/{environment}/agents/{agent}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
 DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
+DELETE /api/projects/{project}/environments/{environment}/placements/{placement}
 DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
@@ -119,6 +120,7 @@ GET /api/projects/{project}/environments/{environment}/deployments/current
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
 GET /api/projects/{project}/environments/{environment}/overview
+GET /api/projects/{project}/environments/{environment}/placements
 GET /api/projects/{project}/environments/{environment}/related-commands
 GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
@@ -149,6 +151,9 @@ GET /api/slack/link-workspaces
 GET /api/slack/user-links
 GET /api/slack/user-links/callback
 GET /api/slack/user-links/first-use
+GET /api/worker-groups
+GET /api/worker-groups/{groupID}
+GET /api/worker-groups/{groupID}/hosts
 GET /capacity/v1/deployment
 GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
@@ -289,6 +294,14 @@ POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
 POST /api/slack/user-links/confirm
 POST /api/slack/user-links/verify
+POST /api/worker-groups
+POST /api/worker-groups/{groupID}/activate
+POST /api/worker-groups/{groupID}/disable
+POST /api/worker-groups/{groupID}/drain
+POST /api/worker-groups/{groupID}/host-credentials/revoke
+POST /api/worker-groups/{groupID}/hosts/{hostID}/fence
+POST /api/worker-groups/{groupID}/pause
+POST /api/worker-groups/{groupID}/token/rotate
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-groups/{workerGroupID}/pools
 POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable
@@ -409,6 +422,7 @@ PUT /api/members/{memberID}/ownership
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
 PUT /api/projects/{project}/environments/{environment}/api-keys/{id}
 PUT /api/projects/{project}/environments/{environment}/deployment-bundles/{bundleDigest}/objects/{objectDigest}
+PUT /api/projects/{project}/environments/{environment}/placements/{placement}
 PUT /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 PUT /v1/deployment-bundles/{bundleDigest}/objects/{objectDigest}

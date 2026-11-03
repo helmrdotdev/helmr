@@ -21,6 +21,9 @@ const MaxResourceIDBytes = 512
 // HostFilter selects worker hosts for the capacity protocol. A zero GroupID
 // selects every group, and empty ResourceIDs or Statuses do not filter.
 type HostFilter struct {
+	// OwnerOrgID selects the hosts of groups that organization owns; Nil
+	// selects deployment hosts.
+	OwnerOrgID             uuid.UUID
 	GroupID                uuid.UUID
 	ResourceIDs            []string
 	Statuses               []WorkerHostStatus
@@ -112,9 +115,11 @@ func SelectPrimary(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Po
 	return PrimarySelectionResponse{WorkerGroup: group, Applied: selection.Applied}, nil
 }
 
-// ListHosts returns the deployment worker hosts that match filter.
+// ListHosts returns the worker hosts that match filter, deployment hosts unless
+// it names an owner.
 func ListHosts(ctx context.Context, q db.Querier, filter HostFilter) (ListWorkerHostsResponse, error) {
 	params := db.ListCapacityWorkerHostsParams{
+		OwnerOrgID:             optionalOwner(filter.OwnerOrgID),
 		ResourceIds:            append([]string{}, filter.ResourceIDs...),
 		Statuses:               make([]string, 0, len(filter.Statuses)),
 		HasUnreclaimedInstance: filter.HasUnreclaimedInstance,
@@ -284,8 +289,22 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolic
 	return ConfirmedProviderAbsence{tx: tx, hostID: hostID}, nil
 }
 
+// GetOrganizationHost returns one host of a group orgID owns; any other host
+// reads as missing.
+func GetOrganizationHost(ctx context.Context, q db.Querier, orgID, hostID uuid.UUID) (WorkerHost, error) {
+	row, err := getOwnedHost(ctx, q, orgID, hostID)
+	if err != nil {
+		return WorkerHost{}, err
+	}
+	return projectHost(row)
+}
+
 func getCapacityHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (db.GetCapacityWorkerHostRow, error) {
-	row, err := q.GetCapacityWorkerHost(ctx, pgvalue.UUID(hostID))
+	return getOwnedHost(ctx, q, uuid.Nil(), hostID)
+}
+
+func getOwnedHost(ctx context.Context, q db.Querier, owner, hostID uuid.UUID) (db.GetCapacityWorkerHostRow, error) {
+	row, err := q.GetCapacityWorkerHost(ctx, db.GetCapacityWorkerHostParams{WorkerHostID: pgvalue.UUID(hostID), OwnerOrgID: optionalOwner(owner)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.GetCapacityWorkerHostRow{}, ErrHostNotFound
 	}
@@ -293,6 +312,13 @@ func getCapacityHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (db.Ge
 		return db.GetCapacityWorkerHostRow{}, fmt.Errorf("get worker host %s: %w", hostID.String(), err)
 	}
 	return row, nil
+}
+
+func optionalOwner(orgID uuid.UUID) pgtype.UUID {
+	if orgID == uuid.Nil() {
+		return pgtype.UUID{}
+	}
+	return pgvalue.UUID(orgID)
 }
 
 func projectGroup(group db.WorkerGroup) (Group, error) {

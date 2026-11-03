@@ -150,6 +150,7 @@ WITH target AS (
      WHERE worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_hosts.resource_id = sqlc.arg(resource_id)
        AND worker_hosts.claim_version = sqlc.arg(expected_claim_version)
+       AND (sqlc.narg(worker_host_id)::uuid IS NULL OR worker_hosts.id = sqlc.narg(worker_host_id))
        AND worker_hosts.status IN ('registering', 'active', 'draining')
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.status,
@@ -178,6 +179,7 @@ SELECT worker_hosts.id, worker_hosts.resource_id,
    AND worker_hosts.resource_id = sqlc.arg(resource_id)
    AND worker_hosts.status = 'lost'
    AND worker_hosts.claim_version = sqlc.arg(expected_claim_version) + 1
+   AND (sqlc.narg(worker_host_id)::uuid IS NULL OR worker_hosts.id = sqlc.narg(worker_host_id))
    AND NOT EXISTS (
        SELECT 1
          FROM worker_hosts AS current_worker

@@ -114,8 +114,13 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, 
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
   FROM worker_hosts
  WHERE worker_hosts.id = $1
-   AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NULL)
+   AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NOT DISTINCT FROM $2::uuid)
 `
+
+type GetCapacityWorkerHostParams struct {
+	WorkerHostID pgtype.UUID `json:"worker_host_id"`
+	OwnerOrgID   pgtype.UUID `json:"owner_org_id"`
+}
 
 type GetCapacityWorkerHostRow struct {
 	ID                           pgtype.UUID        `json:"id"`
@@ -135,10 +140,11 @@ type GetCapacityWorkerHostRow struct {
 	UnreconciledSessionProcesses int64              `json:"unreconciled_session_processes"`
 }
 
-// The capacity protocol sees only deployment hosts; organization groups are
-// fixed capacity their organization operates.
-func (q *Queries) GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error) {
-	row := q.db.QueryRow(ctx, getCapacityWorkerHost, workerHostID)
+// A NULL owner_org_id reads deployment hosts, which the capacity protocol
+// sees; organization groups are fixed capacity their organization operates
+// and reads with its own ID.
+func (q *Queries) GetCapacityWorkerHost(ctx context.Context, arg GetCapacityWorkerHostParams) (GetCapacityWorkerHostRow, error) {
+	row := q.db.QueryRow(ctx, getCapacityWorkerHost, arg.WorkerHostID, arg.OwnerOrgID)
 	var i GetCapacityWorkerHostRow
 	err := row.Scan(
 		&i.ID,
@@ -183,9 +189,9 @@ WITH current_instances AS (
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
      FROM worker_hosts
      WHERE ($3::uuid IS NULL OR worker_group_id = $3)
-       AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NULL)
+       AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NOT DISTINCT FROM $4::uuid)
        AND (
-           NOT $4::boolean
+           NOT $5::boolean
            OR EXISTS (
                SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
@@ -203,8 +209,8 @@ WITH current_instances AS (
  FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=worker_hosts.id)
        )
        AND (
-           cardinality($5::text[]) = 0
-           OR resource_id = ANY($5::text[])
+           cardinality($6::text[]) = 0
+           OR resource_id = ANY($6::text[])
        )
      ORDER BY worker_group_id, resource_id,
               (status IN ('registering', 'active', 'draining')) DESC,
@@ -224,6 +230,7 @@ type ListCapacityWorkerHostsParams struct {
 	Statuses               []string    `json:"statuses"`
 	RowLimit               int32       `json:"row_limit"`
 	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
+	OwnerOrgID             pgtype.UUID `json:"owner_org_id"`
 	HasUnreclaimedInstance bool        `json:"has_unreclaimed_instance"`
 	ResourceIds            []string    `json:"resource_ids"`
 }
@@ -251,6 +258,7 @@ func (q *Queries) ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityW
 		arg.Statuses,
 		arg.RowLimit,
 		arg.WorkerGroupID,
+		arg.OwnerOrgID,
 		arg.HasUnreclaimedInstance,
 		arg.ResourceIds,
 	)

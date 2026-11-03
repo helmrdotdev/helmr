@@ -56,6 +56,36 @@ func ListGroups(ctx context.Context, q db.Querier, regionID string, limit int32)
 	return groups, nil
 }
 
+// ListOrganizationGroups returns up to limit of the worker groups orgID owns,
+// only those of regionID when it is not empty.
+func ListOrganizationGroups(ctx context.Context, q db.Querier, orgID uuid.UUID, regionID string, limit int32) ([]db.WorkerGroup, error) {
+	var filter pgtype.Text
+	if regionID != "" {
+		if err := region.ValidateID(regionID); err != nil {
+			return nil, InputError{message: err.Error()}
+		}
+		filter = pgtype.Text{String: regionID, Valid: true}
+	}
+	groups, err := q.ListOrganizationWorkerGroups(ctx, db.ListOrganizationWorkerGroupsParams{OwnerOrgID: pgvalue.UUID(orgID), RegionID: filter, RowLimit: limit})
+	if err != nil {
+		return nil, fmt.Errorf("list organization worker groups: %w", err)
+	}
+	return groups, nil
+}
+
+// GetOrganizationGroup returns the worker group with the ID that orgID owns.
+// Any other group reads exactly like a missing one.
+func GetOrganizationGroup(ctx context.Context, q db.Querier, orgID, groupID uuid.UUID) (db.WorkerGroup, error) {
+	group, err := GetGroup(ctx, q, groupID)
+	if err != nil {
+		return db.WorkerGroup{}, err
+	}
+	if !group.OwnerOrgID.Valid || uuid.UUID(group.OwnerOrgID.Bytes) != orgID {
+		return db.WorkerGroup{}, ErrGroupNotFound
+	}
+	return group, nil
+}
+
 // GetGroup returns one worker group.
 func GetGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerGroup, error) {
 	group, err := q.GetWorkerGroup(ctx, pgvalue.UUID(groupID))
@@ -69,8 +99,12 @@ func GetGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerGr
 }
 
 // CreateGroup creates an active worker group with a new enrollment token in an
-// existing region, serialized with other creators in that region.
-func CreateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, input GroupInput) (CreatedGroup, error) {
+// existing region, serialized with other creators in that region. An
+// organization operator creates a group its organization owns for life.
+func CreateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, input GroupInput) (CreatedGroup, error) {
+	if operator.safety {
+		return CreatedGroup{}, errSafetyOperation
+	}
 	if err := region.ValidateID(input.RegionID); err != nil {
 		return CreatedGroup{}, InputError{message: err.Error()}
 	}
@@ -85,23 +119,31 @@ func CreateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Poli
 	var created db.WorkerGroup
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		actor, err := operator.authorize(ctx, tx)
+		if err != nil {
+			return err
+		}
 		if err := q.LockWorkerGroupCreationRegion(ctx, creationLockKey(input.RegionID)); err != nil {
 			return fmt.Errorf("lock worker group creation: %w", err)
 		}
 		if _, err := region.Get(ctx, q, input.RegionID); err != nil {
 			return err
 		}
-		created, err = q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
+		params := db.CreateWorkerGroupParams{
 			ID: pgvalue.UUID(uuid.NewV7()), TokenID: pgvalue.UUID(uuid.NewV7()), TokenHash: token.Hash,
 			RegionID: input.RegionID, Name: input.Name, Description: description,
-		})
+		}
+		if operator.orgID != uuid.Nil() {
+			params.OwnerOrgID = pgvalue.UUID(operator.orgID)
+		}
+		created, err = q.CreateWorkerGroup(ctx, params)
 		if db.IsUniqueViolation(err) {
 			return conflict("worker group conflicts with an existing active role or name")
 		}
 		if err != nil {
 			return fmt.Errorf("create worker group: %w", err)
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: operator.orgID, Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
 			return err
 		}
 		return nil
@@ -130,13 +172,20 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 // new raw token. The previous token stops enrolling hosts at once. Hosts that
 // already enrolled keep their host secrets and keep running; revoke them with
 // RevokeGroupHostCredentials.
-func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID) (string, error) {
+func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) (string, error) {
+	if operator.safety {
+		return "", errSafetyOperation
+	}
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		return "", err
 	}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
 		_, err = q.RotateWorkerGroupToken(ctx, db.RotateWorkerGroupTokenParams{
 			WorkerGroupID: pgvalue.UUID(groupID), TokenHash: token.Hash,
 		})
@@ -146,7 +195,7 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditp
 		if err != nil {
 			return fmt.Errorf("rotate worker group token: %w", err)
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
 	})
 	if err != nil {
 		return "", err
@@ -163,10 +212,14 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditp
 // committed before the revocation may still complete. Their allocations are
 // reconciled as host loss. A fenced machine can return only by enrolling again with the
 // group's enrollment token, which this operation does not change.
-func RevokeGroupHostCredentials(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID) ([]uuid.UUID, error) {
+func RevokeGroupHostCredentials(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) ([]uuid.UUID, error) {
 	var fenced []uuid.UUID
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
 		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
 			return fmt.Errorf("lock worker group lifecycle: %w", err)
 		}
@@ -183,11 +236,11 @@ func RevokeGroupHostCredentials(ctx context.Context, database db.TxBeginner, pol
 		for _, row := range rows {
 			hostID := pgvalue.MustUUIDValue(row)
 			fenced = append(fenced, hostID)
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 				return err
 			}
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.host_credentials_revoked", TargetKind: "worker_group", TargetID: groupID}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_group.host_credentials_revoked", TargetKind: "worker_group", TargetID: groupID}); err != nil {
 			return err
 		}
 		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")

@@ -69,9 +69,10 @@ type Querier interface {
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
 	GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrgMemberByUserParams) (OrgMember, error)
 	GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams) (AuthIdentity, error)
-	// The capacity protocol sees only deployment hosts; organization groups are
-	// fixed capacity their organization operates.
-	GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error)
+	// A NULL owner_org_id reads deployment hosts, which the capacity protocol
+	// sees; organization groups are fixed capacity their organization operates
+	// and reads with its own ID.
+	GetCapacityWorkerHost(ctx context.Context, arg GetCapacityWorkerHostParams) (GetCapacityWorkerHostRow, error)
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCommand(ctx context.Context, arg GetCommandParams) (Command, error)
 	GetCommandByIdempotencyReceipt(ctx context.Context, arg GetCommandByIdempotencyReceiptParams) (Command, error)
@@ -130,6 +131,7 @@ type Querier interface {
 	ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error)
 	ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error)
 	ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
+	ListOrganizationWorkerGroups(ctx context.Context, arg ListOrganizationWorkerGroupsParams) ([]WorkerGroup, error)
 	ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error)
 	ListRegions(ctx context.Context) ([]Region, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)

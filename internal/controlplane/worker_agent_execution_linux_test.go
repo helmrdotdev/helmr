@@ -1131,7 +1131,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := workergroup.CreateGroup(t.Context(), pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
+	group, err := workergroup.CreateGroup(t.Context(), pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
 	if err != nil {
 		t.Fatal(err)
 	}

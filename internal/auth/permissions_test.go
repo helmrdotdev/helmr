@@ -19,10 +19,12 @@ func TestPermissionCatalog(t *testing.T) {
 		switch d.ResourceType {
 		case "agents", "agent_connections", "sessions", "triggers":
 			scope = ScopeAgent
-		case "deployments", "templates", "computers", "commands", "secrets", "api_keys":
+		case "deployments", "templates", "computers", "commands", "secrets", "api_keys", "placements":
 			scope = ScopeEnvironment
 		}
-		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && d.ID != PermissionAgentsDelete
+		// Placements decide which machines receive an environment's data, so
+		// only people change or inspect them.
+		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && d.ResourceType != "placements" && d.ID != PermissionAgentsDelete
 		scopes := []PermissionScope{scope}
 		if d.ID == PermissionAuditEventsRead {
 			scopes = []PermissionScope{ScopeOrganization, ScopeEnvironment}

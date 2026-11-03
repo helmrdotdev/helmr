@@ -55,6 +55,13 @@ type AuditPermissionsDetails struct {
 
 func (AuditPermissionsDetails) auditDetails() {}
 
+type AuditPlacementDetails struct {
+	Name          string `json:"name"`
+	WorkerGroupID string `json:"worker_group_id,omitempty"`
+}
+
+func (AuditPlacementDetails) auditDetails() {}
+
 type AuditRetentionChangedDetails struct {
 	OldRetentionSeconds *int64 `json:"old_retention_seconds"`
 	NewRetentionSeconds *int64 `json:"new_retention_seconds"`

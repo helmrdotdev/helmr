@@ -8,6 +8,8 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -30,6 +32,15 @@ type Placement struct {
 	WorkerGroupID *uuid.UUID
 }
 
+// PlacementEditor is who edits an environment's placements and how its edits
+// are audited. Authorize confirms the editor's current authority first in the
+// edit's transaction and returns the actor it records; group reports whether
+// the edit names an organization worker group.
+type PlacementEditor struct {
+	Policy    auditpolicy.Policy
+	Authorize func(ctx context.Context, tx pgx.Tx, group bool) (audit.Evidence, error)
+}
+
 // ValidatePlacementName checks the definition ID syntax placement names share.
 func ValidatePlacementName(name string) error {
 	if !definition.ValidDeclaredID(name) {
@@ -42,15 +53,19 @@ func ValidatePlacementName(name string) error {
 // default placement to deployment capacity removes its override. It holds the
 // environment lock promotion holds and refuses an assignment that leaves the
 // placement unbound for the current deployment.
-func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUID, placement Placement) error {
+func SetPlacement(ctx context.Context, txb db.TxBeginner, editor PlacementEditor, environmentID uuid.UUID, placement Placement) error {
 	if err := ValidatePlacementName(placement.Name); err != nil {
 		return err
 	}
 	if placement.Name == definition.DefaultPlacement && placement.WorkerGroupID == nil {
-		_, err := RemovePlacement(ctx, txb, environmentID, placement.Name)
+		_, err := RemovePlacement(ctx, txb, editor, environmentID, placement.Name)
 		return err
 	}
 	return db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		actor, err := editor.Authorize(ctx, tx, placement.WorkerGroupID != nil)
+		if err != nil {
+			return err
+		}
 		current, err := lockPlacements(ctx, tx, environmentID)
 		if err != nil {
 			return err
@@ -69,7 +84,14 @@ func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUI
 		case err != nil:
 			return fmt.Errorf("set placement %q: %w", placement.Name, err)
 		}
-		return requireCurrentPlacement(ctx, tx, environmentID, current, placement.Name)
+		if err := requireCurrentPlacement(ctx, tx, environmentID, current, placement.Name); err != nil {
+			return err
+		}
+		details := audit.PlacementDetails{Name: placement.Name}
+		if placement.WorkerGroupID != nil {
+			details.WorkerGroupID = placement.WorkerGroupID.String()
+		}
+		return audit.Append(ctx, tx, editor.Policy, audit.Event{Evidence: actor, EnvironmentID: environmentID, Action: "placement.assigned", TargetKind: "environment", TargetID: environmentID, Details: details})
 	})
 }
 
@@ -77,12 +99,16 @@ func SetPlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUI
 // whether it was assigned. Removing the default placement resets it to
 // deployment capacity; removing another placement the current deployment
 // uses is refused.
-func RemovePlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.UUID, name string) (bool, error) {
+func RemovePlacement(ctx context.Context, txb db.TxBeginner, editor PlacementEditor, environmentID uuid.UUID, name string) (bool, error) {
 	if err := ValidatePlacementName(name); err != nil {
 		return false, err
 	}
 	var removed int64
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		actor, err := editor.Authorize(ctx, tx, false)
+		if err != nil {
+			return err
+		}
 		current, err := lockPlacements(ctx, tx, environmentID)
 		if err != nil {
 			return err
@@ -91,7 +117,10 @@ func RemovePlacement(ctx context.Context, txb db.TxBeginner, environmentID uuid.
 		if err != nil {
 			return fmt.Errorf("remove placement %q: %w", name, err)
 		}
-		return requireCurrentPlacement(ctx, tx, environmentID, current, name)
+		if err := requireCurrentPlacement(ctx, tx, environmentID, current, name); err != nil || removed == 0 {
+			return err
+		}
+		return audit.Append(ctx, tx, editor.Policy, audit.Event{Evidence: actor, EnvironmentID: environmentID, Action: "placement.removed", TargetKind: "environment", TargetID: environmentID, Details: audit.PlacementDetails{Name: name}})
 	})
 	return removed > 0, err
 }

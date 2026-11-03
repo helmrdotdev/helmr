@@ -39,7 +39,7 @@ func TestPlacementBindingInvariantPostgres(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_group_tokens(id,token_hash) VALUES($2,decode(repeat('44',32),'hex'));
  INSERT INTO worker_groups(id,token_id,region_id,name,status,owner_org_id) SELECT $1,$2,p.default_region_id,'secure','disabled',e.org_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$3`,
 		pgx.QueryExecModeSimpleProtocol, group, token, env)
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &group}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure", WorkerGroupID: &group}); err != nil {
 		t.Fatalf("assign before the deployment is current: %v", err)
 	}
 	assertUnbound(promote(), nil, []string{"secure"})
@@ -78,7 +78,7 @@ func TestPlacementBindingInvariantPostgres(t *testing.T) {
 	}
 
 	// The placement writer keeps the current deployment bound.
-	if _, err := workergroup.RemovePlacement(t.Context(), f.pool, env, "secure"); err == nil {
+	if _, err := workergroup.RemovePlacement(t.Context(), f.pool, testPlacementEditor, env, "secure"); err == nil {
 		t.Fatal("removed a placement the current deployment uses")
 	} else {
 		assertUnbound(err, []string{"secure"}, nil)
@@ -87,26 +87,26 @@ func TestPlacementBindingInvariantPostgres(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_group_tokens(id,token_hash) VALUES($2,decode(repeat('55',32),'hex'));
  INSERT INTO worker_groups(id,token_id,region_id,name,status,owner_org_id) SELECT $1,$2,region_id,'retired','disabled',owner_org_id FROM worker_groups WHERE id=$3`,
 		pgx.QueryExecModeSimpleProtocol, other, otherToken, group)
-	assertUnbound(workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &other}), nil, []string{"secure"})
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure"}); err != nil {
+	assertUnbound(workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure", WorkerGroupID: &other}), nil, []string{"secure"})
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure"}); err != nil {
 		t.Fatalf("rebinding a used placement to deployment capacity: %v", err)
 	}
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "unused", WorkerGroupID: &other}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "unused", WorkerGroupID: &other}); err != nil {
 		t.Fatalf("assigning an unused placement: %v", err)
 	}
-	if removed, err := workergroup.RemovePlacement(t.Context(), f.pool, env, "unused"); err != nil || !removed {
+	if removed, err := workergroup.RemovePlacement(t.Context(), f.pool, testPlacementEditor, env, "unused"); err != nil || !removed {
 		t.Fatalf("removing an unused placement = %v %v", removed, err)
 	}
 	// A used placement whose group is draining blocks only edits to itself.
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &group}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure", WorkerGroupID: &group}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, group)
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "unused"}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "unused"}); err != nil {
 		t.Fatalf("an unrelated edit blocked by a draining group: %v", err)
 	}
-	assertUnbound(workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure", WorkerGroupID: &other}), nil, []string{"secure"})
-	if err := workergroup.SetPlacement(t.Context(), f.pool, env, workergroup.Placement{Name: "secure"}); err != nil {
+	assertUnbound(workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure", WorkerGroupID: &other}), nil, []string{"secure"})
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, env, workergroup.Placement{Name: "secure"}); err != nil {
 		t.Fatalf("rebinding away from a draining group: %v", err)
 	}
 }

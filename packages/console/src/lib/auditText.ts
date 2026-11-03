@@ -22,7 +22,7 @@ const NOUNS: Record<string, string> = {
   trigger: "trigger", mcp: "tool connection", runtime: "runtime operation", slack_app: "Slack app",
   slack_installation: "Slack workspace", slack_connection: "Slack connection", slack_user: "Slack user link",
   computer: "computer", command: "command", template: "template", secret: "secret", api_key: "API key",
-  deployment: "deployment", project: "project", environment: "environment", region: "region",
+  deployment: "deployment", project: "project", environment: "environment", placement: "placement", region: "region",
   worker_group: "worker group", worker_pool: "worker pool", worker_host: "worker host", worker_scale_in: "worker scale-in",
   audit: "audit events",
 };
@@ -53,6 +53,7 @@ const OVERRIDES: Record<string, string> = {
   "identity.device_started": "Started signing in a device",
   "identity.device_authorized": "Approved a device sign-in",
   "identity.device_denied": "Denied a device sign-in",
+  "placement.assigned": "Assigned a placement",
   "audit.searched": "Searched audit events",
   "audit.retention_observed": "Observed audit retention",
   "audit.purge_completed": "Removed expired audit events",

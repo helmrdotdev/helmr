@@ -26,6 +26,8 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		{"api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &expires}, `{"name":"automation","expires_at":"2026-10-14T12:00:00Z"}`},
 		{"slack_connection.authorized", PermissionsDetails{Permissions: []string{"chat:write"}}, `{"permissions":["chat:write"]}`},
 		{"project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &seconds}, `{"old_retention_seconds":86400,"new_retention_seconds":null}`},
+		{"placement.assigned", PlacementDetails{Name: "secure", WorkerGroupID: "group"}, `{"name":"secure","worker_group_id":"group"}`},
+		{"placement.removed", PlacementDetails{Name: "secure"}, `{"name":"secure"}`},
 		{"secret.rotated", nil, `{}`},
 	}
 	for _, tc := range cases {
@@ -70,6 +72,8 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 		{"missing permissions object", "slack_connection.authorized", nil},
 		{"negative retention duration", "project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &negative}},
 		{"unexpected retention duration", "project.retention_changed", RetentionChangedDetails{NewRetentionSeconds: &negative}},
+		{"unnamed placement", "placement.assigned", PlacementDetails{WorkerGroupID: "group"}},
+		{"removed placement naming a group", "placement.removed", PlacementDetails{Name: "secure", WorkerGroupID: "group"}},
 		{"unapproved facts", "secret.rotated", PlatformAdminGrantedDetails{Basis: "owner"}},
 		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &unencodable}},
 	}

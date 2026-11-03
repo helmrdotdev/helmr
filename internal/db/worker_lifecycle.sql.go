@@ -398,6 +398,7 @@ WITH target AS (
      WHERE worker_hosts.worker_group_id = $1
        AND worker_hosts.resource_id = $2
        AND worker_hosts.claim_version = $3
+       AND ($4::uuid IS NULL OR worker_hosts.id = $4)
        AND worker_hosts.status IN ('registering', 'active', 'draining')
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.status,
@@ -426,6 +427,7 @@ SELECT worker_hosts.id, worker_hosts.resource_id,
    AND worker_hosts.resource_id = $2
    AND worker_hosts.status = 'lost'
    AND worker_hosts.claim_version = $3 + 1
+   AND ($4::uuid IS NULL OR worker_hosts.id = $4)
    AND NOT EXISTS (
        SELECT 1
          FROM worker_hosts AS current_worker
@@ -441,6 +443,7 @@ type MarkWorkerHostLostParams struct {
 	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ResourceID           string      `json:"resource_id"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
+	WorkerHostID         pgtype.UUID `json:"worker_host_id"`
 }
 
 type MarkWorkerHostLostRow struct {
@@ -454,7 +457,12 @@ type MarkWorkerHostLostRow struct {
 }
 
 func (q *Queries) MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error) {
-	row := q.db.QueryRow(ctx, markWorkerHostLost, arg.WorkerGroupID, arg.ResourceID, arg.ExpectedClaimVersion)
+	row := q.db.QueryRow(ctx, markWorkerHostLost,
+		arg.WorkerGroupID,
+		arg.ResourceID,
+		arg.ExpectedClaimVersion,
+		arg.WorkerHostID,
+	)
 	var i MarkWorkerHostLostRow
 	err := row.Scan(
 		&i.ID,

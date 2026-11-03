@@ -232,7 +232,7 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID()); err != nil {
+	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
@@ -244,7 +244,7 @@ func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
 	host := f.start(t, cfg, "default", "i-group", validHostTemplate(t))
-	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
+	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {

@@ -85,6 +85,11 @@ const (
 	PermissionAssignmentsCreate         Permission = "assignments.create"
 	PermissionAssignmentsUpdate         Permission = "assignments.update"
 	PermissionAssignmentsDelete         Permission = "assignments.delete"
+	PermissionWorkerGroupsRead          Permission = "worker_groups.read"
+	PermissionWorkerGroupsManage        Permission = "worker_groups.manage"
+	PermissionWorkerGroupsUse           Permission = "worker_groups.use"
+	PermissionPlacementsRead            Permission = "placements.read"
+	PermissionPlacementsUpdate          Permission = "placements.update"
 )
 
 var permissionCatalog = []PermissionDefinition{
@@ -150,6 +155,11 @@ var permissionCatalog = []PermissionDefinition{
 	{"assignments", PermissionAssignmentsCreate, "Create assignments", "Assign a Role to an eligible subject and valid scope. This can delegate authority the caller does not personally hold, as current Access administration can.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"assignments", PermissionAssignmentsUpdate, "Update assignments", "Change an assignment's Role/targets/eligible properties; same delegation power.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"assignments", PermissionAssignmentsDelete, "Delete assignments", "Remove an assignment.", []PermissionScope{ScopeOrganization}, false, nil},
+	{"worker_groups", PermissionWorkerGroupsRead, "Read worker groups", "List/read the organization's worker groups and their hosts, including host status and drain blockers. No workload content.", []PermissionScope{ScopeOrganization}, false, nil},
+	{"worker_groups", PermissionWorkerGroupsManage, "Manage worker groups", "Create the organization's worker groups, pause, activate, drain and disable them, issue enrollment tokens, revoke host credentials and fence hosts. Machines enrolled with an issued token run the work assigned to the group and can read it.", []PermissionScope{ScopeOrganization}, false, nil},
+	{"worker_groups", PermissionWorkerGroupsUse, "Use worker groups", "Name any of the organization's worker groups as an environment placement's destination, together with placements.update in that environment. The group's machines then run that environment's work.", []PermissionScope{ScopeOrganization}, false, nil},
+	{"placements", PermissionPlacementsRead, "Read placements", "Read the environment's placements and the worker group each one names.", []PermissionScope{ScopeEnvironment}, false, nil},
+	{"placements", PermissionPlacementsUpdate, "Update placements", "Assign or remove the environment's placements. Assigning one to an organization worker group also requires worker_groups.use. New Computers follow the change; existing Computers stay on their group.", []PermissionScope{ScopeEnvironment}, false, nil},
 }
 
 func PermissionCatalog() []PermissionDefinition {

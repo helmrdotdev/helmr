@@ -15,11 +15,11 @@ func TestWorkerGroupAuditCommitsOnceAndRollsBack(t *testing.T) {
 	user := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Operator')`, user)
 	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: uuid.NewV7()})
-	paused, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, f.groupID(), f.group.ClaimVersion)
+	paused, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(actor), f.groupID(), f.group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, f.groupID(), f.group.ClaimVersion); err != nil {
+	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(actor), f.groupID(), f.group.ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -28,7 +28,7 @@ func TestWorkerGroupAuditCommitsOnceAndRollsBack(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_worker_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_worker_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_worker_audit()`)
-	if _, err := ActivateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, f.groupID(), paused.ClaimVersion); err == nil {
+	if _, err := ActivateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(actor), f.groupID(), paused.ClaimVersion); err == nil {
 		t.Fatal("audit failure allowed activation")
 	}
 	after := f.currentGroup(t)

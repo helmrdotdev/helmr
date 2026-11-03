@@ -501,6 +501,56 @@ func (q *Queries) ListCapacityWorkerPools(ctx context.Context, arg ListCapacityW
 	return items, nil
 }
 
+const listOrganizationWorkerGroups = `-- name: ListOrganizationWorkerGroups :many
+SELECT id, capacity_observed_at, capacity_supply_fingerprint, capacity_pools, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at, owner_org_id
+  FROM worker_groups
+ WHERE owner_org_id = $1
+   AND ($2::text IS NULL OR region_id = $2)
+ ORDER BY region_id, name ASC
+ LIMIT $3
+`
+
+type ListOrganizationWorkerGroupsParams struct {
+	OwnerOrgID pgtype.UUID `json:"owner_org_id"`
+	RegionID   pgtype.Text `json:"region_id"`
+	RowLimit   int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListOrganizationWorkerGroups(ctx context.Context, arg ListOrganizationWorkerGroupsParams) ([]WorkerGroup, error) {
+	rows, err := q.db.Query(ctx, listOrganizationWorkerGroups, arg.OwnerOrgID, arg.RegionID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkerGroup
+	for rows.Next() {
+		var i WorkerGroup
+		if err := rows.Scan(
+			&i.ID,
+			&i.CapacityObservedAt,
+			&i.CapacitySupplyFingerprint,
+			&i.CapacityPools,
+			&i.TokenID,
+			&i.RegionID,
+			&i.Name,
+			&i.Description,
+			&i.Status,
+			&i.ClaimVersion,
+			&i.PrimaryPoolID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OwnerOrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkerCapacityBins = `-- name: ListWorkerCapacityBins :many
 WITH live_workers AS (
     SELECT worker_groups.id AS worker_group_id,

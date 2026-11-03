@@ -476,7 +476,7 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	q := db.New(f.pool)
 	assertCustody := func(want int64) {
 		t.Helper()
-		row, err := q.GetCapacityWorkerHost(t.Context(), pgvalue.UUID(host.HostID))
+		row, err := q.GetCapacityWorkerHost(t.Context(), db.GetCapacityWorkerHostParams{WorkerHostID: pgvalue.UUID(host.HostID)})
 		if err != nil || row.UnreclaimedInstances != want {
 			t.Fatalf("custody=%d want %d: %v", row.UnreclaimedInstances, want, err)
 		}
