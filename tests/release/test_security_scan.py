@@ -106,6 +106,19 @@ class SecurityScanTest(unittest.TestCase):
                         dict(Description="advisory changed"), dict(scope="control-plane")):
             self.assertEqual(state(finding(**changed)), "needs_review")
 
+    def test_backport_follows_executable_and_advisory(self):
+        entry = dict(VulnerabilityID="CVE-2026-60002", Severity="CRITICAL", PkgName="openssh-client",
+                     InstalledVersion="1:10.0p1-7+deb13u4+helmr1", Layer={"DiffID": "sha256:" + "a"*64},
+                     PkgIdentifier={"PURL": "pkg:deb/debian/openssh-client@10.0p1"})
+        def key(binary, **changes):
+            row = dict(Class="os-pkgs", Type="debian", Target="debian", Vulnerabilities=[dict(entry, **changes)])
+            return collect([row], "bundle-builder", "image", ssh_digest=binary)[0]["debian_package_key"]
+        expected = key("good")
+        self.assertEqual(expected, key("good", Layer={"DiffID": "sha256:" + "b"*64}))
+        for other in [key(None), key("changed"), key("good", Description="updated"),
+                      key("good", InstalledVersion="1:10.0p1-7+deb13u4")]:
+            self.assertNotEqual(expected, other)
+
     def test_template_key_requires_same_template_and_occurrence(self):
         def key(source="source", templates="templates", resource="control", check="AWS-0104"):
             entry = dict(ID=check, Status="FAIL", Severity="CRITICAL",

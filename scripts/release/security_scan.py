@@ -38,7 +38,7 @@ def trivy(work, command, target, scanners):
     return report["Results"]
 
 
-def collect(rows, scope, identity, aws_templates=None):
+def collect(rows, scope, identity, aws_templates=None, ssh_digest=None):
     items = []
     for row in rows:
         for secret in row.get("Secrets") or []:
@@ -79,6 +79,9 @@ def collect(rows, scope, identity, aws_templates=None):
                     layer = (entry.get("Layer") or {}).get("DiffID", "")
                     if purl.startswith("pkg:deb/debian/") and re.fullmatch(r"sha256:[0-9a-f]{64}", layer):
                         items[-1]["debian_package_key"] = fingerprint([purl, layer, evidence])
+                        if ssh_digest and is_ssh_backport(entry):
+                            items[-1]["binary_digest"] = ssh_digest
+                            items[-1]["debian_package_key"] = fingerprint([purl, ssh_digest, evidence])
                 if (aws_templates and kind == "Misconfigurations" and advisory == "AWS-0104"
                         and scope == "source" and row["Type"] == "terraform"
                         and row["Target"].startswith("infra/aws/") and location.get("Occurrences")):
@@ -256,23 +259,50 @@ def guest(work, assets):
     return inventory, items
 
 
+def is_ssh_backport(entry):
+    return (entry.get("VulnerabilityID") == "CVE-2026-60002" and entry.get("PkgName") == "openssh-client"
+            and entry.get("InstalledVersion", "").endswith("+helmr1"))
+
+
+def ssh_executable_digest(layout, work):
+    # Inspect the merged OCI filesystem, including replacements and whiteouts.
+    # Never execute anything from the release being assessed.
+    root = work.resolve() / "ssh-rootfs"
+    try:
+        run("umoci", "raw", "unpack", "--rootless", "--image", f"{layout}:scan", root)
+        ssh = root / "usr/bin/ssh"
+        require(ssh.resolve() == ssh and ssh.is_file(), "expected a regular Debian SSH executable")
+        return digest(ssh)
+    finally:
+        if root.exists():
+            shutil.rmtree(root)
+
+
 def scan_image(work, assets, descriptor, scope, published):
     ref = read(assets / descriptor)["image"]
     require(re.fullmatch(re.escape(IMAGES[scope]) + r"@sha256:[0-9a-f]{64}", ref), "unexpected image identity")
+    layout = work / scope
     if published:
+        transport = "docker://" + ref
         args = ["--image-src", "remote", ref]
     else:
         image = assets / ("builder-image" if scope == "bundle-builder" else "controlplane-image")
         require(digest(image / "manifest.json") == ref.split("@")[1], "image manifest digest mismatch")
-        layout = work / scope
-        run("skopeo", "--insecure-policy", "copy", "dir:" + str(image), f"oci:{layout}:scan", stdout=subprocess.DEVNULL)
+        transport = "dir:" + str(image)
+        run("skopeo", "--insecure-policy", "copy", transport, f"oci:{layout}:scan", stdout=subprocess.DEVNULL)
         args = ["--input", str(layout)]
     rows = trivy(work, "image", args, "vuln")
     require(any(r["Class"] == "os-pkgs" and r["Packages"] for r in rows), f"{scope} lacks OS inventory")
     for row in rows:
         if row["Class"] == "os-pkgs":
             row["Target"] = row["Type"]
-    return collect(rows, scope, ref)
+    ssh_digest = None
+    if scope == "bundle-builder" and any(is_ssh_backport(v) for row in rows if row["Type"] == "debian"
+                                         for v in row.get("Vulnerabilities", [])):
+        if published:
+            run("skopeo", "--insecure-policy", "copy", transport, f"oci:{layout}:scan", stdout=subprocess.DEVNULL)
+        ssh_digest = ssh_executable_digest(layout, work)
+    return collect(rows, scope, ref, ssh_digest=ssh_digest)
 
 
 def scan_binaries(work, assets):
