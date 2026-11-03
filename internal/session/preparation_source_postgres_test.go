@@ -95,7 +95,7 @@ func checkPreparationSourceAuthorization(t *testing.T, p *preparationPublication
 	acknowledge()
 	// Once its placement resolves to another group, the producing group stops
 	// receiving the source.
-	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement, WorkerGroupID: &group}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, workergroup.Placement{Name: definition.DefaultPlacement, WorkerGroupID: &group}); err != nil {
 		t.Fatal(err)
 	}
 	hints, err = computer.ListPreparationSources(t.Context(), f.pool, *f.host())
@@ -105,7 +105,7 @@ func checkPreparationSourceAuthorization(t *testing.T, p *preparationPublication
 	if s, err := broker.PreparationSource(t.Context(), *f.host(), key); err == nil || len(s.Disk.Keys) > 0 {
 		t.Fatal("source delivered after its placement moved")
 	}
-	if err := workergroup.SetPlacement(t.Context(), f.pool, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
+	if err := workergroup.SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, workergroup.Placement{Name: definition.DefaultPlacement}); err != nil {
 		t.Fatal(err)
 	}
 	acknowledge()

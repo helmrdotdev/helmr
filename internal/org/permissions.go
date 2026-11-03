@@ -123,6 +123,37 @@ func lockAccessMembers(ctx context.Context, tx pgx.Tx, m *ManagingMember, permis
 	return m.Authorize(ctx, tx, permission)
 }
 
+// ScopedPermission is one permission an operation needs at one scope.
+type ScopedPermission struct {
+	Permission auth.Permission
+	Scope      auth.Scope
+}
+
+// Reauthorize locks the acting member and confirms, in the operation's
+// transaction, that it still holds every permission at its scope. The actor
+// then records all of the checks.
+func (m *ManagingMember) Reauthorize(ctx context.Context, tx pgx.Tx, required ...ScopedPermission) error {
+	if err := lockActiveMembers(ctx, tx, *m); err != nil {
+		return err
+	}
+	p, err := m.Current(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var checks []auth.PermissionEvaluation
+	allowed := true
+	for _, r := range required {
+		evaluated, ok := p.Evaluate(r.Permission, r.Scope)
+		checks = append(checks, evaluated...)
+		allowed = allowed && ok
+	}
+	m.Actor.Authorization = audit.PermissionAuthorization(checks, allowed)
+	if !allowed {
+		return errors.Join(ErrMemberManagementRequired, &auth.PermissionRefusal{Principal: p, Checks: checks})
+	}
+	return nil
+}
+
 func lockActiveMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets ...uuid.UUID) error {
 	ids := append([]uuid.UUID{m.MemberID}, targets...)
 	// Account roots precede membership locks, including the target being removed.

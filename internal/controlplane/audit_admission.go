@@ -61,6 +61,8 @@ func (s *Server) containmentRequest(r *http.Request) bool {
 		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/cancel",
 		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt",
 		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt",
+		"POST /api/worker-groups/{groupID}/disable",
+		"POST /api/worker-groups/{groupID}/pause",
 		"POST /v1/commands/{commandID}/cancel",
 		"POST /v1/secrets/{secret}/revoke",
 		"POST /v1/sessions/{sessionID}/cancel",

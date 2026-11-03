@@ -231,7 +231,7 @@ func TestAuditCatalogProjection(t *testing.T) {
 		audit.OwnershipChangedDetails{}, audit.AccessChangeDetails{After: &audit.AccessSnapshot{Name: "Audit test"}},
 		audit.MembershipDetails{MembershipID: id.String()}, audit.InvitationStateDetails{}, audit.InvitationCreatedDetails{ExpiresAt: &now},
 		audit.APIKeyChangedDetails{Before: audit.APIKeyPolicy{Name: "Before"}, After: audit.APIKeyPolicy{Name: "After"}},
-		audit.APIKeyIssuedDetails{Name: "Key"}, audit.PermissionsDetails{Permissions: []string{"chat:write"}}, audit.RetentionChangedDetails{},
+		audit.APIKeyIssuedDetails{Name: "Key"}, audit.PermissionsDetails{Permissions: []string{"chat:write"}}, audit.RetentionChangedDetails{}, audit.PlacementDetails{Name: "secure"},
 	}
 	for _, definition := range audit.Catalog() {
 		if definition.Audience != audit.OrganizationAudience {

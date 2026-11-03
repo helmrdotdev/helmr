@@ -18,7 +18,7 @@ func TestRotateGroupTokenKeepsEnrolledHostsRunning(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
 	host := f.start(t, cfg, "default", "i-rotation", validHostTemplate(t))
-	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID()); err != nil {
+	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
 	f.authenticate(t, AuthenticateHost, cfg, host.credential)
@@ -35,7 +35,7 @@ func TestRevokeGroupHostCredentialsFencesEveryLiveHost(t *testing.T) {
 	other := newSupplyFixtureGroup(t, f, "us-west-2")
 	untouched := other.start(t, cfg, "default", "i-other-group", validHostTemplate(t))
 
-	fenced, err := RevokeGroupHostCredentials(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID())
+	fenced, err := RevokeGroupHostCredentials(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestRevokeGroupHostCredentialsFencesEveryLiveHost(t *testing.T) {
 
 func TestRevokeGroupHostCredentialsRejectsMissingGroup(t *testing.T) {
 	f := newSupplyFixture(t)
-	if _, err := RevokeGroupHostCredentials(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), uuid.NewV7()); !errors.Is(err, ErrGroupNotFound) {
+	if _, err := RevokeGroupHostCredentials(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), uuid.NewV7()); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("error = %v, want ErrGroupNotFound", err)
 	}
 }
@@ -94,7 +94,7 @@ func TestRevokeGroupHostCredentialsRejectsMissingGroup(t *testing.T) {
 func newSupplyFixtureGroup(t *testing.T, f supplyFixture, regionID string) supplyFixture {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO regions (id, display_name) VALUES ($1, 'Second Worker Supply Test')`, regionID)
-	created, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), GroupInput{RegionID: regionID, Name: "supply-test"})
+	created, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), GroupInput{RegionID: regionID, Name: "supply-test"})
 	if err != nil {
 		t.Fatal(err)
 	}

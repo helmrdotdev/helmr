@@ -35,7 +35,7 @@ func newSupplyFixture(t *testing.T) supplyFixture {
 	}
 	q := db.New(database.Pool)
 	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO regions (id, display_name) VALUES ($1, 'Worker Supply Test')`, fixtureRegionID)
-	created, err := CreateGroup(t.Context(), database.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), GroupInput{RegionID: fixtureRegionID, Name: "supply-test"})
+	created, err := CreateGroup(t.Context(), database.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), GroupInput{RegionID: fixtureRegionID, Name: "supply-test"})
 	if err != nil {
 		t.Fatal(err)
 	}

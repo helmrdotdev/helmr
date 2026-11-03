@@ -197,6 +197,11 @@ Agents or all current and future Agents in that environment.
 | `assignments.create` | Organization | No | Assign a Role to an eligible subject and valid scope. This can delegate authority the caller does not personally hold, as current Access administration can. |
 | `assignments.update` | Organization | No | Change an assignment's Role/targets/eligible properties; same delegation power. |
 | `assignments.delete` | Organization | No | Remove an assignment. |
+| `worker_groups.read` | Organization | No | List/read the organization's worker groups and their hosts, including host status and drain blockers. No workload content. |
+| `worker_groups.manage` | Organization | No | Create the organization's worker groups, pause, activate, drain and disable them, issue enrollment tokens, revoke host credentials and fence hosts. Machines enrolled with an issued token run the work assigned to the group and can read it. |
+| `worker_groups.use` | Organization | No | Name any of the organization's worker groups as an environment placement's destination, together with `placements.update` in that environment. The group's machines then run that environment's work. |
+| `placements.read` | Environment | No | Read the environment's placements and the worker group each one names. |
+| `placements.update` | Environment | No | Assign or remove the environment's placements. Assigning one to an organization worker group also requires `worker_groups.use`. New Computers follow the change; existing Computers stay on their group. |
 
 API keys receive Role Grants in their own environment. They do not inherit their
 creator's Roles, Group membership or All members assignments. Every permission
@@ -233,7 +238,7 @@ they are not another user-managed collection.
 
 ## Ownership and initialization
 
-A new organization has fifteen standard Roles, no custom Groups and no All members
+A new organization has seventeen standard Roles, no custom Groups and no All members
 Grants. Its creator is an Owner and receives three explicit organization Grants:
 Access Administrator, Organization Structure Administrator and Auditor.
 

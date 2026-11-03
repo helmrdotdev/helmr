@@ -8,15 +8,18 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 // organizationSupply creates an active organization group named like the
 // deployment group in its region, with a sealed pool and one active host.
-func (f httpPostgresFixture) organizationSupply(t *testing.T, admin, regionID, name string) (group, pool, host string) {
+func (f httpPostgresFixture) organizationSupply(t *testing.T, regionID, name string) (group, pool, host string) {
 	t.Helper()
 	org := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Org', $2)`, org, org.String())
@@ -31,10 +34,13 @@ func (f httpPostgresFixture) organizationSupply(t *testing.T, admin, regionID, n
 		t.Fatal(err)
 	}
 	group = pgvalue.UUIDString(created.ID)
-	pool = decodeAdmin[struct {
-		ID string `json:"id"`
-	}](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+group+"/pools", admin,
-		fmt.Sprintf(`{"name":"run-current","expected_group_claim_version":%d}`, created.ClaimVersion)), http.StatusCreated).ID
+	// The operator's pool routes refuse organization groups; their pools come
+	// from enrollment.
+	_, sealed, err := workergroup.CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), pgvalue.MustUUIDValue(created.ID), "run-current", created.ClaimVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool = pgvalue.UUIDString(sealed.ID)
 	f.sealWorkerPool(t, group, pool)
 	f.readyWorkerHost(t, group, pool)
 	if err := f.pool.QueryRow(t.Context(), `SELECT id::text FROM worker_hosts WHERE worker_group_id=$1`, group).Scan(&host); err != nil {
@@ -54,8 +60,8 @@ func TestCapacityHTTPRefusesOrganizationCapacity(t *testing.T) {
 		fmt.Sprintf(`{"name":"run-current","expected_group_claim_version":%d}`, deployment.ClaimVersion)), http.StatusCreated).ID
 	f.sealWorkerPool(t, deployment.ID, deploymentPool)
 	f.readyWorkerHost(t, deployment.ID, deploymentPool)
-	group, pool, host := f.organizationSupply(t, admin, "aws-us-east-1", "default")
-	f.organizationSupply(t, admin, "aws-us-east-1", "organization-only")
+	group, pool, host := f.organizationSupply(t, "aws-us-east-1", "default")
+	f.organizationSupply(t, "aws-us-east-1", "organization-only")
 
 	state := func() string {
 		var snapshot string

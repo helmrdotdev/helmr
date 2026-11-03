@@ -60,6 +60,16 @@ type PermissionsDetails struct {
 	Permissions []string `json:"permissions"`
 }
 
+// PlacementDetails names the placement an environment edit changed and the
+// organization worker group it names afterwards; an empty WorkerGroupID is
+// deployment capacity.
+type PlacementDetails struct {
+	Name          string `json:"name"`
+	WorkerGroupID string `json:"worker_group_id,omitempty"`
+}
+
+func (PlacementDetails) auditDetails() {}
+
 type RetentionChangedDetails struct {
 	OldRetentionSeconds *int64 `json:"old_retention_seconds"`
 	NewRetentionSeconds *int64 `json:"new_retention_seconds"`
@@ -232,6 +242,9 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "slack_connection.authorized":
 		d, ok := details.(PermissionsDetails)
 		valid = ok && validPermissions(d.Permissions)
+	case "placement.assigned", "placement.removed":
+		d, ok := details.(PlacementDetails)
+		valid = ok && d.Name != "" && (d.WorkerGroupID == "" || action == "placement.assigned")
 	case "project.retention_changed":
 		d, ok := details.(RetentionChangedDetails)
 		valid = ok && validRetention(d.OldRetentionSeconds) && validRetention(d.NewRetentionSeconds)

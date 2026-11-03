@@ -58,36 +58,44 @@ func ReadGroupStatus(ctx context.Context, q db.Querier, groupID uuid.UUID) (Grou
 }
 
 // PauseGroup stops new admission onto the worker group's hosts.
-func PauseGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, policy, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusPaused)
+func PauseGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, policy, operator, groupID, expectedClaimVersion, db.WorkerGroupStatusPaused)
 }
 
 // ActivateGroup resumes admission onto the worker group's hosts.
-func ActivateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, policy, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusActive)
+func ActivateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, policy, operator, groupID, expectedClaimVersion, db.WorkerGroupStatusActive)
 }
 
 // BeginGroupDrain starts draining the worker group and clears its primary
 // pool after all physical custody and retained checkpoints have been resolved.
-func BeginGroupDrain(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, policy, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusDraining)
+func BeginGroupDrain(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, policy, operator, groupID, expectedClaimVersion, db.WorkerGroupStatusDraining)
 }
 
-// DisableGroup disables the worker group.
-func DisableGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
-	return transitionGroup(ctx, txb, policy, actor, groupID, expectedClaimVersion, db.WorkerGroupStatusDisabled)
+// DisableGroup disables a drained worker group together with its remaining
+// pools.
+func DisableGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
+	return transitionGroup(ctx, txb, policy, operator, groupID, expectedClaimVersion, db.WorkerGroupStatusDisabled)
 }
 
 // transitionGroup moves a worker group to target under the group's status
 // mutation lock. Replaying a transition with the claim version that fenced it
 // succeeds without applying it again.
-func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, expectedClaimVersion int64, target db.WorkerGroupStatus) (GroupStatus, error) {
+func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, expectedClaimVersion int64, target db.WorkerGroupStatus) (GroupStatus, error) {
 	if expectedClaimVersion <= 0 {
 		return GroupStatus{}, invalidInput("expected_claim_version must be positive")
+	}
+	if operator.safety && target != db.WorkerGroupStatusDisabled && target != db.WorkerGroupStatusPaused {
+		return GroupStatus{}, errSafetyOperation
 	}
 	var status GroupStatus
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
 		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
 			return fmt.Errorf("lock worker group lifecycle: %w", err)
 		}
@@ -119,6 +127,11 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 				return conflict("worker group retains physical custody, Computer checkpoints, Computers pinned to it or queued preparation")
 			}
 		}
+		if target == db.WorkerGroupStatusDisabled {
+			if err := disableRemainingPools(ctx, tx, policy, groupID); err != nil {
+				return err
+			}
+		}
 		row, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
 			WorkerGroupID: pgvalue.UUID(groupID), ExpectedClaimVersion: expectedClaimVersion, TargetStatus: target,
 		})
@@ -140,7 +153,7 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 			case "draining":
 				verb = "drain_started"
 			}
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group." + verb, TargetKind: "worker_group", TargetID: groupID}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_group." + verb, TargetKind: "worker_group", TargetID: groupID}); err != nil {
 				return err
 			}
 		}
@@ -150,6 +163,32 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 		return GroupStatus{}, err
 	}
 	return status, nil
+}
+
+// disableRemainingPools disables a draining group's remaining pools as part of
+// disabling the group, so an organization never manages pools itself. The
+// group transition then checks that no host or custody remains; when it
+// refuses, the transaction undoes these pool changes too.
+func disableRemainingPools(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, groupID uuid.UUID) error {
+	if _, err := db.New(tx).LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID)); err != nil {
+		return fmt.Errorf("lock worker group pools: %w", err)
+	}
+	rows, err := tx.Query(ctx, `UPDATE worker_pools p SET status='disabled',claim_version=p.claim_version+1,updated_at=now()
+ FROM worker_groups g WHERE g.id=p.worker_group_id AND g.id=$1 AND g.status='draining' AND p.status IN ('pending','active','draining')
+ RETURNING p.id`, groupID)
+	if err != nil {
+		return fmt.Errorf("disable worker group pools: %w", err)
+	}
+	pools, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return fmt.Errorf("disable worker group pools: %w", err)
+	}
+	for _, pool := range pools {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.disabled", TargetKind: "worker_pool", TargetID: pool}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ReadHostStatus returns the lifecycle state of the worker group's host with
@@ -178,10 +217,10 @@ func ReadHostStatus(ctx context.Context, q db.Querier, groupID uuid.UUID, resour
 	return status, nil
 }
 
-// MarkHostLost records an operator's confirmation that the worker group's host
-// with the provider resource ID is gone, under the group's status mutation
-// lock.
-func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, resourceID string, expectedClaimVersion int64) (HostStatus, error) {
+// MarkHostLost fences the worker group's host with the provider resource ID as
+// lost, under the group's status mutation lock. It is the operator's record
+// that the machine stopped holding work; it does not stop the machine.
+func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, resourceID string, expectedClaimVersion int64) (HostStatus, error) {
 	resourceID, err := hostResourceID(resourceID)
 	if err != nil {
 		return HostStatus{}, err
@@ -190,8 +229,15 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 		return HostStatus{}, invalidInput("expected_claim_version must be positive")
 	}
 	var status HostStatus
+	if operator.safety {
+		return HostStatus{}, errSafetyOperation
+	}
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
 		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
 			return fmt.Errorf("lock worker group lifecycle: %w", err)
 		}
@@ -212,7 +258,7 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 			status.CurrentEpoch = &row.CurrentEpoch.Int64
 		}
 		if row.TransitionApplied {
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
 				return err
 			}
 		}

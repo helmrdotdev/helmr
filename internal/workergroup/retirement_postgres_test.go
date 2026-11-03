@@ -190,7 +190,7 @@ func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
 func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 	f := newRetirementFixture(t)
 	cloneRestorePool(t, f)
-	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.Group, "host", 1)
+	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, "host", 1)
 	if err != nil || lost.Status != "lost" {
 		t.Fatalf("mark lost=%+v %v", lost, err)
 	}

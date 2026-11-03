@@ -109,6 +109,8 @@ test("operation labels distinguish requests, settlements and hold direction", ()
   expect(actionLabel("session.hold_released")).toBe("Released a hold on a session");
   expect(actionLabel("input.cancelled")).toBe("Cancelled question");
   expect(actionLabel("worker_group.activated")).toBe("Activated worker group");
+  expect(actionLabel("placement.assigned")).toBe("Assigned a placement");
+  expect(actionLabel("placement.removed")).toBe("Removed placement");
   expect(actionLabel("worker_host.drain_started")).toBe("Started draining worker host");
   expect(actionLabel("platform_admin.granted")).toBe("Granted Helmr administrator access");
   const fields = checkFields({ type: "user_attribute", expected: true, observed: true, result: "passed" }, names(), links);

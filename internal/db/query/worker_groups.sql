@@ -38,6 +38,13 @@ SELECT *
  WHERE sqlc.narg(region_id)::text IS NULL OR region_id = sqlc.narg(region_id)
  ORDER BY region_id, name ASC
  LIMIT sqlc.arg(row_limit);
+-- name: ListOrganizationWorkerGroups :many
+SELECT *
+  FROM worker_groups
+ WHERE owner_org_id = sqlc.arg(owner_org_id)
+   AND (sqlc.narg(region_id)::text IS NULL OR region_id = sqlc.narg(region_id))
+ ORDER BY region_id, name ASC
+ LIMIT sqlc.arg(row_limit);
 -- name: GetWorkerGroup :one
 SELECT * FROM worker_groups WHERE id = sqlc.arg(id);
 -- name: GetWorkerGroupStatus :one

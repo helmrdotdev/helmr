@@ -139,7 +139,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		s.writeOperationError(w, r, fmt.Errorf("invalid worker group request JSON: %w", err))
 		return
 	}
-	created, err := workergroup.CreateGroup(r.Context(), s.tx, s.auditPolicy, actor, workergroup.GroupInput{
+	created, err := workergroup.CreateGroup(r.Context(), s.tx, s.auditPolicy, workergroup.DeploymentOperator(actor), workergroup.GroupInput{
 		RegionID: request.RegionID, Name: request.Name, Description: request.Description,
 	})
 	if err != nil {
@@ -169,6 +169,9 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 	}
 	var row db.WorkerGroup
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
+		if _, err := workergroup.GetDeploymentGroup(r.Context(), db.New(tx), groupID); err != nil {
+			return err
+		}
 		var err error
 		row, err = workergroup.UpdateGroupDescription(r.Context(), db.New(tx), groupID, request.Description)
 		if err != nil {
@@ -184,24 +187,27 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) adminPauseWorkerGroup(w http.ResponseWriter, r *http.Request) {
-	s.adminTransitionWorkerGroup(w, r, workergroup.PauseGroup)
+	s.adminTransitionWorkerGroup(w, r, workergroup.PauseGroup, workergroup.PlatformSafetyOperator)
 }
 
 func (s *Server) adminActivateWorkerGroup(w http.ResponseWriter, r *http.Request) {
-	s.adminTransitionWorkerGroup(w, r, workergroup.ActivateGroup)
+	s.adminTransitionWorkerGroup(w, r, workergroup.ActivateGroup, workergroup.DeploymentOperator)
 }
 
 func (s *Server) adminDrainWorkerGroup(w http.ResponseWriter, r *http.Request) {
-	s.adminTransitionWorkerGroup(w, r, workergroup.BeginGroupDrain)
+	s.adminTransitionWorkerGroup(w, r, workergroup.BeginGroupDrain, workergroup.DeploymentOperator)
 }
 
+// Pausing, revoking host credentials and disabling also reach organization
+// groups, for platform safety; their records appear in the owning
+// organization's audit trail.
 func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request) {
-	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup)
+	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup, workergroup.PlatformSafetyOperator)
 }
 
-type groupTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Evidence, uuid.UUID, int64) (workergroup.GroupStatus, error)
+type groupTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, workergroup.Operator, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
-func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
+func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition, operator func(audit.Evidence) workergroup.Operator) {
 	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
@@ -216,7 +222,7 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 		s.writeOperationError(w, r, fmt.Errorf("invalid lifecycle request JSON: %w", err))
 		return
 	}
-	status, err := transition(r.Context(), s.tx, s.auditPolicy, actor, groupID, request.ExpectedClaimVersion)
+	status, err := transition(r.Context(), s.tx, s.auditPolicy, operator(actor), groupID, request.ExpectedClaimVersion)
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
 		return
@@ -240,7 +246,7 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	token, err := workergroup.RotateGroupToken(r.Context(), s.tx, s.auditPolicy, actor, groupID)
+	token, err := workergroup.RotateGroupToken(r.Context(), s.tx, s.auditPolicy, workergroup.DeploymentOperator(actor), groupID)
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
 		return
@@ -259,7 +265,7 @@ func (s *Server) adminRevokeWorkerGroupHostCredentials(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	fenced, err := workergroup.RevokeGroupHostCredentials(r.Context(), s.tx, s.auditPolicy, actor, groupID)
+	fenced, err := workergroup.RevokeGroupHostCredentials(r.Context(), s.tx, s.auditPolicy, workergroup.PlatformSafetyOperator(actor), groupID)
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
 		return
@@ -272,7 +278,7 @@ func (s *Server) adminRevokeWorkerGroupHostCredentials(w http.ResponseWriter, r 
 }
 
 func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
-	groupID, ok := adminGroupID(w, r)
+	groupID, ok := s.adminDeploymentGroupID(w, r)
 	if !ok {
 		return
 	}
@@ -294,7 +300,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, actorErr)
 		return
 	}
-	groupID, ok := adminGroupID(w, r)
+	groupID, ok := s.adminDeploymentGroupID(w, r)
 	if !ok {
 		return
 	}
@@ -318,7 +324,7 @@ func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Req
 		return
 	}
 	groupID, poolID, ok := adminWorkerPoolIDs(w, r)
-	if !ok {
+	if !ok || !s.adminDeploymentGroup(w, r, groupID) {
 		return
 	}
 	var request workergroup.PrimarySelectionRequest
@@ -357,7 +363,7 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	groupID, poolID, ok := adminWorkerPoolIDs(w, r)
-	if !ok {
+	if !ok || !s.adminDeploymentGroup(w, r, groupID) {
 		return
 	}
 	var request api.WorkerPoolLifecycleRequest
@@ -383,7 +389,7 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
 		ID: pgvalue.UUIDString(row.ID), RegionID: row.RegionID, Name: row.Name, Description: row.Description,
 		Status: row.Status, ClaimVersion: row.ClaimVersion,
-		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID),
+		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID), OwnerOrgID: adminOptionalUUID(row.OwnerOrgID),
 	}
 }
 
@@ -410,6 +416,23 @@ func adminGroupID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 		return uuid.Nil(), false
 	}
 	return parsed, true
+}
+
+// adminDeploymentGroupID parses the group ID of a route only deployment
+// groups serve. An organization's group reads as missing there; its owner is
+// fixed, so checking it before the operation is as strong as checking it
+// inside.
+func (s *Server) adminDeploymentGroupID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	groupID, ok := adminGroupID(w, r)
+	return groupID, ok && s.adminDeploymentGroup(w, r, groupID)
+}
+
+func (s *Server) adminDeploymentGroup(w http.ResponseWriter, r *http.Request, groupID uuid.UUID) bool {
+	if _, err := workergroup.GetDeploymentGroup(r.Context(), s.db, groupID); err != nil {
+		s.writeWorkerGroupError(w, r, err)
+		return false
+	}
+	return true
 }
 
 func adminWorkerPoolIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {

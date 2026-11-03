@@ -203,12 +203,12 @@ func TestPlacementsPostgres(t *testing.T) {
 		{Name: definition.DefaultPlacement, WorkerGroupID: &lab},
 		{Name: "Zeta", WorkerGroupID: &lab},
 	} {
-		if err := SetPlacement(t.Context(), f.pool, f.env, placement); err != nil {
+		if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, placement); err != nil {
 			t.Fatalf("SetPlacement(%s): %v", placement.Name, err)
 		}
 	}
 	// Reassigning keeps one row per name.
-	if err := SetPlacement(t.Context(), f.pool, f.env, Placement{Name: "secure", WorkerGroupID: &lab}); err != nil {
+	if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, Placement{Name: "secure", WorkerGroupID: &lab}); err != nil {
 		t.Fatal(err)
 	}
 	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: definition.DefaultPlacement, WorkerGroupID: &lab}, {Name: "edge"}, {Name: "secure", WorkerGroupID: &lab}})
@@ -216,22 +216,22 @@ func TestPlacementsPostgres(t *testing.T) {
 	// A group of another organization, another region or the deployment is
 	// never assignable.
 	for _, group := range []uuid.UUID{foreign, west, deployment, uuid.NewV7()} {
-		if err := SetPlacement(t.Context(), f.pool, f.env, Placement{Name: "secure", WorkerGroupID: &group}); !errors.Is(err, ErrPlacementGroup) {
+		if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, Placement{Name: "secure", WorkerGroupID: &group}); !errors.Is(err, ErrPlacementGroup) {
 			t.Fatalf("SetPlacement(group %s) error = %v, want ErrPlacementGroup", group, err)
 		}
 	}
-	if err := SetPlacement(t.Context(), f.pool, f.westEnv, Placement{Name: "secure", WorkerGroupID: &west}); err != nil {
+	if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.westEnv, Placement{Name: "secure", WorkerGroupID: &west}); err != nil {
 		t.Fatalf("same-region organization group: %v", err)
 	}
-	if err := SetPlacement(t.Context(), f.pool, f.otherEnv, Placement{Name: "secure", WorkerGroupID: &secure}); !errors.Is(err, ErrPlacementGroup) {
+	if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.otherEnv, Placement{Name: "secure", WorkerGroupID: &secure}); !errors.Is(err, ErrPlacementGroup) {
 		t.Fatalf("other organization's environment error = %v, want ErrPlacementGroup", err)
 	}
-	if err := SetPlacement(t.Context(), f.pool, uuid.NewV7(), Placement{Name: "secure"}); !errors.Is(err, ErrEnvironmentNotFound) {
+	if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, uuid.NewV7(), Placement{Name: "secure"}); !errors.Is(err, ErrEnvironmentNotFound) {
 		t.Fatalf("missing environment error = %v", err)
 	}
 	var input InputError
 	for _, name := range []string{"", "-edge", "with space", strings.Repeat("a", 129)} {
-		if err := SetPlacement(t.Context(), f.pool, f.env, Placement{Name: name}); !errors.As(err, &input) {
+		if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, Placement{Name: name}); !errors.As(err, &input) {
 			t.Fatalf("SetPlacement(%q) error = %v, want InputError", name, err)
 		}
 	}
@@ -240,14 +240,14 @@ func TestPlacementsPostgres(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE environment_placements SET worker_group_id=NULL WHERE environment_id=$1 AND name='default'`, f.env); pgErrorCode(err) != "23514" {
 		t.Fatalf("deployment default row error = %v, want check violation", err)
 	}
-	if err := SetPlacement(t.Context(), f.pool, f.env, Placement{Name: definition.DefaultPlacement}); err != nil {
+	if err := SetPlacement(t.Context(), f.pool, testPlacementEditor, f.env, Placement{Name: definition.DefaultPlacement}); err != nil {
 		t.Fatal(err)
 	}
-	removed, err := RemovePlacement(t.Context(), f.pool, f.env, "edge")
+	removed, err := RemovePlacement(t.Context(), f.pool, testPlacementEditor, f.env, "edge")
 	if err != nil || !removed {
 		t.Fatalf("RemovePlacement(edge) = %t, %v", removed, err)
 	}
-	if removed, err := RemovePlacement(t.Context(), f.pool, f.env, "edge"); err != nil || removed {
+	if removed, err := RemovePlacement(t.Context(), f.pool, testPlacementEditor, f.env, "edge"); err != nil || removed {
 		t.Fatalf("second RemovePlacement(edge) = %t, %v", removed, err)
 	}
 	assertPlacements(t, f, f.env, []Placement{{Name: "Zeta", WorkerGroupID: &lab}, {Name: definition.DefaultPlacement}, {Name: "secure", WorkerGroupID: &lab}})

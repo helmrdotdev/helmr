@@ -79,6 +79,7 @@ export type AuditDetails =
   | KeyPolicy | { before: KeyPolicy; after: KeyPolicy }
   | { permissions: string[] }
   | { old_retention_seconds: number | null; new_retention_seconds: number | null }
+  | { name: string; worker_group_id?: string }
   | { cause_agent_id?: string; reason?: string; before: AccessSnapshot | null; after: AccessSnapshot | null }
   | { cause_agent_id: string; reason: string }
   | { revision: number; selected_agent_edges_removed: number; ineffective_assignments_removed: number; mixed_assignments_preserved: number; slack_connection_disconnected: string | null; trigger_activations_sealed: number; sessions_cancelled: number }
