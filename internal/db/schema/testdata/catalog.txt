@@ -682,6 +682,16 @@ column platform_operators.id uuid not null
 column platform_operators.label text not null
 column platform_operators.updated_at timestamp with time zone not null default clock_timestamp()
 column platform_operators.webauthn_user_handle bytea not null
+column platform_release_objects.digest text not null
+column platform_release_objects.name text not null
+column platform_release_objects.size_bytes bigint not null
+column platform_release_objects.version text not null
+column platform_releases.index_digest text not null
+column platform_releases.index_size_bytes bigint not null
+column platform_releases.published_at timestamp with time zone not null default clock_timestamp()
+column platform_releases.signature_digest text not null
+column platform_releases.signature_size_bytes bigint not null
+column platform_releases.version text not null
 column projects.created_at timestamp with time zone not null default now()
 column projects.default_region_id text not null
 column projects.history_retention_seconds bigint default 2592000
@@ -1896,6 +1906,17 @@ constraint permission_groups u UNIQUE (org_id, id)
 constraint platform_operators c CHECK (btrim(label) <> ''::text)
 constraint platform_operators p PRIMARY KEY (id)
 constraint platform_operators u UNIQUE (webauthn_user_handle)
+constraint platform_release_objects c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint platform_release_objects c CHECK (name ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
+constraint platform_release_objects c CHECK (size_bytes > 0)
+constraint platform_release_objects f FOREIGN KEY (version) REFERENCES platform_releases(version)
+constraint platform_release_objects p PRIMARY KEY (version, name)
+constraint platform_releases c CHECK (index_digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint platform_releases c CHECK (index_size_bytes > 0)
+constraint platform_releases c CHECK (signature_digest ~ '^sha256:[0-9a-f]{64}$'::text)
+constraint platform_releases c CHECK (signature_size_bytes > 0)
+constraint platform_releases c CHECK (version ~ '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'::text)
+constraint platform_releases p PRIMARY KEY (version)
 constraint projects c CHECK (btrim(name) <> ''::text)
 constraint projects c CHECK (btrim(slug) <> ''::text)
 constraint projects c CHECK (history_retention_seconds > 0)
@@ -2530,6 +2551,7 @@ index CREATE INDEX login_sessions_expiry_active_idx ON public.login_sessions USI
 index CREATE INDEX login_sessions_user_active_idx ON public.login_sessions USING btree (user_id) WHERE (revoked_at IS NULL)
 index CREATE INDEX org_members_user_active ON public.org_members USING btree (user_id, org_id) WHERE (removed_at IS NULL)
 index CREATE INDEX permission_group_members_member ON public.permission_group_members USING btree (org_id, member_id, group_id)
+index CREATE INDEX platform_release_objects_digest_idx ON public.platform_release_objects USING btree (digest)
 index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id, api_key_id) WHERE (api_key_id IS NOT NULL)
 index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)
 index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, group_id) WHERE (group_id IS NOT NULL)

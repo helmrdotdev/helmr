@@ -11,8 +11,11 @@ import (
 )
 
 func runReleaseCommand(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "publish-hosts" {
+		return runReleaseHostsCommand(ctx, args[1:])
+	}
 	if len(args) == 0 || args[0] != "publish" {
-		return errors.New("release publish is the only release command")
+		return errors.New("release command must be publish or publish-hosts")
 	}
 	flags := flag.NewFlagSet("release publish", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)

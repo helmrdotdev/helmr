@@ -151,6 +151,30 @@ Worker role grants only lifecycle actions and the enrollment token secret. They 
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 
+## Publishing the release for workers
+
+Worker hosts install and update only from the release the Control Plane itself
+runs, and they fetch it only through the Control Plane: the deployment publishes
+that release to its platform store, and hosts read it through short-lived read
+grants. A host needs no route to GitHub or any other download origin.
+
+Publish each release once, after deploying its Control Plane:
+
+```sh
+control-plane release publish-hosts \
+  --store "$PLATFORM_STORE_URI" --version v1.2.3 \
+  --index release-index.json --signature release-index.sigstore.json \
+  --assets ./release-assets
+```
+
+The command verifies the index's Sigstore signature from the release workflow,
+checks every host asset (`worker-host-artifacts.tar` and `.json`,
+`runtime-artifacts.tar` and `.json`, `helmr-linux-amd64.tar.gz`) against it, puts
+them in the platform store and records the release. Hosts verify the same
+signature again before installing. A Control Plane built from source names no
+release, so its hosts install from the deployment's own build and never update
+themselves.
+
 ## Machine keys, token rotation and revocation
 
 At enrollment the worker generates an Ed25519 machine key and sends only its

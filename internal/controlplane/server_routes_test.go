@@ -196,6 +196,7 @@ GET /v1/triggers
 GET /v1/triggers/{triggerID}
 GET /v1/triggers/{triggerID}/occurrences
 GET /worker/v1/instance
+GET /worker/v1/release
 GET /worker/v1/updates
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
@@ -399,6 +400,7 @@ POST /worker/v1/instance/fence
 POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
 POST /worker/v1/preparation-sources
+POST /worker/v1/release/reads
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
 POST /worker/v1/sessions/attachment

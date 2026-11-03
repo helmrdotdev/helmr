@@ -311,6 +311,45 @@ func (b *StorageBroker) Read(ctx context.Context, host workergroup.HostPrincipal
 	return grant, nil
 }
 
+// releaseReadLifetime bounds a release read grant: long enough to download
+// one host asset.
+const releaseReadLifetime = 15 * time.Minute
+
+// ReleaseRead grants a worker host GET and HEAD of one object of a release
+// published for worker hosts. It needs no allocation: a host reads its release
+// to install or update itself, and the release holds no tenant data.
+func (b *StorageBroker) ReleaseRead(ctx context.Context, digest string) (StorageReadGrant, error) {
+	if !sha256sum.ValidDigest(digest) {
+		return StorageReadGrant{}, ErrInvalidInput
+	}
+	var published bool
+	if err := db.RunTx(ctx, b.database, func(tx pgx.Tx) error {
+		var err error
+		published, err = workergroup.IsReleaseObject(ctx, tx, digest)
+		return err
+	}); err != nil {
+		return StorageReadGrant{}, err
+	}
+	if !published {
+		return StorageReadGrant{}, ErrDenied
+	}
+	if _, err := b.platform.Stat(ctx, digest); errors.Is(err, os.ErrNotExist) {
+		return StorageReadGrant{}, ErrDenied
+	} else if err != nil {
+		return StorageReadGrant{}, SaveStorageUnavailable(err)
+	}
+	expires := time.Now().Add(releaseReadLifetime)
+	grant := StorageReadGrant{Digest: digest}
+	var err error
+	if grant.Get, err = b.platform.SignGet(ctx, digest, expires); err != nil {
+		return StorageReadGrant{}, SaveStorageUnavailable(err)
+	}
+	if grant.Head, err = b.platform.SignHead(ctx, digest, expires); err != nil {
+		return StorageReadGrant{}, SaveStorageUnavailable(err)
+	}
+	return grant, nil
+}
+
 // writeAuthority records a create-only upload receipt for this allocation. A
 // preparation source carries no write authority.
 func (b *StorageBroker) writeAuthority(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, record func(tx pgx.Tx, a storageAuthority) error) (storageAuthority, error) {
