@@ -1,11 +1,14 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -68,6 +71,12 @@ func TestCommandErrorMapsPublicOperations(t *testing.T) {
 		code      string
 		retryable bool
 	}{
+		{"create capacity unknown", commandCreateOperation, workergroup.ErrCapacityUnavailable, http.StatusServiceUnavailable, "execution_capacity_unavailable", true},
+		{"create shape incompatible", commandCreateOperation, workergroup.ErrCapacityIncompatible, http.StatusConflict, "execution_capacity_incompatible", false},
+		{"create capacity exhausted", commandCreateOperation, workergroup.ErrCapacityExhausted, http.StatusConflict, "execution_capacity_exhausted", false},
+		{"create settling", commandCreateOperation, computer.ErrExecutionSettling, http.StatusConflict, "execution_settling", true},
+		{"get capacity", commandGetOperation, workergroup.ErrCapacityUnavailable, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"cancel capacity", commandCancelOperation, workergroup.ErrCapacityExhausted, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
 		{"create invalid", commandCreateOperation, invalid, http.StatusBadRequest, "invalid_computer_command", false},
 		{"create too large", commandCreateOperation, large, http.StatusRequestEntityTooLarge, "computer_command_request_too_large", false},
 		{"create stdin", commandCreateOperation, fmt.Errorf("wrapped: %w", stdin), http.StatusRequestEntityTooLarge, "computer_stdin_too_large", false},
@@ -106,5 +115,25 @@ func TestCommandErrorMapsPublicOperations(t *testing.T) {
 				t.Fatalf("retryable = %v, want %v", retryable, test.retryable)
 			}
 		})
+	}
+}
+
+func TestCommandCreateLogsUnexpectedUnavailability(t *testing.T) {
+	var logs bytes.Buffer
+	server := Server{log: slog.New(slog.NewTextHandler(&logs, nil))}
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, tc := range []struct {
+		err    error
+		logged bool
+	}{
+		{workergroup.ErrCapacityUnavailable, false},
+		{errors.New("database unavailable"), true},
+	} {
+		logs.Reset()
+		response := httptest.NewRecorder()
+		server.writeCommandError(response, request, tc.err, commandCreateOperation)
+		if response.Code != http.StatusServiceUnavailable || strings.Contains(logs.String(), commandFailed[commandCreateOperation]) != tc.logged {
+			t.Fatalf("%v: status %d, log %q", tc.err, response.Code, logs.String())
+		}
 	}
 }
