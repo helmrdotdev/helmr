@@ -68,20 +68,22 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var group, token uuid.UUID
 		var consumedBy *uuid.UUID
+		live := true
 		var lookup pgx.Row
 		if enrollment.Token.SingleUse {
-			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, t.worker_host_id FROM worker_enrollment_tokens t JOIN worker_groups g ON g.id=t.worker_group_id
- WHERE t.token_hash=$1 AND t.expires_at > clock_timestamp() AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, t.worker_host_id, t.expires_at > clock_timestamp() FROM worker_enrollment_tokens t JOIN worker_groups g ON g.id=t.worker_group_id
+ WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
 		} else {
-			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, NULL::uuid FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, NULL::uuid, true FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
  WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
 		}
-		if err := lookup.Scan(&group, &token, &consumedBy); err != nil {
+		if err := lookup.Scan(&group, &token, &consumedBy, &live); err != nil {
 			return err
 		}
 		// Repeating an enrollment whose response was lost returns the same
 		// host: the machine still holds the token and the key it enrolled.
-		// A single-use token replays only for the host that consumed it.
+		// A single-use token replays only for the host that consumed it, also
+		// after it expired; it admits a new host only before then.
 		var replayHost, replayPool, replayKey uuid.UUID
 		err := tx.QueryRow(ctx, `SELECT h.id, h.worker_pool_id, k.id FROM worker_hosts h
  JOIN worker_host_keys k ON k.worker_host_id=h.id AND k.revoked_at IS NULL
@@ -94,7 +96,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("read enrollment replay: %w", err)
 		}
-		if consumedBy != nil {
+		if consumedBy != nil || !live {
 			return ErrInvalidEnrollmentToken
 		}
 		// Use a fresh statement snapshot after the group lock. An allocation

@@ -226,3 +226,65 @@ func TestWorkerEnrollmentRetriesWithTheStoredKey(t *testing.T) {
 		t.Fatalf("pending key left behind: %v", err)
 	}
 }
+
+// A pending key that the Control Plane already registered, for a host since
+// fenced or revoked, is replaced by a new key instead of wedging enrollment.
+func TestWorkerEnrollmentReplacesARegisteredPendingKey(t *testing.T) {
+	var keys [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request workerapi.EnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		keys = append(keys, request.PublicKey)
+		w.Header().Set("content-type", "application/json")
+		if len(keys) == 1 {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"worker_key_registered","message":"registered"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"worker_host_id":"host","worker_group_id":%q,"worker_pool_id":%q}`, uuid.NewV7(), uuid.NewV7())
+	}))
+	defer server.Close()
+	token, err := auth.GenerateEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte(token.Raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "machine", WorkerPoolName: "run"}
+	identity, err := resolveWorkerIdentity(t.Context(), cfg, filepath.Join(dir, "work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.key().Public().(ed25519.PublicKey)) {
+		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.key().Public())
+	}
+}
+
+// A pending key left by a crash after the identity was stored is removed, so
+// a later re-enrollment cannot reuse the identity's key.
+func TestWorkerIdentityRemovesALeftoverPendingKey(t *testing.T) {
+	workDir, jailerDir, err := resolveWorkerRecoveryRoots(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := workerIdentityPath(workDir, "")
+	stored := workerIdentityFile{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: workDir, JailerDir: jailerDir}
+	if err := writeWorkerIdentity(path, stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkerIdentity(pendingMachineKeyPath(path), workerIdentityFile{MachineKey: testMachineKey()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveWorkerIdentity(t.Context(), config.Worker{}, workDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(pendingMachineKeyPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("leftover pending key kept: %v", err)
+	}
+}

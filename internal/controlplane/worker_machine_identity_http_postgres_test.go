@@ -198,6 +198,11 @@ func TestEnrollmentReplayReturnsTheSameHost(t *testing.T) {
 	if replay := enroll(issued.EnrollmentToken, "laptop", key); replay != first {
 		t.Fatalf("single-use replay = %+v, want %+v", replay, first)
 	}
+	// The replay still works after the token expired; a new host does not.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_enrollment_tokens SET created_at=created_at-interval '2 hours', expires_at=clock_timestamp()-interval '1 second' WHERE token_hash=$1`, auth.HashCredential(issued.EnrollmentToken))
+	if replay := enroll(issued.EnrollmentToken, "laptop", key); replay != first {
+		t.Fatalf("single-use replay after expiry = %+v, want %+v", replay, first)
+	}
 	other, _ := newMachineKey(t)
 	assertAdminError(t, f.machineEnrollment(t, issued.EnrollmentToken, "laptop", other), http.StatusUnauthorized, "unauthorized")
 	assertAdminError(t, f.machineEnrollment(t, issued.EnrollmentToken, "desktop", key), http.StatusUnauthorized, "unauthorized")

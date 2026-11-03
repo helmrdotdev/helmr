@@ -54,6 +54,13 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 	}
 	path := workerIdentityPath(workDir, cfg.WorkerIdentityPath)
 	if identity, err := readWorkerIdentity(path); err == nil {
+		if _, err := os.Lstat(pendingMachineKeyPath(path)); err == nil {
+			// A pending key left by a crash after the identity was stored
+			// belongs to that identity and must not outlive it.
+			if err := withWorkerIdentityLock(path, func() error { return removePendingMachineKey(path) }); err != nil {
+				return workerIdentityFile{}, err
+			}
+		}
 		return identity, validate(identity)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerIdentityFile{}, err
@@ -61,6 +68,11 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 	var identity workerIdentityFile
 	if err := withWorkerIdentityLock(path, func() error {
 		if stored, err := readWorkerIdentity(path); err == nil {
+			// A pending key left by a crash after the identity was stored
+			// belongs to that identity and must not outlive it.
+			if err := removePendingMachineKey(path); err != nil {
+				return err
+			}
 			identity = stored
 			return validate(stored)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -82,9 +94,24 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 		if err != nil {
 			return err
 		}
-		registered, err := controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
-			ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName, PublicKey: private.Public().(ed25519.PublicKey),
-		})
+		enroll := func(key ed25519.PrivateKey) (workerapi.EnrollmentResponse, error) {
+			return controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
+				ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName, PublicKey: key.Public().(ed25519.PublicKey),
+			})
+		}
+		registered, err := enroll(private)
+		var refused *httpclient.Error
+		if errors.As(err, &refused) && refused.Code == "worker_key_registered" {
+			// The pending key was registered by an enrollment whose host has
+			// since been fenced or revoked; a key is never accepted twice.
+			if err := removePendingMachineKey(path); err != nil {
+				return err
+			}
+			if private, err = pendingMachineKey(path); err != nil {
+				return err
+			}
+			registered, err = enroll(private)
+		}
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
@@ -106,10 +133,7 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 		if err := writeWorkerIdentity(path, identity); err != nil {
 			return err
 		}
-		if err := os.Remove(pendingMachineKeyPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove pending worker machine key: %w", err)
-		}
-		return syncDirectory(filepath.Dir(path))
+		return removePendingMachineKey(path)
 	}); err != nil {
 		return workerIdentityFile{}, err
 	}
@@ -156,6 +180,9 @@ func removeWorkerIdentityIfMatch(path string, rejected workerIdentityFile) error
 		}
 		if current.WorkerHostID != rejected.WorkerHostID || !bytes.Equal(current.MachineKey, rejected.MachineKey) {
 			return nil
+		}
+		if err := removePendingMachineKey(path); err != nil {
+			return err
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove rejected worker identity: %w", err)
@@ -224,6 +251,16 @@ func readWorkerEnrollmentToken(path string) (string, error) {
 
 func pendingMachineKeyPath(identityPath string) string {
 	return identityPath + ".pending"
+}
+
+func removePendingMachineKey(identityPath string) error {
+	if err := os.Remove(pendingMachineKeyPath(identityPath)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("remove pending worker machine key: %w", err)
+	}
+	return syncDirectory(filepath.Dir(identityPath))
 }
 
 // pendingMachineKey returns the machine key an unfinished enrollment used, or
