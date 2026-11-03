@@ -47,7 +47,11 @@ export function AccountSecurity() {
     try { window.location.assign((await startSSOLink(organizationID)).redirect_url); }
     catch (cause) { setError(loadError(cause, "Could not start linking company SSO.", AUTH_MESSAGES)); setLinkingSSO(false); }
   };
-  const linkedHere = () => !!me.data?.org_id && (bindings.data?.bindings ?? []).some(binding => binding.organization_id === me.data?.org_id);
+  // The organization to link: the selected one when it offers SSO, or the
+  // selected one that requires SSO and so admits no browser without it yet.
+  const linkable = () => me.data?.org_id && me.data.org_sso ? { id: me.data.org_id, name: me.data.org_name ?? "this organization" }
+    : me.data?.organization_sso ? { id: me.data.organization_sso.id, name: me.data.organization_sso.name } : undefined;
+  const linkedHere = () => (bindings.data?.bindings ?? []).some(binding => binding.organization_id === linkable()?.id);
   const refresh = () => cache.invalidateQueries({ queryKey: ["account", "sign-in-methods"] });
   const linkGitHub = async () => {
     setLinking(true); setError("");
@@ -81,8 +85,8 @@ export function AccountSecurity() {
           </DataTable>
         )}
       </QueryState>
-      <Panel title="Company SSO" actions={<Show when={me.data?.org_id && me.data.org_sso && !linkedHere() ? me.data.org_id : undefined}>{organization => (
-        <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization())}>{linkingSSO() ? "Linking…" : `Link company SSO for ${me.data?.org_name ?? "this organization"}`}</button>
+      <Panel title="Company SSO" actions={<Show when={!linkedHere() ? linkable() : undefined}>{organization => (
+        <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization().id)}>{linkingSSO() ? "Linking…" : `Link company SSO for ${organization().name}`}</button>
       )}</Show>}>
         <p class={cx(ui.muted, "m-0")}>Organizations where you can sign in with your company identity provider. Linking needs a recent sign-in, and your company account's email can differ from your Helmr email.</p>
         <QueryState query={bindings} pending={<TableSkeleton label="Loading company SSO links" columns={SSO_COLUMNS} />} error={cause => loadError(cause, "Could not load your company SSO links.")}>

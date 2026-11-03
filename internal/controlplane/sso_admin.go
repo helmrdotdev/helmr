@@ -24,7 +24,8 @@ func ssoAdminError(err error) error {
 	switch {
 	case errors.As(err, &input), errors.Is(err, identity.ErrSSOSessionLifetime):
 		return badRequest(err)
-	case errors.Is(err, sso.ErrCandidateExists), errors.Is(err, sso.ErrUntested), errors.Is(err, sso.ErrNoRecoveryCodes):
+	case errors.Is(err, sso.ErrCandidateExists), errors.Is(err, sso.ErrUntested), errors.Is(err, sso.ErrNoRecoveryCodes),
+		errors.Is(err, sso.ErrEnforcerNotLinked), errors.Is(err, identity.ErrSSORecoveryUnneeded):
 		return conflict(codedError{code: "conflict", message: err.Error()})
 	case errors.Is(err, sso.ErrConnectionNotFound):
 		return notFound(err)

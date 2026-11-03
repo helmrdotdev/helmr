@@ -112,7 +112,7 @@ export function SSOSettings() {
                 <Field label="Single sign-on">
                   <Segmented label="Single sign-on" value={data().required ? "required" : "optional"} disabled={busy()}
                     options={[{ value: "optional", label: "Optional" }, { value: "required", label: "Required" }]}
-                    onChange={value => setRequiring(value === "required")} />
+                    onChange={value => { if (value === "required" && data().recovery_codes.remaining === 0) { setError("Generate recovery codes before requiring single sign-on."); return; } setRequiring(value === "required"); }} />
                 </Field>
                 <Field label="Browser session lifetime" hint="How long a single sign-on admits a browser before members sign in through the identity provider again. CLI logins and Slack links are not affected.">
                   <Segmented label="Browser session lifetime" value={lifetime(data().session_seconds)} disabled={busy()} options={LIFETIMES}
@@ -164,7 +164,7 @@ export function SSOSettings() {
                   <div class={ui.blockStack}>
                     <p class="m-0">Members reach the organization only through the identity provider; owners can also use a recovery code. CLI logins not approved through single sign-on and every Slack link sign out once, and members link Slack again.</p>
                     <p class="m-0">Disabling someone at the identity provider ends their browser access within the session lifetime. Their CLI logins and Slack links keep working until you remove or suspend them here.</p>
-                    <Show when={data().recovery_codes.remaining === 0}><Notice tone="warning">Generate recovery codes first.</Notice></Show>
+                    <p class="m-0">You must have signed in through the connection yourself. If every owner loses both identity provider access and all recovery codes, Helmr cannot restore access.</p>
                   </div>
                 </Show>
               </ConfirmDialog>

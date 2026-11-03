@@ -212,6 +212,11 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		default:
 			return ErrInvalidDeviceCode
 		}
+		// Issuance holds the organization lock that SSO policy and connection
+		// changes take, so a CLI session cannot be issued past their revocation.
+		if _, err = tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR SHARE`, device.OrgID); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, device.UserID); err != nil {
 			return err
 		}
@@ -277,8 +282,18 @@ func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principa
 		return "", err
 	}
 	id := uuid.NewV7()
+	// The ordinary source is recorded only while it would still admit the
+	// member; one before the member's sign-in cutoff would fail at once.
+	ordinary := p.IdentityID != uuid.Nil() || p.PasskeyID != uuid.Nil()
+	if ordinary {
+		var cutoff pgtype.Timestamptz
+		if err := tx.QueryRow(ctx, `SELECT reauthenticate_after FROM org_members WHERE id=$1`, p.MemberID).Scan(&cutoff); err != nil {
+			return "", err
+		}
+		ordinary = !cutoff.Valid || p.AuthenticatedAt.After(cutoff.Time)
+	}
 	var tag pgconn.CommandTag
-	if p.SSOProofID != uuid.Nil() && (p.SSORequired || (p.IdentityID == uuid.Nil() && p.PasskeyID == uuid.Nil())) {
+	if p.SSOProofID != uuid.Nil() && (p.SSORequired || !ordinary) {
 		tag, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,sso_proof_id,authenticated_at,expires_at)
  SELECT $1,user_id,'cli',$3,$4,$5,$6,$7,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash, p.SSOProofID, p.SSOAuthenticatedAt)
 	} else {

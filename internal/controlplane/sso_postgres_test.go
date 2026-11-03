@@ -384,13 +384,25 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	if codes.Code != http.StatusOK || strings.Count(codes.Body.String(), "-") != 40 {
 		t.Fatalf("recovery codes = %d %s", codes.Code, codes.Body)
 	}
+	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
+		t.Fatalf("require by an owner who has not signed in through the connection = %d %s", got.Code, got.Body)
+	}
+	// The owner links their own company account, then requires SSO.
+	if acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/account/sso/link", `{"organization_id":"`+orgID.String()+`"}`, nil); acs.Header().Get("Location") != "/sso/callback" {
+		t.Fatalf("self-link ACS = %s", acs.Header().Get("Location"))
+	}
+	if linked := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); linked.Code != http.StatusOK {
+		t.Fatalf("self-link finish = %d %s", linked.Code, linked.Body)
+	}
 	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
 		t.Fatalf("require = %d %s", got.Code, got.Body)
 	}
-	// The owner's browser holds no SSO proof yet, so the organization now asks for SSO.
-	if got := owner.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
+	// Another browser of the owner holds no SSO proof, so the organization asks for SSO.
+	other := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, ownerUser(t, f, orgID), uuid.Nil())}}}
+	if got := other.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
 		t.Fatalf("organization under required SSO = %d %s", got.Code, got.Body)
 	}
+	owner = other
 	var recovery struct {
 		Codes []string `json:"codes"`
 	}
@@ -411,4 +423,13 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	if got := memberBrowser.do(t, http.MethodGet, "/api/organization/sso", "", console, selected); got.Code != http.StatusForbidden {
 		t.Fatalf("member reads SSO settings = %d %s", got.Code, got.Body)
 	}
+}
+
+func ownerUser(t *testing.T, f httpPostgresFixture, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var user uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, orgID).Scan(&user); err != nil {
+		t.Fatal(err)
+	}
+	return user
 }

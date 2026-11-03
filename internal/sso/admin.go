@@ -13,10 +13,26 @@ import (
 )
 
 var (
-	ErrUntested         = errors.New("test the connection before activating it")
-	ErrNoRecoveryCodes  = errors.New("generate recovery codes before requiring single sign-on")
-	ErrRecoveryCodeUsed = errors.New("the recovery code is invalid or already used")
+	ErrUntested          = errors.New("test the connection before activating it")
+	ErrNoRecoveryCodes   = errors.New("generate recovery codes before requiring single sign-on")
+	ErrRecoveryCodeUsed  = errors.New("the recovery code is invalid or already used")
+	ErrEnforcerNotLinked = errors.New("sign in through the connection yourself before requiring single sign-on")
 )
+
+// BindingProof reports whether proof is a live proof from a binding rather than
+// a recovery code.
+func BindingProof(ctx context.Context, q db.DBTX, proof uuid.UUID) (bool, error) {
+	var linked bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM browser_sso_proofs WHERE id=$1 AND binding_id IS NOT NULL AND revoked_at IS NULL)`, proof).Scan(&linked)
+	return linked, err
+}
+
+// RevokeRecoveryProofs revokes the organization's recovery-code proofs when it
+// stops requiring SSO.
+func RevokeRecoveryProofs(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE org_id=$1 AND recovery_code_id IS NOT NULL AND revoked_at IS NULL`, org)
+	return err
+}
 
 // Fingerprint identifies a connection's current trust material. A test sign-in
 // marks a connection tested only if its material did not change meanwhile.

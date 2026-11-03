@@ -22,6 +22,13 @@ func LockSSOPolicy(ctx context.Context, tx pgx.Tx, org uuid.UUID) (SSOPolicy, er
 	return p, err
 }
 
+// ReadSSOPolicy reads the policy without locking it.
+func ReadSSOPolicy(ctx context.Context, tx pgx.Tx, org uuid.UUID) (SSOPolicy, error) {
+	var p SSOPolicy
+	err := tx.QueryRow(ctx, `SELECT sso_required,sso_session_seconds FROM organizations WHERE id=$1`, org).Scan(&p.Required, &p.SessionSeconds)
+	return p, err
+}
+
 // SetSSOPolicy writes the policy. The caller holds LockSSOPolicy and has
 // checked its preconditions.
 func SetSSOPolicy(ctx context.Context, tx pgx.Tx, org uuid.UUID, p SSOPolicy) error {

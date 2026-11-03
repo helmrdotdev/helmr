@@ -131,6 +131,11 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		return ErrUserLinkDenied
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		// Linking holds the organization lock that requiring SSO takes, so a
+		// link cannot be issued past that revocation.
+		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR SHARE`, org); err != nil {
+			return err
+		}
 		current, err := linkBrowserPrincipal(ctx, tx, actor, org, user)
 		if err != nil {
 			return err

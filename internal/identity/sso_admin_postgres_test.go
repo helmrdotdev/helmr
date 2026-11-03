@@ -99,9 +99,24 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	ordinaryBrowser := f.session(t, member, uuid.Nil())
 	_, token := f.invitation(t, f.org, "new@example.test", "member")
 
+	memberSession, _ := f.admits(t, ordinaryBrowser, uuid.Nil())
+	device := uuid.NewV7()
+	f.exec(t, `INSERT INTO device_codes(id,org_id,user_code_hash,device_code_hash,decided_by_member_id,user_id,browser_session_id,status,expires_at,poll_interval_seconds,decided_at)
+ VALUES($1,$2,uuid_send($1::uuid),uuid_send(gen_random_uuid()),$3,$4,$5,'approved',clock_timestamp()+interval '5 minutes',5,clock_timestamp())`, device, f.org, memberID, member, memberSession.SessionID)
+	if err := RecoverSSO(t.Context(), f.pool, f.cfg, memberSession, f.org, codes[0]); !errors.Is(err, ErrSSORecoveryUnneeded) {
+		t.Fatalf("recovery under optional SSO: %v", err)
+	}
+
 	result, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes})
 	if err != nil || !result.Policy.Required || result.RevokedCLISessions != 1 {
 		t.Fatalf("require = %+v, %v", result, err)
+	}
+	var status string
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM device_codes WHERE id=$1`, device).Scan(&status); err != nil || status != "denied" {
+		t.Fatalf("approved device code after requiring SSO = %q, %v", status, err)
+	}
+	if f.revoked(t, memberSession.SessionID) {
+		t.Fatal("requiring SSO signed a browser out")
 	}
 	if !f.revoked(t, ordinaryCLI) || f.revoked(t, ssoCLI) {
 		t.Fatal("requiring SSO must revoke CLI sessions approved without SSO and keep those approved with it")
@@ -271,6 +286,14 @@ func TestRecoveryCodeAdmitsAnOwnerWithoutTheIdentityProvider(t *testing.T) {
 	if err := RecoverSSO(t.Context(), f.pool, f.cfg, memberAccount, f.org, codes[1]); !errors.Is(err, org.ErrOwnerRoleRequired) {
 		t.Fatalf("a member used a recovery code: %v", err)
 	}
+	var credential uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT credential_id FROM audit_events WHERE action='sso.recovery_code_used'`).Scan(&credential); err != nil {
+		t.Fatal(err)
+	}
+	var code uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT recovery_code_id FROM browser_sso_proofs WHERE recovery_code_id IS NOT NULL`).Scan(&code); err != nil || credential != code {
+		t.Fatalf("recovery audit credential = %s, code = %s, %v", credential, code, err)
+	}
 	var notified int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM account_security_notifications WHERE event='sso.recovery_code_used'`).Scan(&notified); err != nil || notified == 0 {
 		t.Fatalf("owners notified = %d, %v", notified, err)
@@ -353,5 +376,89 @@ func TestSSOTestMarksOnlyUnchangedCandidate(t *testing.T) {
 	}
 	if p, err := f.admits(t, f.ownerRaw, f.org); err != nil || p.SSOProofID != uuid.Nil() {
 		t.Fatalf("owner after replacement = %+v, %v", p, err)
+	}
+}
+
+func (f ssoAdminFixture) approvedDevice(t *testing.T, user, member, session uuid.UUID) string {
+	t.Helper()
+	raw := "device-" + uuid.NewV7().String()
+	hash, err := auth.HashToken(f.cfg.deviceCodeKey, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewV7()
+	f.exec(t, `INSERT INTO device_codes(id,org_id,user_code_hash,device_code_hash,decided_by_member_id,user_id,browser_session_id,status,expires_at,poll_interval_seconds,decided_at)
+ VALUES($1,$2,uuid_send($1::uuid),$3,$4,$5,$6,'approved',clock_timestamp()+interval '5 minutes',5,clock_timestamp())`, id, f.org, hash, member, user, session)
+	return raw
+}
+
+// Requiring SSO holds the organization lock while it denies approved device
+// codes; an exchange waits for it and then finds its code denied.
+func TestCLIExchangeWaitsForRequiringSSO(t *testing.T) {
+	f := newSSOAdminFixture(t)
+	if _, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t)); err != nil {
+		t.Fatal(err)
+	}
+	member := f.user(t, "Member", "member@example.test")
+	memberID := f.member(t, f.org, member, "member")
+	memberRaw := f.session(t, member, uuid.Nil())
+	memberSession, _ := f.admits(t, memberRaw, uuid.Nil())
+	device := f.approvedDevice(t, member, memberID, memberSession.SessionID)
+
+	enforcement, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = enforcement.Rollback(t.Context()) }()
+	if _, err := org.LockSSOPolicy(t.Context(), enforcement, f.org); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ExchangeDeviceCode(t.Context(), f.pool, f.cfg, device)
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if _, _, err := requireSSORevocations(t.Context(), enforcement, f.org); err != nil {
+		t.Fatal(err)
+	}
+	if err := org.SetSSOPolicy(t.Context(), enforcement, f.org, org.SSOPolicy{Required: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforcement.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("a CLI session was issued past the switch to required SSO")
+	}
+	var cli int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM login_sessions WHERE channel='cli' AND user_id=$1`, member).Scan(&cli); err != nil || cli != 0 {
+		t.Fatalf("CLI sessions = %d, %v", cli, err)
+	}
+}
+
+func TestCLISourceSkipsOrdinaryProofBeforeTheCutoff(t *testing.T) {
+	f := newSSOAdminFixture(t)
+	// The owner's ordinary sign-in predates the cutoff; a later SSO sign-in
+	// admits the browser again.
+	f.exec(t, `UPDATE org_members SET reauthenticate_after=clock_timestamp() WHERE id=$1`, f.ownerMember)
+	session, _ := f.admits(t, f.ownerRaw, uuid.Nil())
+	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("admin-subject", "", time.Now().Add(time.Second)), f.ownerRaw, session.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	approver, err := f.admits(t, f.ownerRaw, f.org)
+	if err != nil || approver.SSOProofID == uuid.Nil() {
+		t.Fatalf("approver = %+v, %v", approver, err)
+	}
+	var raw string
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		var err error
+		raw, err = issueCLISession(t.Context(), tx, f.cfg, approver, uuid.NewV7())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cli, err := f.admits(t, raw, uuid.Nil()); err != nil || cli.SSOProofID == uuid.Nil() {
+		t.Fatalf("CLI principal = %+v, %v", cli, err)
 	}
 }

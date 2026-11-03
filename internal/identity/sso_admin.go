@@ -24,16 +24,25 @@ import (
 // recoveryCodeCount codes of 128 random bits make one recovery set.
 const recoveryCodeCount = 10
 
-var ErrSSOSessionLifetime = errors.New("the single sign-on session lifetime must be between 1 and 30 days")
+var (
+	ErrSSOSessionLifetime  = errors.New("the single sign-on session lifetime must be between 1 and 30 days")
+	ErrSSORecoveryUnneeded = errors.New("this organization does not require single sign-on; sign in normally")
+)
 
 // ssoOwnerTx runs an SSO administration change under the organization row
 // lock, for a live owner, with recent proof when recent is set.
+// A change (recent set) takes the organization row lock that issuing paths
+// share, and only a browser may make it; reads take no lock.
 func ssoOwnerTx(ctx context.Context, database db.TxBeginner, m org.ManagingMember, recent bool, fn func(tx pgx.Tx, current auth.Principal, policy org.SSOPolicy) error) error {
 	if m.AuditPolicy.Validate() != nil {
 		return errors.New("audit policy is required")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		policy, err := org.LockSSOPolicy(ctx, tx, m.OrgID)
+		read := org.ReadSSOPolicy
+		if recent {
+			read = org.LockSSOPolicy
+		}
+		policy, err := read(ctx, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
@@ -45,6 +54,9 @@ func ssoOwnerTx(ctx context.Context, database db.TxBeginner, m org.ManagingMembe
 			return org.ErrOwnerRoleRequired
 		}
 		if recent {
+			if current.Channel != "browser" {
+				return ErrAccountProofRequired
+			}
 			if err := auth.RequireRecentProof(current); err != nil {
 				return err
 			}
@@ -277,6 +289,9 @@ func DeleteSSOConnection(ctx context.Context, database db.TxBeginner, store *sso
 			if err := retireSSOBindings(ctx, tx, bindings); err != nil {
 				return err
 			}
+			if err := sso.RevokeRecoveryProofs(ctx, tx, m.OrgID); err != nil {
+				return err
+			}
 			if policy.Required {
 				policy.Required = false
 				if err := org.SetSSOPolicy(ctx, tx, m.OrgID, policy); err != nil {
@@ -341,6 +356,15 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 			if remaining == 0 {
 				return sso.ErrNoRecoveryCodes
 			}
+			// The owner enforcing SSO proves the connection works for them, so
+			// enforcement does not lock them out.
+			linked, err := sso.BindingProof(ctx, tx, current.SSOProofID)
+			if err != nil {
+				return err
+			}
+			if !linked {
+				return sso.ErrEnforcerNotLinked
+			}
 			if result.RevokedCLISessions, result.RevokedSlackLinks, err = requireSSORevocations(ctx, tx, m.OrgID); err != nil {
 				return err
 			}
@@ -374,12 +398,15 @@ func UnrequireSSO(ctx context.Context, database db.TxBeginner, policy auditpolic
 		if err := org.SetSSOPolicy(ctx, tx, orgID, after); err != nil {
 			return err
 		}
+		if err := sso.RevokeRecoveryProofs(ctx, tx, orgID); err != nil {
+			return err
+		}
 		return ssoPolicyEvent(ctx, tx, policy, actor, orgID, before, after, SSOPolicyResult{Policy: after})
 	})
 }
 
 func requireSSORevocations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (int, int, error) {
-	sessions, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE channel='cli' AND org_id=$1 AND sso_proof_id IS NULL AND revoked_at IS NULL`, orgID)
+	sessions, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE channel='cli' AND org_id=$1 AND sso_proof_id IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp()`, orgID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -479,8 +506,13 @@ func RecoverSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.
 		return ErrInvalidToken
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, err := org.LockSSOPolicy(ctx, tx, orgID); err != nil {
+		policy, err := org.LockSSOPolicy(ctx, tx, orgID)
+		if err != nil {
 			return err
+		}
+		// Recovery is for an organization that admits only SSO.
+		if !policy.Required {
+			return ErrSSORecoveryUnneeded
 		}
 		current, err := currentAccount(ctx, tx, p)
 		if err != nil {
@@ -496,9 +528,11 @@ func RecoverSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.
 			}
 			return err
 		}
-		if _, err := sso.UseRecoveryCode(ctx, tx, orgID, member, p.UserID, p.SessionID, hash); errors.Is(err, sso.ErrRecoveryCodeUsed) {
+		used, err := sso.UseRecoveryCode(ctx, tx, orgID, member, p.UserID, p.SessionID, hash)
+		if errors.Is(err, sso.ErrRecoveryCodeUsed) {
 			return ErrInvalidToken
-		} else if err != nil {
+		}
+		if err != nil {
 			return err
 		}
 		remaining, _, err := sso.RecoveryCodes(ctx, tx, orgID)
@@ -506,7 +540,7 @@ func RecoverSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.
 			return err
 		}
 		evidence := audit.FromPrincipal(current)
-		evidence.Authentication.CredentialKind, evidence.Authentication.CredentialID = "recovery_code", member
+		evidence.Authentication.CredentialKind, evidence.Authentication.CredentialID = "recovery_code", used
 		return recoveryEvent(ctx, tx, cfg.auditPolicy, evidence, orgID, "sso.recovery_code_used", "member", member, remaining)
 	})
 }
