@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -47,7 +48,7 @@ func serve(t *testing.T, objects map[string][]byte) *httptest.Server {
 }
 
 // The signed index verifies, and an asset whose bytes are not the ones the
-// index lists is refused before it is kept.
+// index lists is refused and not kept.
 func TestFetchVerifiesTheIndexAndEveryAsset(t *testing.T) {
 	index, err := os.ReadFile("../release/testdata/v0.2.9-release-index.json")
 	if err != nil {
@@ -59,12 +60,20 @@ func TestFetchVerifiesTheIndexAndEveryAsset(t *testing.T) {
 	}
 	indexObject, signatureObject := object(index), object(signature)
 	objects := map[string][]byte{indexObject.Digest: index, signatureObject.Digest: signature}
+	// Storage returns other bytes for the host artifacts' digest.
+	var listed struct {
+		Assets map[string]struct{ Digest string } `json:"assets"`
+	}
+	if err := json.Unmarshal(index, &listed); err != nil {
+		t.Fatal(err)
+	}
+	objects[listed.Assets["worker-host-artifacts.tar"].Digest] = []byte("not the released host artifacts")
 	server := serve(t, objects)
 	source := fakeSource{release: &workerapi.Release{Version: "v0.2.9", Index: indexObject, Signature: signatureObject}, server: server}
 	dir := t.TempDir()
 	_, err = Fetch(t.Context(), source, server.Client(), dir)
-	if err == nil || !strings.Contains(err.Error(), "worker-host-artifacts.tar") {
-		t.Fatalf("fetch with a missing asset: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "worker-host-artifacts.tar") || !strings.Contains(err.Error(), "not release object") {
+		t.Fatalf("fetch with corrupt asset bytes: %v", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Fatalf("an unverified asset was kept: %v", entries)

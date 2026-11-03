@@ -315,17 +315,17 @@ func (b *StorageBroker) Read(ctx context.Context, host workergroup.HostPrincipal
 // one host asset.
 const releaseReadLifetime = 15 * time.Minute
 
-// ReleaseRead grants a worker host GET and HEAD of one object of a release
-// published for worker hosts. It needs no allocation: a host reads its release
-// to install or update itself, and the release holds no tenant data.
-func (b *StorageBroker) ReleaseRead(ctx context.Context, digest string) (StorageReadGrant, error) {
+// ReleaseRead grants a worker host GET and HEAD of one object of the release
+// version, the Control Plane's own. It needs no allocation: a host reads its
+// release to install or update itself, and the release holds no tenant data.
+func (b *StorageBroker) ReleaseRead(ctx context.Context, version, digest string) (StorageReadGrant, error) {
 	if !sha256sum.ValidDigest(digest) {
 		return StorageReadGrant{}, ErrInvalidInput
 	}
 	var published bool
 	if err := db.RunTx(ctx, b.database, func(tx pgx.Tx) error {
 		var err error
-		published, err = workergroup.IsReleaseObject(ctx, tx, digest)
+		published, err = workergroup.IsReleaseObject(ctx, tx, version, digest)
 		return err
 	}); err != nil {
 		return StorageReadGrant{}, err

@@ -73,10 +73,10 @@ func GetPublishedRelease(ctx context.Context, q db.DBTX, version string) (Publis
 }
 
 // IsReleaseObject reports whether digest is the index, signature or a host
-// asset of a recorded release.
-func IsReleaseObject(ctx context.Context, q db.DBTX, digest string) (bool, error) {
+// asset of the recorded release version.
+func IsReleaseObject(ctx context.Context, q db.DBTX, version, digest string) (bool, error) {
 	var found bool
-	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM platform_release_objects WHERE digest=$1)
- OR EXISTS(SELECT 1 FROM platform_releases WHERE index_digest=$1 OR signature_digest=$1)`, digest).Scan(&found)
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM platform_release_objects WHERE version=$1 AND digest=$2)
+ OR EXISTS(SELECT 1 FROM platform_releases WHERE version=$1 AND (index_digest=$2 OR signature_digest=$2))`, version, digest).Scan(&found)
 	return found, err
 }

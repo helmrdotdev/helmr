@@ -40,7 +40,11 @@ func (s *Server) workerReleaseRead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid release read request JSON: %w", err))
 		return
 	}
-	grant, err := s.storageGrants.ReleaseRead(r.Context(), request.Digest)
+	if !release.ValidVersion(version.Version) {
+		writeError(w, notFound(errors.New("the Control Plane names no release")))
+		return
+	}
+	grant, err := s.storageGrants.ReleaseRead(r.Context(), version.Version, request.Digest)
 	if err != nil {
 		s.writeAllocationError(w, r, err)
 		return

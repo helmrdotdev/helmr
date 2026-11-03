@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -57,16 +58,23 @@ func runReleaseHostsCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
-	indexObject, err := publishReleaseFile(ctx, store, indexPath, "")
+	stage, err := os.MkdirTemp("", "helmr-release-hosts-")
 	if err != nil {
 		return err
 	}
-	signatureObject, err := publishReleaseFile(ctx, store, signaturePath, "")
+	defer os.RemoveAll(stage)
+	// The index and signature published are exactly the bytes verified above.
+	indexObject, err := publishReleaseBytes(ctx, store, stage, "index", index)
+	if err != nil {
+		return err
+	}
+	signatureObject, err := publishReleaseBytes(ctx, store, stage, "signature", signature)
 	if err != nil {
 		return err
 	}
 	for _, name := range release.HostAssets {
-		if _, err := publishReleaseFile(ctx, store, filepath.Join(assets, name), verified.Assets[name].Digest); err != nil {
+		asset := verified.Assets[name]
+		if err := publishReleaseAsset(ctx, store, stage, filepath.Join(assets, name), asset); err != nil {
 			return fmt.Errorf("publish %s: %w", name, err)
 		}
 	}
@@ -75,28 +83,53 @@ func runReleaseHostsCommand(ctx context.Context, args []string) error {
 	})
 }
 
-// publishReleaseFile puts one file in the platform store and returns its
-// object. A non-empty want is the digest the signed index lists for it.
-func publishReleaseFile(ctx context.Context, store *cass3.ImmutableStore, path, want string) (workergroup.ReleaseObject, error) {
+func publishReleaseBytes(ctx context.Context, store *cass3.ImmutableStore, stage, name string, data []byte) (workergroup.ReleaseObject, error) {
+	sum := sha256.Sum256(data)
+	object := release.Asset{Digest: "sha256:" + hex.EncodeToString(sum[:]), SizeBytes: int64(len(data))}
+	if err := publishStaged(ctx, store, stage, name, bytes.NewReader(data), object); err != nil {
+		return workergroup.ReleaseObject{}, err
+	}
+	return workergroup.ReleaseObject(object), nil
+}
+
+func publishReleaseAsset(ctx context.Context, store *cass3.ImmutableStore, stage, path string, signed release.Asset) error {
 	file, err := os.Open(path)
 	if err != nil {
-		return workergroup.ReleaseObject{}, err
+		return err
 	}
 	defer file.Close()
-	hash := sha256.New()
-	size, err := io.Copy(hash, file)
+	return publishStaged(ctx, store, stage, filepath.Base(path), file, signed)
+}
+
+// publishStaged copies source into a private file, checks it against the
+// signed descriptor, seals it read-only and publishes that copy, so what
+// reaches the store is exactly what was checked.
+func publishStaged(ctx context.Context, store *cass3.ImmutableStore, stage, name string, source io.Reader, signed release.Asset) error {
+	path := filepath.Join(stage, name)
+	staged, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return workergroup.ReleaseObject{}, err
+		return err
+	}
+	hash := sha256.New()
+	size, err := io.Copy(io.MultiWriter(staged, hash), io.LimitReader(source, signed.SizeBytes+1))
+	if closeErr := staged.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
 	}
 	digest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
-	if want != "" && digest != want {
-		return workergroup.ReleaseObject{}, fmt.Errorf("%s is %s, but the signed index lists %s", path, digest, want)
+	if digest != signed.Digest || size != signed.SizeBytes {
+		return fmt.Errorf("%s is %s (%d bytes), but the signed index lists %s (%d bytes)", name, digest, size, signed.Digest, signed.SizeBytes)
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return workergroup.ReleaseObject{}, err
+	if err := os.Chmod(path, 0o400); err != nil {
+		return err
 	}
-	if _, err := store.Publish(ctx, cas.Descriptor{Digest: digest, SizeBytes: size, MediaType: releaseObjectMediaType}, file); err != nil {
-		return workergroup.ReleaseObject{}, err
+	sealed, err := os.Open(path)
+	if err != nil {
+		return err
 	}
-	return workergroup.ReleaseObject{Digest: digest, SizeBytes: size}, nil
+	defer sealed.Close()
+	_, err = store.Publish(ctx, cas.Descriptor{Digest: digest, SizeBytes: size, MediaType: releaseObjectMediaType}, sealed)
+	return err
 }
