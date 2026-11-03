@@ -74,11 +74,7 @@ let
   # The user-facing toolchain is the unmodified official release, running on
   # the Debian base like any other program there.
   userTools = runCommand "helmr-bundle-builder-user-tools" { nativeBuildInputs = [ unzip ]; } ''
-    mkdir -p "$out/usr/local/bin" "$TMPDIR/node" "$TMPDIR/bun"
-    # Keep Git-over-SSH available with the pinned, fixed OpenSSH client.
-    for command in ssh scp sftp ssh-add ssh-agent ssh-keygen ssh-keyscan; do
-      ln -s ${openssh}/bin/"$command" "$out/usr/local/bin/$command"
-    done
+    mkdir -p "$out/usr/local" "$TMPDIR/node" "$TMPDIR/bun"
     tar -xJf ${nodeArchive} --strip-components=1 --directory "$TMPDIR/node"
     for directory in bin include lib share; do
       cp -a "$TMPDIR/node/$directory" "$out/usr/local/$directory"
@@ -107,6 +103,10 @@ dockerTools.buildLayeredImage {
     mkdir -p usr/local
     cp -a ${userTools}/usr/local/. usr/local/
     chmod -R u+w usr/local
+    mkdir -p usr/bin
+    for command in ssh scp sftp ssh-add ssh-agent ssh-keygen ssh-keyscan; do
+      ln -s ${openssh}/bin/"$command" "usr/bin/$command"
+    done
   '';
 
   config = {
