@@ -55,6 +55,7 @@ func TestCapacityHTTPRefusesOrganizationCapacity(t *testing.T) {
 	f.sealWorkerPool(t, deployment.ID, deploymentPool)
 	f.readyWorkerHost(t, deployment.ID, deploymentPool)
 	group, pool, host := f.organizationSupply(t, admin, "aws-us-east-1", "default")
+	f.organizationSupply(t, admin, "aws-us-east-1", "organization-only")
 
 	state := func() string {
 		var snapshot string
@@ -73,6 +74,12 @@ func TestCapacityHTTPRefusesOrganizationCapacity(t *testing.T) {
 	resolved := capacityJSON(t, f.request(t, http.MethodGet, "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&name=default", token, ""), http.StatusOK)
 	if resolved["id"] != deployment.ID {
 		t.Fatalf("resolved group = %#v, want the deployment group %s", resolved, deployment.ID)
+	}
+	onlyOrganization := f.request(t, http.MethodGet, "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&name=organization-only", token, "")
+	missingName := f.request(t, http.MethodGet, "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&name=missing", token, "")
+	assertAdminError(t, onlyOrganization, http.StatusNotFound, "not_found")
+	if onlyOrganization.Body.String() != missingName.Body.String() {
+		t.Fatalf("organization group resolve %s differs from missing %s", onlyOrganization.Body.String(), missingName.Body.String())
 	}
 
 	// Every route answers for an organization group or host exactly as for an
