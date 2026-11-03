@@ -44,7 +44,7 @@ in
 dockerTools.buildImage {
   name = "helmr-builder-base";
   fromImage = debian;
-  diskSize = 4096;
+  diskSize = 8192;
   buildVMMemorySize = 2048;
   runAsRoot = ''
     /bin/sh ${./provision-builder.sh} ${archives} ${upstream} ${packaging} ${./openssh-client-rekey.patch}
