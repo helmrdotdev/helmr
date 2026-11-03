@@ -10,7 +10,7 @@ TEMPLATE = Path(__file__).resolve().parents[1] / "templates/user-data.sh.tftpl"
 
 
 class TerminationLifecycle(unittest.TestCase):
-    def run_watch(self, state="InService", fail_credentials=False, expired=False, transient_imds=False):
+    def run_watch(self, state="InService", fail_credentials=False, expired=False, transient_imds=False, already_active=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "state").write_text(state)
@@ -18,6 +18,9 @@ class TerminationLifecycle(unittest.TestCase):
             (root / "clock").write_text("100" if expired else "0")
             if expired:
                 (root / "launch-started").write_text("0")
+            if already_active:
+                (root / "active").touch()
+                (root / "status-pending").touch()
             if fail_credentials:
                 (root / "credentials-fail").touch()
             if transient_imds:
@@ -51,12 +54,16 @@ case "$1" in
    echo credentials-failed >>"$TEST_ROOT/calls"
   else
    echo credentials-ready >>"$TEST_ROOT/calls"
-   touch "$TEST_ROOT/ready"
+   touch "$TEST_ROOT/active"
   fi;;
- is-active) test -f "$TEST_ROOT/ready";;
+ is-active) test -f "$TEST_ROOT/active";;
 esac
 ''',
-                "worker": '#!/bin/sh\necho worker-status >>"$TEST_ROOT/calls"\ntest -f "$TEST_ROOT/ready"\n',
+                "worker": '''#!/bin/sh
+echo worker-status >>"$TEST_ROOT/calls"
+test -f "$TEST_ROOT/active" || exit 1
+if [ -f "$TEST_ROOT/status-pending" ]; then rm "$TEST_ROOT/status-pending"; exit 1; fi
+''',
                 "aws": '''#!/bin/sh
 printf '%s\\n' "$*" >>"$TEST_ROOT/calls"
 case "$*" in
@@ -84,6 +91,14 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
         self.assertEqual(calls.count("systemctl start --no-block worker.service"), 2)
         self.assertLess(calls.index("credentials-failed"), calls.index("record-lifecycle-action-heartbeat"))
         self.assertLess(calls.index("credentials-ready"), calls.index("complete-lifecycle-action"))
+
+    def test_watch_polls_active_worker_until_ready_without_restarting_dependencies(self):
+        result, calls = self.run_watch(already_active=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("systemctl start", calls)
+        self.assertEqual(calls.count("worker-status"), 2)
+        self.assertLess(calls.index("record-lifecycle-action-heartbeat"), calls.rindex("worker-status"))
+        self.assertLess(calls.rindex("worker-status"), calls.index("complete-lifecycle-action"))
 
     def test_watch_retries_transient_metadata_without_starting_early(self):
         result, calls = self.run_watch(transient_imds=True)
@@ -147,7 +162,13 @@ target_lifecycle_state() { cat "$TEST_ROOT/state"; }
 '''+action+'\n'
             executables = {
                 "curl": '#!/bin/sh\ncase "$*" in *instance-id*) echo i-source;; *) echo \'{"region":"us-east-1"}\';; esac\n',
-                "systemctl": '#!/bin/sh\nprintf "systemctl %s\\n" "$*" >> "$TEST_ROOT/calls"\n',
+                "systemctl": '''#!/bin/sh
+printf 'systemctl %s\\n' "$*" >> "$TEST_ROOT/calls"
+case "$1" in
+ start) touch "$TEST_ROOT/active";;
+ is-active) test -f "$TEST_ROOT/active";;
+esac
+''',
                 "aws": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_ROOT/calls"\n',
                 "worker": '''#!/bin/sh
 printf '%s\\n' "$*" >> "$TEST_ROOT/calls"
