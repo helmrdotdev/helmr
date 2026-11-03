@@ -41,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/scripts/release/main.py restore --part '${{ matrix.part }}' --directory "$RUNNER_TEMP/part"
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
-        if: steps.frozen.outputs.restored != 'true'
+        if: steps.frozen.outputs.restored != 'true' || matrix.part == 'guest'
         with:
           github_access_token: ''
           extra_nix_config: |
@@ -68,6 +68,16 @@ jobs:
           retention-days: 7
           compression-level: 0
           if-no-files-found: error
+      - name: Scan the packaged guest kernel
+        if: matrix.part == 'guest'
+        run: nix run ./tools#guest-kernel-scan -- "$RUNNER_TEMP/part" --release "$RELEASE_TAG" --report "$RUNNER_TEMP/guest-kernel.json"
+      - name: Preserve guest kernel findings
+        if: "!cancelled() && matrix.part == 'guest'"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: guest-kernel-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/guest-kernel.json
+          if-no-files-found: ignore
   cli:
     needs: components
     runs-on: ubuntu-24.04

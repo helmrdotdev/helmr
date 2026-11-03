@@ -227,3 +227,26 @@ Consumers may reuse an existing AMI only after verifying that its complete image
 definition and artifact digests match those current-cohort bytes. The original AMI
 build identity stays intact. A byte mismatch, OS or recipe change requires a new
 image; unavailable or unverified images must not be accepted.
+
+## Guest kernel advisories
+
+The guest build inspects the ELF kernel from the runtime bundle, including restored
+preview parts. It verifies the kernel against the runtime manifest and compares
+the embedded Alpine virt version with the OSV Linux database. A database older
+than 48 hours, an unreadable kernel, an invalid manifest or an unparseable
+advisory used in the comparison fails the check.
+The JSON report lists upstream version matches. These are candidates for review:
+kernel configuration, reachable drivers and distribution backports can affect
+applicability. Preview and tag releases fail on every current match with a
+base CVSS score of 9.0 or higher and a published fix, including matches seen
+on the preceding release. When OSV ranges overlap across stable branches,
+the scanner prefers the fix range for the guest's branch. For an explicitly
+affected git tag without a matching numeric range, it reports newer upstream
+fixed versions. These can belong to another kernel series.
+
+The daily workflow checks the latest stable GitHub release, verifies its asset
+attestations and records the same report. A new release, newly blocking advisory
+or increased blocking score raises a workflow failure. An unchanged finding
+remains visible in the report. Missing prior evidence starts a fresh comparison.
+This check covers the shipped guest kernel. Worker host kernels are managed by
+the operator.
