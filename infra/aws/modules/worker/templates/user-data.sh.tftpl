@@ -38,7 +38,19 @@ cat /etc/helmr/worker-base.env >"$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
 
-token="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_token_secret_arn}' --query SecretString --output text)"
+secret_id='${worker_enrollment_token_secret_arn}'
+if /usr/bin/python3 -I -c 'import botocore.session' 2>/dev/null; then
+  token="$(/usr/bin/python3 -I - "$secret_id" <<'PYTHON'
+import sys
+from botocore.session import get_session
+
+client = get_session().create_client("secretsmanager")
+sys.stdout.write(client.get_secret_value(SecretId=sys.argv[1])["SecretString"])
+PYTHON
+)"
+else
+  token="$(aws secretsmanager get-secret-value --secret-id "$secret_id" --query SecretString --output text)"
+fi
 install -d -m 0700 -o root -g root /run/helmr
 token_tmp="$(mktemp /run/helmr/worker-enrollment-token.XXXXXX)"
 printf '%s' "$token" >"$token_tmp"

@@ -30,6 +30,10 @@ starts `worker` and a small lifecycle watcher. Every execution Worker allocates
 and mounts fixed runtime-cache and VM-arena ext4 filesystems. Deployment builds run in the
 user-owned local or CI builder, never on a managed Worker.
 
+The enrollment helper fetches the group token with the system Python botocore SDK when available.
+Images without that SDK use the AWS CLI. Both paths use the Worker role and the configured secret.
+A failed fetch leaves the enrollment service to retry.
+
 Before reading secrets or allocating runtime storage, launch user data invokes the AMI-owned root
 preparation helper with the configured EBS size. The helper verifies the root device, grows its
 partition, and resizes the ext4 filesystem. The preparation is idempotent when the parent Ubuntu
