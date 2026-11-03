@@ -357,6 +357,18 @@ func (s *Server) requireWorkerActivation(next http.Handler) http.Handler {
 	return s.requireWorkerHost(workergroup.AuthenticateActivatingHost, next)
 }
 
+// requireLiveWorker admits a registering, active or draining host, so a host
+// can read its release both to install itself and, later, to update itself.
+func (s *Server) requireLiveWorker(next http.Handler) http.Handler {
+	return s.requireWorkerHost(func(ctx context.Context, q db.Querier, cfg workergroup.HostAuthConfig, credential string, now time.Time) (workergroup.HostPrincipal, error) {
+		principal, err := workergroup.AuthenticateHost(ctx, q, cfg, credential, now)
+		if errors.Is(err, workergroup.ErrUnauthenticated) {
+			return workergroup.AuthenticateRecoveringHost(ctx, q, cfg, credential, now)
+		}
+		return principal, err
+	}, next)
+}
+
 func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
 	return s.requireWorkerHost(workergroup.AuthenticateRecoveringHost, next)
 }

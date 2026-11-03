@@ -2,6 +2,7 @@ package release
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -37,7 +38,11 @@ func TestVerifyRefusesAnythingElse(t *testing.T) {
 	index, signature := testRelease(t)
 	altered := bytes.Replace(index, []byte(`"v0.2.9"`), []byte(`"v0.2.8"`), 1)
 	for name, check := range map[string]func() error{
-		"altered index": func() error { _, err := Verify(altered, signature, "v0.2.8"); return err },
+		"altered index": func() error { _, err := Verify(altered, signature, "v0.2.9"); return err },
+		"stripped log entries": func() error {
+			_, err := Verify(index, stripTransparencyLog(t, signature), "v0.2.9")
+			return err
+		},
 		"other version": func() error { _, err := Verify(index, signature, "v0.2.8"); return err },
 		"preview signer": func() error {
 			_, err := Verify(index, signature, "v0.2.9-preview.gabcdef01.b2")
@@ -74,4 +79,24 @@ func TestParseRequiresEveryHostAsset(t *testing.T) {
 	if _, err := parse(missing, "v0.2.9"); err == nil {
 		t.Fatal("index without the runtime artifacts parsed")
 	}
+}
+
+// stripTransparencyLog removes the bundle's transparency log entries, which
+// verification requires.
+func stripTransparencyLog(t *testing.T, signature []byte) []byte {
+	t.Helper()
+	var bundle map[string]any
+	if err := json.Unmarshal(signature, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	material, ok := bundle["verificationMaterial"].(map[string]any)
+	if !ok {
+		t.Fatal("bundle has no verification material")
+	}
+	delete(material, "tlogEntries")
+	stripped, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return stripped
 }

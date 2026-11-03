@@ -158,7 +158,8 @@ runs, and they fetch it only through the Control Plane: the deployment publishes
 that release to its platform store, and hosts read it through short-lived read
 grants. A host needs no route to GitHub or any other download origin.
 
-Publish each release once, after deploying its Control Plane:
+Publish each release once, before deploying its Control Plane, so hosts
+never see a Control Plane whose release is not yet published:
 
 ```sh
 control-plane release publish-hosts \

@@ -76,7 +76,7 @@ func TestFetchVerifiesTheIndexAndEveryAsset(t *testing.T) {
 		t.Fatalf("fetch with corrupt asset bytes: %v", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-		t.Fatalf("an unverified asset was kept: %v", entries)
+		t.Fatalf("a failed fetch left files behind: %v", entries)
 	}
 
 	// An index the release workflow did not sign is refused outright.

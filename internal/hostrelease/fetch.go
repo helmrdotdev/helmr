@@ -32,7 +32,8 @@ type Source interface {
 	ReleaseRead(ctx context.Context, digest string) (workerapi.StorageReadGrant, error)
 }
 
-// Fetched is a verified release whose host assets are in Dir by name.
+// Fetched is a verified release whose host assets are in Dir by name, a new
+// directory under the one Fetch was given.
 type Fetched struct {
 	Index release.Index
 	Dir   string
@@ -60,9 +61,14 @@ func Fetch(ctx context.Context, source Source, client *http.Client, dir string) 
 	if err != nil {
 		return Fetched{}, err
 	}
+	dir, err = os.MkdirTemp(dir, "release-"+verified.Version+"-")
+	if err != nil {
+		return Fetched{}, err
+	}
 	for _, name := range release.HostAssets {
 		asset := verified.Assets[name]
 		if err := download(ctx, source, client, workerapi.ReleaseObject{Digest: asset.Digest, SizeBytes: asset.SizeBytes}, filepath.Join(dir, name)); err != nil {
+			_ = os.RemoveAll(dir)
 			return Fetched{}, fmt.Errorf("download %s: %w", name, err)
 		}
 	}

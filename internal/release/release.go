@@ -26,7 +26,10 @@ const (
 )
 
 // The Sigstore public-good trusted root, embedded so a machine verifies a
-// release with no network beyond the Control Plane and its storage.
+// release with no network beyond the Control Plane and its storage. It is the
+// trusted_root.json target of the Sigstore public-good TUF repository; replace
+// it with that target, verified through a TUF client, whenever Sigstore
+// announces new signing keys, and before the first release they sign.
 //
 //go:embed trusted_root.json
 var trustedRoot []byte
