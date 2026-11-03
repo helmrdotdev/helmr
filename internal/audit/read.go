@@ -77,8 +77,6 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[SSOConnectionDetails], true
 	case "sso.policy_updated":
 		return decodeDetail[SSOPolicyDetails], true
-	case "sso.recovery_codes_generated", "sso.recovery_code_used":
-		return decodeDetail[SSORecoveryDetails], true
 	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		return decodeDetail[MembershipDetails], true
 	case "platform_admin.granted":

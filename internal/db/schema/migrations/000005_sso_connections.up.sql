@@ -45,27 +45,11 @@ CREATE TABLE saml_consumed_assertions (
 );
 CREATE INDEX saml_consumed_assertions_expiry ON saml_consumed_assertions(expires_at);
 
--- Required SSO admits only the organization's SSO proof. sso_session_seconds is
--- how long a browser SSO proof admits its organization; NULL is 24 hours.
+-- Required SSO admits only the organization's SSO proof, except that owners
+-- keep their ordinary sign-in. sso_session_seconds is how long a browser SSO
+-- proof admits the organization.
 ALTER TABLE organizations ADD COLUMN sso_required boolean NOT NULL DEFAULT false;
-ALTER TABLE organizations ADD COLUMN sso_session_seconds integer CHECK (sso_session_seconds BETWEEN 86400 AND 2592000);
-
--- One-use owner recovery codes. Generating a set revokes the live one.
-CREATE TABLE org_recovery_codes (
- id uuid PRIMARY KEY,
- org_id uuid NOT NULL REFERENCES organizations(id),
- code_hash bytea NOT NULL UNIQUE,
- created_by_member_id uuid NOT NULL,
- created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
- used_at timestamptz,
- used_by_member_id uuid,
- revoked_at timestamptz,
- FOREIGN KEY (org_id,created_by_member_id) REFERENCES org_members(org_id,id),
- FOREIGN KEY (org_id,used_by_member_id) REFERENCES org_members(org_id,id),
- CHECK ((used_at IS NULL)=(used_by_member_id IS NULL)),
- UNIQUE (id,org_id)
-);
-CREATE INDEX org_recovery_codes_live ON org_recovery_codes(org_id) WHERE used_at IS NULL AND revoked_at IS NULL;
+ALTER TABLE organizations ADD COLUMN sso_session_seconds integer NOT NULL DEFAULT 86400 CHECK (sso_session_seconds BETWEEN 86400 AND 2592000);
 
 -- An IdP subject of one connection. It belongs to one user and is never
 -- reassigned.
@@ -101,23 +85,18 @@ CREATE UNIQUE INDEX org_sso_member_bindings_live_member ON org_sso_member_bindin
 -- The SSO proof one browser session holds for one organization. Admission
 -- computes its expiry from authenticated_at and the organization's lifetime.
 ALTER TABLE login_sessions ADD UNIQUE (id,user_id);
--- A proof comes from a binding or from an owner's recovery code.
 CREATE TABLE browser_sso_proofs (
  id uuid PRIMARY KEY,
  session_id uuid NOT NULL,
  org_id uuid NOT NULL,
  member_id uuid NOT NULL,
  user_id uuid NOT NULL,
- binding_id uuid,
- recovery_code_id uuid UNIQUE,
+ binding_id uuid NOT NULL,
  authenticated_at timestamptz NOT NULL,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  revoked_at timestamptz,
  FOREIGN KEY (session_id,user_id) REFERENCES login_sessions(id,user_id),
- FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id),
  FOREIGN KEY (binding_id,org_id,member_id,user_id) REFERENCES org_sso_member_bindings(id,org_id,member_id,user_id),
- FOREIGN KEY (recovery_code_id,org_id) REFERENCES org_recovery_codes(id,org_id),
- CHECK (num_nonnulls(binding_id,recovery_code_id)=1),
  UNIQUE (id,user_id)
 );
 CREATE UNIQUE INDEX browser_sso_proofs_live_session ON browser_sso_proofs(session_id,org_id) WHERE revoked_at IS NULL;
@@ -146,10 +125,7 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
   AND authenticated_at IS NOT NULL AND authenticated_at>=issued_at AND authenticated_at<=expires_at)
 );
 
-ALTER TABLE account_security_notifications DROP CONSTRAINT account_security_notifications_event_check;
-ALTER TABLE account_security_notifications ADD CONSTRAINT account_security_notifications_event_check CHECK (event IN ('identity.email_changed','identity.credential_added','identity.credential_removed','identity.access_revoked','identity.other_access_revoked','identity.account_repaired','sso.recovery_code_used','sso.recovery_codes_generated'));
-
 ALTER TABLE audit_events DROP CONSTRAINT audit_user_credential_kind;
-ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','device_code','email_code','passkey','slack_link','sso_assertion','recovery_code'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','device_code','email_code','passkey','slack_link','sso_assertion'));
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
-ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','device_code','email_code','passkey','slack_link','sso_assertion','recovery_code'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','device_code','email_code','passkey','slack_link','sso_assertion'));

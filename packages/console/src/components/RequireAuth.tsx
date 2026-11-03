@@ -67,7 +67,6 @@ function SSORequired(props: { organization: { id: string; slug: string; name: st
       <AuthLinks>
         <AuthLink href={withNext("/organizations", props.next)}>Choose another organization</AuthLink>
         <AuthLink href="/settings/security">Link your company account</AuthLink>
-        <AuthLink href={`/sso/recover?organization=${encodeURIComponent(props.organization.id)}`}>Owners: use a recovery code</AuthLink>
       </AuthLinks>
     </AuthWindow>
   );

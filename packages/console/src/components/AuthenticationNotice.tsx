@@ -9,7 +9,7 @@ import { Notice } from "../ui/Notice";
 import { cx, ui } from "../ui/styles";
 import { EmailSignIn } from "./EmailSignIn";
 
-type Request = { operator: boolean; reason?: string };
+type Request = { operator: boolean; reason?: string; code?: string };
 
 // Keep the original page and any form dialog mounted throughout authentication.
 // The interrupted action is never replayed: the person reviews and submits it again.
@@ -24,11 +24,13 @@ export function AuthenticationNotice() {
   return <Show when={request()} keyed>
     {value => value.operator
       ? <OperatorConfirmation reason={value.reason} onClose={close} />
-      : <AccountConfirmation reason={value.reason} onClose={close} />}
+      : <AccountConfirmation reason={value.reason} ordinary={value.code === "ordinary_sign_in_required"} onClose={close} />}
   </Show>;
 }
 
-function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined }) {
+// ordinary marks an account request that only an ordinary sign-in satisfies,
+// so company SSO is not offered for it.
+function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined; ordinary?: boolean }) {
   const queries = useQueryClient();
   const knownAccount = queries.getQueryData<Me>(["me"]);
   const [config] = createResource(getAuthConfig);
@@ -76,11 +78,9 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
   onMount(() => window.addEventListener("message", returned));
   onCleanup(() => { active = false; window.removeEventListener("message", returned); popup?.close(); });
 
-  // An organization that requires single sign-on accepts fresh SSO, or a
-  // passkey or email code; GitHub does not confirm there. Confirming through the
-  // identity provider leaves this page.
-  const organization = () => knownAccount?.org_sso ? knownAccount : undefined;
-  const methods = () => (config()?.methods ?? []).filter(method => method !== "sso" && !(method === "github" && knownAccount?.org_sso_required));
+  // A fresh SSO sign-in to the organization also confirms; it leaves this page.
+  const organization = () => knownAccount?.org_sso && !props.ordinary ? knownAccount : undefined;
+  const methods = () => (config()?.methods ?? []).filter(method => method !== "sso");
   const hasButtons = () => methods().includes("passkey") || methods().includes("github") || !!organization();
   const sso = () => void run(async () => {
     window.location.assign((await startSSO({ organization: organization()!.org_slug!, next: window.location.pathname + window.location.search, reauthenticate: true })).redirect_url);

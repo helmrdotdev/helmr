@@ -20,10 +20,8 @@ type OrganizationContextResponse struct {
 	CurrentMember  CurrentMember          `json:"current_member"`
 	Authentication AuthenticationContext  `json:"authentication"`
 	Onboarding     OrganizationOnboarding `json:"onboarding"`
-	// SSO reports whether the organization has an active company SSO
-	// connection, and SSORequired whether it admits only SSO.
-	SSO         bool `json:"sso"`
-	SSORequired bool `json:"sso_required"`
+	// SSO reports whether the organization has an active company SSO connection.
+	SSO bool `json:"sso"`
 }
 type CurrentMember struct {
 	ID               string            `json:"id"`

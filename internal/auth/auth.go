@@ -27,9 +27,6 @@ type Principal struct {
 	IdentityID        uuid.UUID
 	PasskeyID         uuid.UUID
 	AuthenticatedAt   time.Time
-	// ProofProvider is the provider of IdentityID ("email", "github"); empty
-	// for a passkey.
-	ProofProvider string
 	// SSOProofID and SSOAuthenticatedAt are the browser session's live SSO
 	// proof for OrgID, or the proof a CLI session was approved with.
 	// SSORequired reports that OrgID admits only its SSO proof.

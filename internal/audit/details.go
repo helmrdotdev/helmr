@@ -56,22 +56,15 @@ func (SSOConnectionDetails) auditDetails() {}
 
 // SSOPolicyDetails records a policy change and what requiring SSO revoked.
 type SSOPolicyDetails struct {
-	RequiredBefore       bool   `json:"required_before"`
-	RequiredAfter        bool   `json:"required_after"`
-	SessionSecondsBefore *int32 `json:"session_seconds_before,omitempty"`
-	SessionSecondsAfter  *int32 `json:"session_seconds_after,omitempty"`
-	RevokedCLISessions   int    `json:"revoked_cli_sessions"`
-	RevokedSlackLinks    int    `json:"revoked_slack_links"`
+	RequiredBefore       bool  `json:"required_before"`
+	RequiredAfter        bool  `json:"required_after"`
+	SessionSecondsBefore int32 `json:"session_seconds_before"`
+	SessionSecondsAfter  int32 `json:"session_seconds_after"`
+	RevokedCLISessions   int   `json:"revoked_cli_sessions"`
+	RevokedSlackLinks    int   `json:"revoked_slack_links"`
 }
 
 func (SSOPolicyDetails) auditDetails() {}
-
-// SSORecoveryDetails records how many recovery codes the live set has left.
-type SSORecoveryDetails struct {
-	Remaining int `json:"remaining"`
-}
-
-func (SSORecoveryDetails) auditDetails() {}
 
 func (MembershipDetails) auditDetails()      {}
 func (InvitationStateDetails) auditDetails() {}
@@ -250,9 +243,6 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "sso.policy_updated":
 		d, ok := details.(SSOPolicyDetails)
 		valid = ok && d.RevokedCLISessions >= 0 && d.RevokedSlackLinks >= 0
-	case "sso.recovery_codes_generated", "sso.recovery_code_used":
-		d, ok := details.(SSORecoveryDetails)
-		valid = ok && d.Remaining >= 0
 	case "sso.binding_created", "sso.binding_retired":
 		d, ok := details.(SSOBindingDetails)
 		valid = ok && d.ConnectionID != uuid.Nil() && d.IdentityID != uuid.Nil() && d.Subject != "" && len(d.Subject) <= 512

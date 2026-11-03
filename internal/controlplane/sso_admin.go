@@ -2,11 +2,9 @@ package controlplane
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"uuid"
@@ -25,9 +23,8 @@ func ssoAdminError(err error) error {
 	case errors.As(err, &input), errors.Is(err, identity.ErrSSOSessionLifetime):
 		return badRequest(err)
 	case errors.Is(err, sso.ErrEnforcerNotLinked):
-		return conflict(codedError{code: "conflict", message: "Link your own company account from Sign-in and security and sign in through it first, so requiring single sign-on does not lock you out."})
-	case errors.Is(err, sso.ErrCandidateExists), errors.Is(err, sso.ErrUntested), errors.Is(err, sso.ErrNoRecoveryCodes),
-		errors.Is(err, identity.ErrSSORecoveryUnneeded):
+		return conflict(codedError{code: "conflict", message: "Sign in through your company identity provider first, linking your account from Sign-in and security if needed, so you know the connection works for you."})
+	case errors.Is(err, sso.ErrCandidateExists), errors.Is(err, sso.ErrUntested):
 		return conflict(codedError{code: "conflict", message: err.Error()})
 	case errors.Is(err, sso.ErrConnectionNotFound):
 		return notFound(err)
@@ -83,7 +80,6 @@ func (s *Server) ssoStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.SSOStatusResponse{Required: status.Policy.Required, SessionSeconds: status.Policy.SessionSeconds,
 		Active: s.ssoConnectionView(status.Active), Candidate: s.ssoConnectionView(status.Candidate),
 		MembersLinked: status.MembersLinked, MembersTotal: status.MembersTotal,
-		RecoveryCodes:   api.SSORecoveryCodesStatus{Remaining: status.RecoveryRemaining, GeneratedAt: formatTimePtr(status.RecoveryGenerated)},
 		OIDCRedirectURL: s.appOrigin.JoinPath("/sso/oidc/callback").String()})
 }
 
@@ -189,8 +185,7 @@ func (s *Server) testSSOConnection(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, ssoAdminError(err))
 		return
 	}
-	s.writeSSOStart(w, r, c, browserAuthFlow{Kind: browserAuthSSOTest, MemberID: p.MemberID.String(), UserID: p.UserID.String(),
-		SSOFingerprint: base64.RawURLEncoding.EncodeToString(c.Fingerprint())}, false)
+	s.writeSSOStart(w, r, c, browserAuthFlow{Kind: browserAuthSSOTest, MemberID: p.MemberID.String(), UserID: p.UserID.String()}, false)
 }
 
 func (s *Server) activateSSOConnection(w http.ResponseWriter, r *http.Request) {
@@ -222,17 +217,14 @@ func (s *Server) updateSSOPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Required       *bool           `json:"required"`
-		SessionSeconds optionalSeconds `json:"session_seconds"`
+		Required       *bool  `json:"required"`
+		SessionSeconds *int32 `json:"session_seconds"`
 	}
 	if err := decodeRequestJSON(r, &request); err != nil {
 		s.writeOperationError(w, r, badRequest(fmt.Errorf("invalid SSO policy JSON: %w", err)))
 		return
 	}
-	change := identity.SSOPolicyChange{Required: request.Required}
-	if request.SessionSeconds.set {
-		change.SessionSeconds, change.ResetSessionSeconds = request.SessionSeconds.value, request.SessionSeconds.value == nil
-	}
+	change := identity.SSOPolicyChange{Required: request.Required, SessionSeconds: request.SessionSeconds}
 	result, err := identity.UpdateSSOPolicy(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), change)
 	if err != nil {
 		s.writeOperationError(w, r, ssoAdminError(err))
@@ -272,57 +264,4 @@ func (s *Server) unlinkSSOMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) generateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
-	if !s.ssoConfigured(w) {
-		return
-	}
-	codes, err := identity.GenerateRecoveryCodes(r.Context(), s.tx, s.identity, s.managingMember(principalFromContext(r.Context())))
-	if err != nil {
-		s.writeOperationError(w, r, ssoAdminError(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.SSORecoveryCodesResponse{Codes: codes})
-}
-
-// accountSSORecover lets an owner signed in with an ordinary method enter a
-// recovery code for an organization whose identity provider is unavailable.
-func (s *Server) accountSSORecover(w http.ResponseWriter, r *http.Request) {
-	var request api.AccountSSORecoverRequest
-	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid recovery JSON: %w", err)))
-		return
-	}
-	orgID, err := uuid.Parse(request.OrganizationID)
-	if err != nil {
-		writeError(w, badRequest(errors.New("organization_id is invalid")))
-		return
-	}
-	if err := identity.RecoverSSO(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), orgID, request.Code); err != nil {
-		s.writeOperationError(w, r, ssoAdminError(err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// optionalSeconds tells an absent session lifetime (keep it) from null (the
-// default) and a number of seconds.
-type optionalSeconds struct {
-	set   bool
-	value *int32
-}
-
-func (o *optionalSeconds) UnmarshalJSON(b []byte) error {
-	o.set = true
-	if string(b) == "null" {
-		return nil
-	}
-	v, err := strconv.ParseInt(string(b), 10, 32)
-	if err != nil {
-		return identity.ErrSSOSessionLifetime
-	}
-	seconds := int32(v)
-	o.value = &seconds
-	return nil
 }

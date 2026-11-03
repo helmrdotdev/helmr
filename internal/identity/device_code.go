@@ -269,9 +269,8 @@ func nullableUUID(id pgtype.UUID) uuid.UUID {
 }
 
 // issueCLISession starts a CLI session that records the approving browser
-// session's source and its time: the organization's SSO proof when SSO is
-// required or the browser has no ordinary source, otherwise its ordinary
-// sign-in.
+// session's source and its time: its live SSO proof for the organization when
+// it holds one, otherwise its ordinary sign-in.
 func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, device uuid.UUID) (string, error) {
 	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
 	if err != nil {
@@ -282,18 +281,8 @@ func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principa
 		return "", err
 	}
 	id := uuid.NewV7()
-	// The ordinary source is recorded only while it would still admit the
-	// member; one before the member's sign-in cutoff would fail at once.
-	ordinary := p.IdentityID != uuid.Nil() || p.PasskeyID != uuid.Nil()
-	if ordinary {
-		var cutoff pgtype.Timestamptz
-		if err := tx.QueryRow(ctx, `SELECT reauthenticate_after FROM org_members WHERE id=$1`, p.MemberID).Scan(&cutoff); err != nil {
-			return "", err
-		}
-		ordinary = !cutoff.Valid || p.AuthenticatedAt.After(cutoff.Time)
-	}
 	var tag pgconn.CommandTag
-	if p.SSOProofID != uuid.Nil() && (p.SSORequired || !ordinary) {
+	if p.SSOProofID != uuid.Nil() {
 		tag, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,sso_proof_id,authenticated_at,expires_at)
  SELECT $1,user_id,'cli',$3,$4,$5,$6,$7,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash, p.SSOProofID, p.SSOAuthenticatedAt)
 	} else {

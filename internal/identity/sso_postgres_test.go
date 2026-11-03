@@ -352,7 +352,42 @@ func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
 	if err := removal.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; !errors.Is(err, ErrSSONotEligible) {
+	// The refusal is recorded afterwards; under load that bounded capture may
+	// be what the caller sees. Either way the sign-in did not deadlock.
+	if err := <-done; !errors.Is(err, ErrSSONotEligible) && !errors.Is(err, audit.ErrCapture) {
 		t.Fatalf("sign-in concurrent with removal: %v", err)
+	}
+}
+
+// SSO administration locks the organization and then the connection; first
+// association takes the same order, so it waits for a retirement and is
+// refused instead of deadlocking with it.
+func TestSSOAssociationWaitsForConnectionRetirement(t *testing.T) {
+	f := newSSOFixture(t)
+	user := f.user(t, "Alice", "alice@example.test")
+	f.member(t, f.org, user, "member")
+	p, _ := f.admits(t, f.session(t, user, uuid.Nil()), uuid.Nil())
+	admin, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = admin.Rollback(t.Context()) }()
+	if _, err := org.LockSSOPolicy(t.Context(), admin, f.org); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, SSOLink{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "alice", Email: "alice@example.test", AuthenticatedAt: time.Now()})
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if _, err := admin.Exec(t.Context(), `UPDATE org_sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection); err != nil {
+		t.Fatalf("retirement blocked behind the association: %v", err)
+	}
+	if err := admin.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, sso.ErrConnectionNotFound) {
+		t.Fatalf("association concurrent with retirement: %v", err)
 	}
 }

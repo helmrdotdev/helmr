@@ -2,9 +2,7 @@ package sso
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"strings"
 	"time"
 	"uuid"
 
@@ -14,35 +12,14 @@ import (
 
 var (
 	ErrUntested          = errors.New("test the connection before activating it")
-	ErrNoRecoveryCodes   = errors.New("generate recovery codes before requiring single sign-on")
-	ErrRecoveryCodeUsed  = errors.New("the recovery code is invalid or already used")
-	ErrEnforcerNotLinked = errors.New("the enforcing owner has no linked single sign-on that the policy admits")
+	ErrEnforcerNotLinked = errors.New("the enforcing owner is not signed in through a linked company account")
 )
 
-// BindingProof reports whether proof is a live proof from a binding rather than
-// a recovery code.
+// BindingProof reports whether proof is a live browser SSO proof.
 func BindingProof(ctx context.Context, q db.DBTX, proof uuid.UUID) (bool, error) {
 	var linked bool
-	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM browser_sso_proofs WHERE id=$1 AND binding_id IS NOT NULL AND revoked_at IS NULL)`, proof).Scan(&linked)
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM browser_sso_proofs WHERE id=$1 AND revoked_at IS NULL)`, proof).Scan(&linked)
 	return linked, err
-}
-
-// RevokeRecoveryProofs revokes the organization's recovery-code proofs when it
-// stops requiring SSO.
-func RevokeRecoveryProofs(ctx context.Context, tx pgx.Tx, org uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE org_id=$1 AND recovery_code_id IS NOT NULL AND revoked_at IS NULL`, org)
-	return err
-}
-
-// Fingerprint identifies a connection's current trust material. A test sign-in
-// marks a connection tested only if its material did not change meanwhile.
-func (c Connection) Fingerprint() []byte {
-	h := sha256.New()
-	for _, part := range []string{c.Protocol, c.OIDC.Issuer, c.OIDC.ClientID, c.OIDC.ClientSecret, c.SAML.EntityID, c.SAML.SSOURL, strings.Join(c.SAML.Certificates, "\x00")} {
-		h.Write([]byte(part))
-		h.Write([]byte{0})
-	}
-	return h.Sum(nil)
 }
 
 // Candidate reads an organization's candidate connection without locking it.
@@ -143,51 +120,6 @@ func LinkedMembers(ctx context.Context, q db.DBTX, org uuid.UUID) ([]LinkedMembe
 		out = append(out, m)
 	}
 	return out, rows.Err()
-}
-
-// ReplaceRecoveryCodes revokes the organization's live recovery codes and
-// stores the new set's hashes.
-func ReplaceRecoveryCodes(ctx context.Context, tx pgx.Tx, org, creator uuid.UUID, hashes [][]byte) error {
-	if _, err := tx.Exec(ctx, `UPDATE org_recovery_codes SET revoked_at=clock_timestamp() WHERE org_id=$1 AND used_at IS NULL AND revoked_at IS NULL`, org); err != nil {
-		return err
-	}
-	for _, h := range hashes {
-		if _, err := tx.Exec(ctx, `INSERT INTO org_recovery_codes(id,org_id,code_hash,created_by_member_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), org, h, creator); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// RecoveryCodes reports how many of the live set remain and when it was made.
-func RecoveryCodes(ctx context.Context, q db.DBTX, org uuid.UUID) (int, *time.Time, error) {
-	var remaining int
-	var generated *time.Time
-	err := q.QueryRow(ctx, `SELECT count(*) FILTER (WHERE used_at IS NULL),max(created_at) FROM org_recovery_codes WHERE org_id=$1 AND revoked_at IS NULL`, org).Scan(&remaining, &generated)
-	if remaining == 0 {
-		generated = nil
-	}
-	return remaining, generated, err
-}
-
-// UseRecoveryCode consumes one live code of the organization and gives the
-// browser session a proof from it.
-func UseRecoveryCode(ctx context.Context, tx pgx.Tx, org, member, user, session uuid.UUID, hash []byte) (uuid.UUID, error) {
-	var code uuid.UUID
-	err := tx.QueryRow(ctx, `UPDATE org_recovery_codes SET used_at=clock_timestamp(),used_by_member_id=$3
- WHERE org_id=$1 AND code_hash=$2 AND used_at IS NULL AND revoked_at IS NULL RETURNING id`, org, hash, member).Scan(&code)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil(), ErrRecoveryCodeUsed
-	}
-	if err != nil {
-		return uuid.Nil(), err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1 AND org_id=$2 AND revoked_at IS NULL`, session, org); err != nil {
-		return uuid.Nil(), err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO browser_sso_proofs(id,session_id,org_id,member_id,user_id,recovery_code_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp())`,
-		uuid.NewV7(), session, org, member, user, code)
-	return code, err
 }
 
 func collectIDs(rows pgx.Rows, err error) ([]uuid.UUID, error) {

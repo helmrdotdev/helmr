@@ -155,12 +155,11 @@ column boot_seed_objects.org_id uuid not null
 column boot_seed_objects.role text not null
 column boot_seed_objects.size_bytes bigint not null
 column browser_sso_proofs.authenticated_at timestamp with time zone not null
-column browser_sso_proofs.binding_id uuid
+column browser_sso_proofs.binding_id uuid not null
 column browser_sso_proofs.created_at timestamp with time zone not null default clock_timestamp()
 column browser_sso_proofs.id uuid not null
 column browser_sso_proofs.member_id uuid not null
 column browser_sso_proofs.org_id uuid not null
-column browser_sso_proofs.recovery_code_id uuid
 column browser_sso_proofs.revoked_at timestamp with time zone
 column browser_sso_proofs.session_id uuid not null
 column browser_sso_proofs.user_id uuid not null
@@ -652,14 +651,6 @@ column org_members.removed_at timestamp with time zone
 column org_members.suspended_at timestamp with time zone
 column org_members.updated_at timestamp with time zone not null default now()
 column org_members.user_id uuid not null
-column org_recovery_codes.code_hash bytea not null
-column org_recovery_codes.created_at timestamp with time zone not null default clock_timestamp()
-column org_recovery_codes.created_by_member_id uuid not null
-column org_recovery_codes.id uuid not null
-column org_recovery_codes.org_id uuid not null
-column org_recovery_codes.revoked_at timestamp with time zone
-column org_recovery_codes.used_at timestamp with time zone
-column org_recovery_codes.used_by_member_id uuid
 column org_sso_connections.activated_at timestamp with time zone
 column org_sso_connections.created_at timestamp with time zone not null default clock_timestamp()
 column org_sso_connections.created_by_member_id uuid not null
@@ -694,7 +685,7 @@ column organizations.id uuid not null
 column organizations.name text not null
 column organizations.slug text not null
 column organizations.sso_required boolean not null default false
-column organizations.sso_session_seconds integer
+column organizations.sso_session_seconds integer not null default 86400
 column organizations.updated_at timestamp with time zone not null default now()
 column passkey_credentials.created_at timestamp with time zone not null default clock_timestamp()
 column passkey_credentials.credential_data jsonb not null
@@ -1363,7 +1354,7 @@ constraint account_repair_enrollments p PRIMARY KEY (id)
 constraint account_repair_enrollments u UNIQUE (capability_hash)
 constraint account_security_notifications c CHECK ((claim_id IS NULL) = (lease_until IS NULL))
 constraint account_security_notifications c CHECK (attempts >= 0)
-constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.other_access_revoked'::text, 'identity.account_repaired'::text, 'sso.recovery_code_used'::text, 'sso.recovery_codes_generated'::text]))
+constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.other_access_revoked'::text, 'identity.account_repaired'::text]))
 constraint account_security_notifications p PRIMARY KEY (id)
 constraint agent_definitions c CHECK ((runtime_mcp_policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(runtime_mcp_policy) = 'object'::text AND (runtime_mcp_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(runtime_mcp_policy -> 'rules'::text) = 'array'::text AND (runtime_mcp_policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
 constraint agent_definitions c CHECK (close_after_idle_ms > 0)
@@ -1418,7 +1409,7 @@ constraint audit_events c CHECK (authentication_origin = ANY (ARRAY['request'::t
 constraint audit_events c CHECK (authentication_result <> 'verified'::text OR credential_kind IS NOT NULL)
 constraint audit_events c CHECK (authentication_result = 'verified'::text OR credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)
 constraint audit_events c CHECK (authentication_result = ANY (ARRAY['verified'::text, 'failed'::text, 'absent'::text, 'not_attempted'::text]))
-constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text, 'recovery_code'::text]))
+constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text]))
 constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
 constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
@@ -1448,7 +1439,7 @@ constraint audit_events c audit_actor_count CHECK (num_nonnulls(actor_operator_i
 constraint audit_events c audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL OR actor_operator_id IS NOT NULL) = (actor_identity IS NOT NULL))
 constraint audit_events c audit_operator_identity CHECK (actor_operator_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'operator'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0 AND (credential_kind = ANY (ARRAY['login_session'::text, 'passkey'::text])) AND credential_id IS NOT NULL)
 constraint audit_events c audit_user_credential_id CHECK (actor_user_id IS NULL OR (credential_kind <> ALL (ARRAY['login_session'::text, 'device_code'::text])) OR credential_id IS NOT NULL)
-constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text, 'recovery_code'::text])))
+constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text])))
 constraint audit_events c audit_user_identity_shape CHECK (actor_user_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
 constraint audit_events c audit_user_provider CHECK (actor_user_id IS NULL OR credential_kind <> 'provider_assertion'::text OR identity_provider IS NOT NULL)
 constraint audit_events p PRIMARY KEY (id)
@@ -1499,14 +1490,10 @@ constraint boot_seed_objects f FOREIGN KEY (environment_id, boot_seed_build_id) 
 constraint boot_seed_objects f FOREIGN KEY (org_id, digest, size_bytes, availability_required) REFERENCES cas_blobs(org_id, digest, size_bytes, not_retired)
 constraint boot_seed_objects f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id)
 constraint boot_seed_objects p PRIMARY KEY (environment_id, boot_seed_build_id, role)
-constraint browser_sso_proofs c CHECK (num_nonnulls(binding_id, recovery_code_id) = 1)
 constraint browser_sso_proofs f FOREIGN KEY (binding_id, org_id, member_id, user_id) REFERENCES org_sso_member_bindings(id, org_id, member_id, user_id)
-constraint browser_sso_proofs f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint browser_sso_proofs f FOREIGN KEY (recovery_code_id, org_id) REFERENCES org_recovery_codes(id, org_id)
 constraint browser_sso_proofs f FOREIGN KEY (session_id, user_id) REFERENCES login_sessions(id, user_id)
 constraint browser_sso_proofs p PRIMARY KEY (id)
 constraint browser_sso_proofs u UNIQUE (id, user_id)
-constraint browser_sso_proofs u UNIQUE (recovery_code_id)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
@@ -1899,13 +1886,6 @@ constraint org_members f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CA
 constraint org_members p PRIMARY KEY (id)
 constraint org_members u UNIQUE (org_id, id)
 constraint org_members u UNIQUE (org_id, id, user_id)
-constraint org_recovery_codes c CHECK ((used_at IS NULL) = (used_by_member_id IS NULL))
-constraint org_recovery_codes f FOREIGN KEY (org_id) REFERENCES organizations(id)
-constraint org_recovery_codes f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id)
-constraint org_recovery_codes f FOREIGN KEY (org_id, used_by_member_id) REFERENCES org_members(org_id, id)
-constraint org_recovery_codes p PRIMARY KEY (id)
-constraint org_recovery_codes u UNIQUE (code_hash)
-constraint org_recovery_codes u UNIQUE (id, org_id)
 constraint org_sso_connections c CHECK (cardinality(saml_certificates) >= 1)
 constraint org_sso_connections c CHECK (octet_length(oidc_secret_ciphertext) >= 16)
 constraint org_sso_connections c CHECK (octet_length(oidc_secret_nonce) = 12)
@@ -2583,7 +2563,6 @@ index CREATE INDEX login_sessions_expiry_active_idx ON public.login_sessions USI
 index CREATE INDEX login_sessions_sso_proof ON public.login_sessions USING btree (sso_proof_id) WHERE ((sso_proof_id IS NOT NULL) AND (revoked_at IS NULL))
 index CREATE INDEX login_sessions_user_active_idx ON public.login_sessions USING btree (user_id) WHERE (revoked_at IS NULL)
 index CREATE INDEX org_members_user_active ON public.org_members USING btree (user_id, org_id) WHERE (removed_at IS NULL)
-index CREATE INDEX org_recovery_codes_live ON public.org_recovery_codes USING btree (org_id) WHERE ((used_at IS NULL) AND (revoked_at IS NULL))
 index CREATE INDEX permission_group_members_member ON public.permission_group_members USING btree (org_id, member_id, group_id)
 index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id, api_key_id) WHERE (api_key_id IS NOT NULL)
 index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)

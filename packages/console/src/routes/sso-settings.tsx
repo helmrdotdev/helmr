@@ -2,14 +2,15 @@ import { useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { AUTH_MESSAGES, errorMessage, loadError } from "../lib/error";
+import { getAuthConfig } from "../lib/auth";
 import { useMe } from "../lib/me";
 import {
-  activateSSOConnection, createSSOConnection, deleteSSOConnection, generateRecoveryCodes, getSSOStatus, listSSOMembers,
+  activateSSOConnection, createSSOConnection, deleteSSOConnection, getSSOStatus, listSSOMembers,
   testSSOConnection, unlinkSSOMember, updateSSOConnection, updateSSOPolicy, type SSOConnection, type SSOConnectionInput, type SSOMember,
 } from "../lib/sso";
 import { CodeBlock } from "../ui/CodeBlock";
 import { DataTable, RowActions, TableCount } from "../ui/DataTable";
-import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
+import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { ChoiceCards, Field, SecretInput, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
@@ -29,14 +30,15 @@ const LIFETIMES = [
 ] as const;
 
 // Owners connect the organization to its identity provider, test the
-// connection, turn it on as optional, generate recovery codes and may then
-// require it. Every change asks for a recent sign-in.
+// connection, turn it on as optional and may then require it. Every change asks
+// for a recent sign-in.
 export function SSOSettings() {
   const me = useMe();
   const cache = useQueryClient();
   const [params] = useSearchParams();
   const isOwner = () => me.data?.is_owner === true;
   const status = createQuery(() => ({ queryKey: ["sso", "status"], queryFn: getSSOStatus, enabled: isOwner() }));
+  const config = createQuery(() => ({ queryKey: ["auth-config"], queryFn: getAuthConfig }));
   const members = createQuery(() => ({ queryKey: ["sso", "members"], queryFn: listSSOMembers, enabled: isOwner() && !!status.data?.active }));
   const tested = typeof params["tested"] === "string";
   const failed = typeof params["sso_error"] === "string" ? AUTH_MESSAGES[params["sso_error"]] ?? AUTH_MESSAGES["authentication_invalid"]! : "";
@@ -48,8 +50,6 @@ export function SSOSettings() {
   const [activating, setActivating] = createSignal<SSOConnection>();
   const [disabling, setDisabling] = createSignal(false);
   const [requiring, setRequiring] = createSignal<boolean>();
-  const [generating, setGenerating] = createSignal(false);
-  const [codes, setCodes] = createSignal<string[]>();
   const [unlinking, setUnlinking] = createSignal<SSOMember>();
   const [busy, setBusy] = createSignal(false);
   const refresh = () => Promise.all([cache.invalidateQueries({ queryKey: ["sso"] }), cache.invalidateQueries({ queryKey: ["me"] })]);
@@ -58,13 +58,16 @@ export function SSOSettings() {
     try { await fn(); } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
   };
   const test = (connection: SSOConnection) => run(async () => { window.location.assign((await testSSOConnection(connection.id)).redirect_url); });
-  const lifetime = (seconds: number | null) => String(seconds ?? 86400) as (typeof LIFETIMES)[number]["value"];
+  const lifetime = (seconds: number) => String(seconds) as (typeof LIFETIMES)[number]["value"];
   return <>
     <PageHeader title="Single sign-on" subtitle="Members sign in through your company identity provider. Other sign-in methods keep working unless you require single sign-on." />
     <Show when={isOwner()} fallback={<Show when={!me.isPending}><DeniedState message="Only owners can manage single sign-on." /></Show>}>
       <div class={ui.sectionStack}>
         <Show when={notice()}><Notice tone="success" onDismiss={() => setNotice("")}>{notice()}</Notice></Show>
         <Show when={error()}><Notice tone="danger" onDismiss={() => setError("")}>{error()}</Notice></Show>
+        <Show when={config.data && !config.data.email_delivery}>
+          <Notice tone="warning">Email sign-in is not available on this server. People who have not used Helmr before cannot link a company account on their first single sign-on; they sign in another way first and link it from Sign-in and security.</Notice>
+        </Show>
         <QueryState query={status} pending={<LinesSkeleton label="Loading single sign-on" />} error={cause => loadError(cause, "Could not load single sign-on.")}>
           {data => <>
             <Panel title="Connection" actions={<Show when={!data().candidate}>
@@ -74,7 +77,7 @@ export function SSOSettings() {
                 {active => <>
                   <ConnectionFacts connection={active()} />
                   <p class={cx(ui.muted, "m-0")}>
-                    {data().required ? "Required: members sign in only through the identity provider; owners can also use a recovery code." : "Optional: members can sign in through the identity provider or as before."}
+                    {data().required ? "Required: members sign in only through the identity provider; owners can also sign in as before." : "Optional: members can sign in through the identity provider or as before."}
                     {" "}{data().members_linked} of {data().members_total} members are linked.
                   </p>
                   <div class={ui.buttonGroup}>
@@ -100,23 +103,16 @@ export function SSOSettings() {
               )}
             </Show>
 
-            <Panel title="Recovery codes" actions={<button type="button" class={ui.compactButton} onClick={() => setGenerating(true)}>{data().recovery_codes.remaining > 0 ? "Generate new codes" : "Generate codes"}</button>}>
-              <p class={cx(ui.muted, "m-0")}>If your identity provider is unavailable, an owner who signs in another way can enter one code to reach the organization. Each code works once. Keep at least one owner with a sign-in method that does not depend on company email, such as a passkey.</p>
-              <Show when={data().recovery_codes.generated_at} fallback={<p class="m-0 text-body">No recovery codes yet. Requiring single sign-on needs them.</p>}>
-                {generated => <p class="m-0 text-body">{data().recovery_codes.remaining} of 10 codes left, generated <RelativeTime value={generated()} />.</p>}
-              </Show>
-            </Panel>
-
             <Show when={data().active}>
               <Panel title="Policy">
                 <Field label="Single sign-on">
                   <Segmented label="Single sign-on" value={data().required ? "required" : "optional"} disabled={busy()}
                     options={[{ value: "optional", label: "Optional" }, { value: "required", label: "Required" }]}
-                    onChange={value => { if (value === "required" && data().recovery_codes.remaining === 0) { setError("Generate recovery codes before requiring single sign-on."); return; } setRequiring(value === "required"); }} />
+                    onChange={value => setRequiring(value === "required")} />
                 </Field>
                 <Field label="Browser session lifetime" hint="How long a single sign-on admits a browser before members sign in through the identity provider again. CLI logins and Slack links are not affected.">
                   <Segmented label="Browser session lifetime" value={lifetime(data().session_seconds)} disabled={busy()} options={LIFETIMES}
-                    onChange={value => void run(async () => { await updateSSOPolicy({ session_seconds: value === "86400" ? null : Number(value) }); await refresh(); setNotice("Session lifetime updated."); })} />
+                    onChange={value => void run(async () => { await updateSSOPolicy({ session_seconds: Number(value) }); await refresh(); setNotice("Session lifetime updated."); })} />
                 </Field>
               </Panel>
 
@@ -162,9 +158,9 @@ export function SSOSettings() {
                 onConfirm={async () => { const result = await updateSSOPolicy({ required: requiring()! }); await refresh(); setNotice(requiring() ? `Single sign-on is required. ${result.revoked_cli_sessions} CLI logins and ${result.revoked_slack_links} Slack links were signed out.` : "Single sign-on is optional."); }}>
                 <Show when={requiring()} fallback={<>Members can sign in as before again. Nothing is signed out.</>}>
                   <div class={ui.blockStack}>
-                    <p class="m-0">Members reach the organization only through the identity provider; owners can also use a recovery code. CLI logins not approved through single sign-on and every Slack link sign out once, and members link Slack again.</p>
+                    <p class="m-0">Members reach the organization only through the identity provider. Owners can still sign in as before, so an identity provider outage cannot lock the organization out. CLI logins not approved through single sign-on and every Slack link sign out once, and members link Slack again.</p>
                     <p class="m-0">Disabling someone at the identity provider ends their browser access within the session lifetime. Their CLI logins and Slack links keep working until you remove or suspend them here.</p>
-                    <p class="m-0">You must have signed in through the connection yourself. If every owner loses both identity provider access and all recovery codes, Helmr cannot restore access.</p>
+                    <p class="m-0">You must be signed in through the connection yourself.</p>
                   </div>
                 </Show>
               </ConfirmDialog>
@@ -174,20 +170,6 @@ export function SSOSettings() {
                 The connection retires with every member's link, and required single sign-on ends. Browsers and CLI logins that signed in through it sign out.
               </ConfirmDialog>
             </Show>
-            <Show when={generating()}>
-              <ConfirmDialog title="Generate recovery codes" confirmLabel="Generate" busyLabel="Generating…" onClose={() => setGenerating(false)} onConfirm={async () => { const result = await generateRecoveryCodes(); setCodes(result.codes); await refresh(); }}>
-                Ten new codes are shown once. <Show when={data().recovery_codes.remaining > 0}>The current codes stop working. </Show>Every owner is notified.
-              </ConfirmDialog>
-            </Show>
-            <Show when={codes()}>{list => (
-              <Dialog title="Recovery codes" onClose={() => setCodes(undefined)}>
-                <div class={ui.blockStack}>
-                  <Notice tone="warning">Store these codes somewhere safe outside your identity provider. They are not shown again.</Notice>
-                  <CodeBlock code={list().join("\n")} copy label="Recovery codes" />
-                  <button type="button" class={ui.button} onClick={() => setCodes(undefined)}>Done</button>
-                </div>
-              </Dialog>
-            )}</Show>
             <Show when={unlinking()}>{member => (
               <ConfirmDialog title="Unlink company account" confirmLabel="Unlink" busyLabel="Unlinking…" tone="danger" target={member().display_name} onClose={() => setUnlinking(undefined)} onConfirm={async () => { await unlinkSSOMember(member().member_id); await refresh(); }}>
                 Their browsers and CLI logins that signed in through single sign-on sign out. They can link a company account again.

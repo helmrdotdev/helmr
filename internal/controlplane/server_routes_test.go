@@ -243,7 +243,6 @@ POST /api/account/passkeys/complete
 POST /api/account/passkeys/options
 POST /api/account/providers/github/link
 POST /api/account/sso/link
-POST /api/account/sso/recover
 POST /api/auth/device/approve
 POST /api/auth/device/deny
 POST /api/auth/device/start
@@ -272,7 +271,6 @@ POST /api/members/{memberID}/suspend
 POST /api/organization/sso/connections
 POST /api/organization/sso/connections/{connectionID}/activate
 POST /api/organization/sso/connections/{connectionID}/test
-POST /api/organization/sso/recovery-codes
 POST /api/organizations
 POST /api/ownership/recover-access
 POST /api/projects

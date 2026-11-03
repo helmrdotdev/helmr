@@ -233,7 +233,7 @@ func TestAuditCatalogProjection(t *testing.T) {
 		audit.APIKeyChangedDetails{Before: audit.APIKeyPolicy{Name: "Before"}, After: audit.APIKeyPolicy{Name: "After"}},
 		audit.APIKeyIssuedDetails{Name: "Key"}, audit.PermissionsDetails{Permissions: []string{"chat:write"}}, audit.RetentionChangedDetails{},
 		audit.SSOBindingDetails{ConnectionID: id, IdentityID: id, Subject: "subject"},
-		audit.SSOConnectionDetails{Protocol: "saml"}, audit.SSOPolicyDetails{}, audit.SSORecoveryDetails{},
+		audit.SSOConnectionDetails{Protocol: "saml"}, audit.SSOPolicyDetails{},
 	}
 	for _, definition := range audit.Catalog() {
 		if definition.Audience != audit.OrganizationAudience {

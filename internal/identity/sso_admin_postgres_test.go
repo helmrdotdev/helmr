@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"testing"
 	"time"
 	"uuid"
@@ -83,13 +84,6 @@ func (f ssoAdminFixture) liveProof(t *testing.T, member uuid.UUID) uuid.UUID {
 func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	f := newSSOAdminFixture(t)
 	yes := true
-	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes}); !errors.Is(err, sso.ErrNoRecoveryCodes) {
-		t.Fatalf("required without recovery codes: %v", err)
-	}
-	codes, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t))
-	if err != nil || len(codes) != 10 {
-		t.Fatalf("codes = %d, %v", len(codes), err)
-	}
 
 	member := f.user(t, "Member", "member@example.test")
 	memberID := f.member(t, f.org, member, "member")
@@ -103,20 +97,18 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	device := uuid.NewV7()
 	f.exec(t, `INSERT INTO device_codes(id,org_id,user_code_hash,device_code_hash,decided_by_member_id,user_id,browser_session_id,status,expires_at,poll_interval_seconds,decided_at)
  VALUES($1,$2,uuid_send($1::uuid),uuid_send(gen_random_uuid()),$3,$4,$5,'approved',clock_timestamp()+interval '5 minutes',5,clock_timestamp())`, device, f.org, memberID, member, memberSession.SessionID)
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, memberSession, f.org, codes[0]); !errors.Is(err, ErrSSORecoveryUnneeded) {
-		t.Fatalf("recovery under optional SSO: %v", err)
+	// An owner who is not signed in through the connection cannot require it.
+	otherOwner := f.user(t, "Other owner", "other@example.test")
+	otherOwnerMember := f.member(t, f.org, otherOwner, "owner")
+	otherP, err := f.admits(t, f.session(t, otherOwner, uuid.Nil()), f.org)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// The owner's proof is two days old: a 30-day lifetime admits it, a 1-day
-	// lifetime in the same change would not.
-	f.exec(t, `UPDATE organizations SET sso_session_seconds=2592000 WHERE id=$1`, f.org)
-	f.exec(t, `UPDATE browser_sso_proofs SET authenticated_at=clock_timestamp()-interval '2 days' WHERE member_id=$1 AND revoked_at IS NULL`, f.ownerMember)
-	day := int32(86400)
-	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes, SessionSeconds: &day}); !errors.Is(err, sso.ErrEnforcerNotLinked) {
-		t.Fatalf("requiring with a lifetime that rejects the owner's proof: %v", err)
+	other := org.ManagingMember{Human: otherP, Actor: audit.FromPrincipal(otherP), OrgID: f.org, UserID: otherOwner, MemberID: otherOwnerMember, AuditPolicy: f.cfg.auditPolicy}
+	if _, err := UpdateSSOPolicy(t.Context(), f.pool, other, SSOPolicyChange{Required: &yes}); !errors.Is(err, sso.ErrEnforcerNotLinked) {
+		t.Fatalf("requiring by an owner not signed in through the connection: %v", err)
 	}
-	f.exec(t, `UPDATE browser_sso_proofs SET authenticated_at=clock_timestamp() WHERE member_id=$1 AND revoked_at IS NULL`, f.ownerMember)
-	f.exec(t, `UPDATE organizations SET sso_session_seconds=NULL WHERE id=$1`, f.org)
+	slackLink := f.slackLink(t, member, memberID)
 
 	result, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes})
 	if err != nil || !result.Policy.Required || result.RevokedCLISessions != 1 {
@@ -129,6 +121,10 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	if f.revoked(t, memberSession.SessionID) {
 		t.Fatal("requiring SSO signed a browser out")
 	}
+	var slackRevoked bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM slack_user_links WHERE id=$1`, slackLink).Scan(&slackRevoked); err != nil || !slackRevoked || result.RevokedSlackLinks != 1 {
+		t.Fatalf("Slack link after requiring SSO: revoked=%v count=%d, %v", slackRevoked, result.RevokedSlackLinks, err)
+	}
 	if !f.revoked(t, ordinaryCLI) || f.revoked(t, ssoCLI) {
 		t.Fatal("requiring SSO must revoke CLI sessions approved without SSO and keep those approved with it")
 	}
@@ -138,11 +134,15 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	if p, err := f.admits(t, f.ownerRaw, f.org); err != nil || !p.SSORequired {
 		t.Fatalf("SSO browser under required SSO = %+v, %v", p, err)
 	}
-	f.exec(t, `UPDATE org_members SET reauthenticate_after=clock_timestamp() WHERE id=$1`, f.ownerMember)
-	if _, err := f.admits(t, f.ownerRaw, f.org); !errors.Is(err, ErrSSOReauthenticationRequired) {
+	// A member whose SSO proof predates their sign-in cutoff signs in again.
+	f.bind(t, "member-subject", memberID, member)
+	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("member-subject", "", time.Now()), ordinaryBrowser, memberSession.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(t, `UPDATE org_members SET reauthenticate_after=clock_timestamp() WHERE id=$1`, memberID)
+	if _, err := f.admits(t, ordinaryBrowser, f.org); !errors.Is(err, ErrSSOReauthenticationRequired) {
 		t.Fatalf("SSO proof before the member cutoff: %v", err)
 	}
-	f.exec(t, `UPDATE org_members SET reauthenticate_after=NULL WHERE id=$1`, f.ownerMember)
 
 	newcomer := f.user(t, "New", "new@example.test")
 	newcomerRaw := f.session(t, newcomer, uuid.Nil())
@@ -155,47 +155,35 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &no}); err != nil {
 		t.Fatal(err)
 	}
+	f.exec(t, `UPDATE org_members SET reauthenticate_after=NULL WHERE id=$1`, memberID)
 	if _, err := f.admits(t, ordinaryBrowser, f.org); err != nil {
 		t.Fatalf("ordinary browser after returning to optional: %v", err)
 	}
 	if f.revoked(t, ssoCLI) {
 		t.Fatal("returning to optional revoked a session")
 	}
-	if err := UnrequireSSO(t.Context(), f.pool, f.cfg.auditPolicy, audit.Internal(audit.ControlPlaneCLI), "acme"); err != nil {
-		t.Fatal(err)
-	}
 }
 
-func TestRecentProofUnderRequiredSSO(t *testing.T) {
+func TestRecentProofCountsOrdinaryOrSSOProof(t *testing.T) {
 	now := time.Now()
 	proof := uuid.NewV7()
-	base := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", SSORequired: true}
 	for _, tc := range []struct {
 		name string
-		edit func(*auth.Principal)
+		p    auth.Principal
 		ok   bool
 	}{
-		{"fresh SSO proof", func(p *auth.Principal) { p.SSOProofID, p.SSOAuthenticatedAt = proof, now }, true},
-		{"stale SSO proof and a fresh email code", func(p *auth.Principal) {
-			p.SSOProofID, p.SSOAuthenticatedAt, p.AuthenticatedAt, p.ProofProvider = proof, now.Add(-5*time.Hour), now, "email"
-		}, true},
-		{"stale SSO proof and a fresh passkey", func(p *auth.Principal) {
-			p.SSOProofID, p.SSOAuthenticatedAt, p.AuthenticatedAt = proof, now.Add(-5*time.Hour), now
-		}, true},
-		{"stale SSO proof and a fresh GitHub sign-in", func(p *auth.Principal) {
-			p.SSOProofID, p.SSOAuthenticatedAt, p.AuthenticatedAt, p.ProofProvider = proof, now.Add(-5*time.Hour), now, "github"
-		}, false},
-		{"fresh email code without an SSO proof", func(p *auth.Principal) { p.AuthenticatedAt, p.ProofProvider = now, "email" }, false},
+		{"fresh SSO proof", auth.Principal{SSOProofID: proof, SSOAuthenticatedAt: now}, true},
+		{"stale SSO proof and a fresh ordinary sign-in", auth.Principal{SSOProofID: proof, SSOAuthenticatedAt: now.Add(-5 * time.Hour), AuthenticatedAt: now}, true},
+		{"stale SSO proof and a stale ordinary sign-in", auth.Principal{SSOProofID: proof, SSOAuthenticatedAt: now.Add(-5 * time.Hour), AuthenticatedAt: now.Add(-3 * time.Hour)}, false},
+		{"fresh ordinary sign-in only", auth.Principal{AuthenticatedAt: now}, true},
 	} {
-		p := base
-		tc.edit(&p)
-		if err := auth.RequireRecentProof(p); (err == nil) != tc.ok {
-			t.Errorf("%s: %v", tc.name, err)
+		for _, required := range []bool{false, true} {
+			p := tc.p
+			p.Kind, p.Channel, p.SSORequired = auth.PrincipalKindSession, "browser", required
+			if err := auth.RequireRecentProof(p); (err == nil) != tc.ok {
+				t.Errorf("%s (required=%v): %v", tc.name, required, err)
+			}
 		}
-	}
-	optional := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", SSOProofID: proof, SSOAuthenticatedAt: now}
-	if err := auth.RequireRecentProof(optional); err != nil {
-		t.Errorf("fresh SSO proof under optional SSO: %v", err)
 	}
 }
 
@@ -237,7 +225,7 @@ func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := codesAndRequire(t, f); err != nil {
+	if _, err := requireSSO(t, f); err != nil {
 		t.Fatal(err)
 	}
 	if err := DeleteSSOConnection(t.Context(), f.pool, store, f.manager(t), f.connection); err != nil {
@@ -253,84 +241,44 @@ func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
 	}
 }
 
-func codesAndRequire(t *testing.T, f ssoAdminFixture) (SSOPolicyResult, error) {
+func requireSSO(t *testing.T, f ssoAdminFixture) (SSOPolicyResult, error) {
 	t.Helper()
-	if _, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t)); err != nil {
-		return SSOPolicyResult{}, err
-	}
 	yes := true
 	return UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes})
 }
 
-func TestRecoveryCodeAdmitsAnOwnerWithoutTheIdentityProvider(t *testing.T) {
+// Owners keep their ordinary sign-in under required SSO, so an identity
+// provider outage cannot lock the organization out; members cannot.
+func TestOwnersKeepOrdinarySignInUnderRequiredSSO(t *testing.T) {
 	f := newSSOAdminFixture(t)
-	codes, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t))
-	if err != nil {
+	if _, err := requireSSO(t, f); err != nil {
 		t.Fatal(err)
 	}
-	yes := true
-	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes}); err != nil {
-		t.Fatal(err)
+	p, err := f.admits(t, f.session(t, f.owner, uuid.Nil()), f.org)
+	if err != nil || p.SSOProofID != uuid.Nil() || !p.SSORequired {
+		t.Fatalf("owner with an ordinary sign-in = %+v, %v", p, err)
 	}
-	// The IdP is down: the owner signs in with an ordinary method only.
-	raw := f.session(t, f.owner, uuid.Nil())
-	account, _ := f.admits(t, raw, uuid.Nil())
-	if _, err := f.admits(t, raw, f.org); !errors.Is(err, ErrSSORequired) {
-		t.Fatalf("before recovery: %v", err)
+	if err := auth.RequireRecentProof(p); err != nil {
+		t.Fatalf("owner's fresh ordinary sign-in as recent proof: %v", err)
 	}
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, account, f.org, "AAAAA-AAAAA-AAAAA-AAAAA-AAAAAA"); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("unknown code: %v", err)
-	}
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, account, f.org, " "+codes[0]+" "); err != nil {
-		t.Fatal(err)
-	}
-	if p, err := f.admits(t, raw, f.org); err != nil || p.SSOProofID == uuid.Nil() {
-		t.Fatalf("after recovery = %+v, %v", p, err)
-	}
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, account, f.org, codes[0]); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("reused code: %v", err)
+	cli := f.cliSession(t, f.owner, f.ownerMember, nil)
+	if _, err := access.SessionPrincipal(t.Context(), f.pool, cli, f.org); err != nil {
+		t.Fatalf("owner's ordinary CLI session: %v", err)
 	}
 	member := f.user(t, "Member", "member@example.test")
-	f.member(t, f.org, member, "member")
-	memberRaw := f.session(t, member, uuid.Nil())
-	memberAccount, _ := f.admits(t, memberRaw, uuid.Nil())
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, memberAccount, f.org, codes[1]); !errors.Is(err, org.ErrOwnerRoleRequired) {
-		t.Fatalf("a member used a recovery code: %v", err)
+	memberID := f.member(t, f.org, member, "member")
+	if _, err := f.admits(t, f.session(t, member, uuid.Nil()), f.org); !errors.Is(err, ErrSSORequired) {
+		t.Fatalf("member with an ordinary sign-in: %v", err)
 	}
-	var credential uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT credential_id FROM audit_events WHERE action='sso.recovery_code_used'`).Scan(&credential); err != nil {
-		t.Fatal(err)
-	}
-	var code uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT recovery_code_id FROM browser_sso_proofs WHERE recovery_code_id IS NOT NULL`).Scan(&code); err != nil || credential != code {
-		t.Fatalf("recovery audit credential = %s, code = %s, %v", credential, code, err)
-	}
-	var notified int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM account_security_notifications WHERE event='sso.recovery_code_used'`).Scan(&notified); err != nil || notified == 0 {
-		t.Fatalf("owners notified = %d, %v", notified, err)
-	}
-	remaining, _, err := sso.RecoveryCodes(t.Context(), f.pool, f.org)
-	if err != nil || remaining != 9 {
-		t.Fatalf("remaining = %d, %v", remaining, err)
-	}
-	if _, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t)); err != nil {
-		t.Fatal(err)
-	}
-	if err := RecoverSSO(t.Context(), f.pool, f.cfg, account, f.org, codes[2]); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("a code of a replaced set: %v", err)
-	}
-	no := false
-	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &no}); err != nil {
-		t.Fatal(err)
-	}
-	if p, err := f.admits(t, raw, f.org); err != nil || p.SSOProofID != uuid.Nil() {
-		t.Fatalf("recovery proof after returning to optional = %+v, %v", p, err)
+	memberCLI := f.cliSession(t, member, memberID, nil)
+	if _, err := access.SessionPrincipal(t.Context(), f.pool, memberCLI, f.org); err == nil {
+		t.Fatal("a member's ordinary CLI session was admitted under required SSO")
 	}
 }
 
 func TestCLISessionApprovedUnderRequiredSSORecordsTheProof(t *testing.T) {
 	f := newSSOAdminFixture(t)
-	if _, err := codesAndRequire(t, f); err != nil {
+	if _, err := requireSSO(t, f); err != nil {
 		t.Fatal(err)
 	}
 	approver, err := f.admits(t, f.ownerRaw, f.org)
@@ -352,7 +300,7 @@ func TestCLISessionApprovedUnderRequiredSSORecordsTheProof(t *testing.T) {
 	}
 }
 
-func TestSSOTestMarksOnlyUnchangedCandidate(t *testing.T) {
+func TestSSOTestActivationAndReplacement(t *testing.T) {
 	f := newSSOAdminFixture(t)
 	store, err := sso.NewStore(make([]byte, 32))
 	if err != nil {
@@ -366,21 +314,21 @@ func TestSSOTestMarksOnlyUnchangedCandidate(t *testing.T) {
 	if err := ActivateSSOConnection(t.Context(), f.pool, store, f.manager(t), candidate.ID); !errors.Is(err, sso.ErrUntested) {
 		t.Fatalf("activating an untested candidate: %v", err)
 	}
-	started, err := StartSSOTest(t.Context(), f.pool, store, f.manager(t), candidate.ID)
-	if err != nil {
+	if _, err := StartSSOTest(t.Context(), f.pool, store, f.manager(t), candidate.ID); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint := started.Fingerprint()
+	owner, _ := f.admits(t, f.ownerRaw, uuid.Nil())
+	if err := CompleteSSOTest(t.Context(), f.pool, f.cfg, store, owner, f.org, f.ownerMember, candidate.ID); err != nil {
+		t.Fatal(err)
+	}
 	secret := "second"
 	if err := UpdateSSOConnection(t.Context(), f.pool, store, f.manager(t), candidate.ID, SSOConnectionUpdate{ClientSecret: &secret}); err != nil {
 		t.Fatal(err)
 	}
-	owner, _ := f.admits(t, f.ownerRaw, uuid.Nil())
-	if err := CompleteSSOTest(t.Context(), f.pool, f.cfg, store, owner, f.org, f.ownerMember, candidate.ID, fingerprint); err == nil {
-		t.Fatal("a test of earlier material marked the connection tested")
+	if err := ActivateSSOConnection(t.Context(), f.pool, store, f.manager(t), candidate.ID); !errors.Is(err, sso.ErrUntested) {
+		t.Fatalf("activating after an update cleared the test: %v", err)
 	}
-	restarted, _ := StartSSOTest(t.Context(), f.pool, store, f.manager(t), candidate.ID)
-	if err := CompleteSSOTest(t.Context(), f.pool, f.cfg, store, owner, f.org, f.ownerMember, candidate.ID, restarted.Fingerprint()); err != nil {
+	if err := CompleteSSOTest(t.Context(), f.pool, f.cfg, store, owner, f.org, f.ownerMember, candidate.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := ActivateSSOConnection(t.Context(), f.pool, store, f.manager(t), candidate.ID); err != nil {
@@ -414,9 +362,6 @@ func (f ssoAdminFixture) approvedDevice(t *testing.T, user, member, session uuid
 // codes; an exchange waits for it and then finds its code denied.
 func TestCLIExchangeWaitsForRequiringSSO(t *testing.T) {
 	f := newSSOAdminFixture(t)
-	if _, err := GenerateRecoveryCodes(t.Context(), f.pool, f.cfg, f.manager(t)); err != nil {
-		t.Fatal(err)
-	}
 	member := f.user(t, "Member", "member@example.test")
 	memberID := f.member(t, f.org, member, "member")
 	memberRaw := f.session(t, member, uuid.Nil())
@@ -440,7 +385,7 @@ func TestCLIExchangeWaitsForRequiringSSO(t *testing.T) {
 	if _, _, err := requireSSORevocations(t.Context(), enforcement, f.org); err != nil {
 		t.Fatal(err)
 	}
-	if err := org.SetSSOPolicy(t.Context(), enforcement, f.org, org.SSOPolicy{Required: true}); err != nil {
+	if err := org.SetSSOPolicy(t.Context(), enforcement, f.org, org.SSOPolicy{Required: true, SessionSeconds: 86400}); err != nil {
 		t.Fatal(err)
 	}
 	if err := enforcement.Commit(t.Context()); err != nil {
@@ -455,7 +400,7 @@ func TestCLIExchangeWaitsForRequiringSSO(t *testing.T) {
 	}
 }
 
-func TestCLISourceSkipsOrdinaryProofBeforeTheCutoff(t *testing.T) {
+func TestCLISourcePrefersTheSSOProof(t *testing.T) {
 	f := newSSOAdminFixture(t)
 	// The owner's ordinary sign-in predates the cutoff; a later SSO sign-in
 	// admits the browser again.
@@ -479,4 +424,13 @@ func TestCLISourceSkipsOrdinaryProofBeforeTheCutoff(t *testing.T) {
 	if cli, err := f.admits(t, raw, uuid.Nil()); err != nil || cli.SSOProofID == uuid.Nil() {
 		t.Fatalf("CLI principal = %+v, %v", cli, err)
 	}
+}
+
+func (f ssoAdminFixture) slackLink(t *testing.T, user, member uuid.UUID) uuid.UUID {
+	t.Helper()
+	registration, installation, link := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	f.exec(t, `INSERT INTO slack_app_registrations(transport,id,org_id,app_id,created_by_user_id) VALUES('http',$1,$2,'app',$3)`, registration, f.org, user)
+	f.exec(t, `INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($1,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),'{}',$4)`, installation, registration, f.org, user)
+	f.exec(t, `INSERT INTO slack_user_links(id,installation_id,org_id,member_id,user_id,team_id,slack_user_id) VALUES($1,$2,$3,$4,$5,'team','slack-user')`, link, installation, f.org, member, user)
+	return link
 }

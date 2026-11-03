@@ -54,8 +54,8 @@ export type SSOConnection = {
   tested_at: string | null; created_at: string; activated_at: string | null;
 };
 export type SSOStatus = {
-  required: boolean; session_seconds: number | null; active: SSOConnection | null; candidate: SSOConnection | null;
-  members_linked: number; members_total: number; recovery_codes: { remaining: number; generated_at: string | null }; oidc_redirect_url: string;
+  required: boolean; session_seconds: number; active: SSOConnection | null; candidate: SSOConnection | null;
+  members_linked: number; members_total: number; oidc_redirect_url: string;
 };
 export type SSOMember = { member_id: string; display_name: string; email: string; subject?: string; linked_at: string | null };
 export type SSOConnectionInput =
@@ -69,10 +69,7 @@ export const updateSSOConnection = (id: string, input: { client_secret?: string;
 export const testSSOConnection = (id: string) => postJson<Record<string, never>, { redirect_url: string }>(`/api/organization/sso/connections/${encodeURIComponent(id)}/test`, {});
 export const activateSSOConnection = (id: string) => postJson<Record<string, never>, void>(`/api/organization/sso/connections/${encodeURIComponent(id)}/activate`, {});
 export const deleteSSOConnection = (id: string) => request<void>(`/api/organization/sso/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
-export const updateSSOPolicy = (input: { required?: boolean; session_seconds?: number | null }) =>
-  request<{ required: boolean; session_seconds: number | null; revoked_cli_sessions: number; revoked_slack_links: number }>("/api/organization/sso", { method: "PATCH", body: JSON.stringify(input) });
+export const updateSSOPolicy = (input: { required?: boolean; session_seconds?: number }) =>
+  request<{ required: boolean; session_seconds: number; revoked_cli_sessions: number; revoked_slack_links: number }>("/api/organization/sso", { method: "PATCH", body: JSON.stringify(input) });
 export const listSSOMembers = () => request<{ members: SSOMember[] }>("/api/organization/sso/members");
 export const unlinkSSOMember = (memberID: string) => request<void>(`/api/organization/sso/members/${encodeURIComponent(memberID)}/binding`, { method: "DELETE" });
-export const generateRecoveryCodes = () => postJson<Record<string, never>, { codes: string[] }>("/api/organization/sso/recovery-codes", {});
-export const recoverWithCode = (organizationID: string, code: string) =>
-  postJson<{ organization_id: string; code: string }, void>("/api/account/sso/recover", { organization_id: organizationID, code });

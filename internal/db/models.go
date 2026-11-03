@@ -218,7 +218,7 @@ type Organization struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	SsoRequired       bool               `json:"sso_required"`
-	SsoSessionSeconds pgtype.Int4        `json:"sso_session_seconds"`
+	SsoSessionSeconds int32              `json:"sso_session_seconds"`
 }
 
 type Project struct {

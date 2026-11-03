@@ -517,7 +517,6 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.With(s.requireAccount).Post("/auth/sso/link/confirm", s.ssoLinkConfirm)
 	r.With(s.requireAccount).Post("/account/sso/link", s.accountSSOLinkStart)
 	r.With(s.requireAccount).Get("/account/sso/bindings", s.accountSSOBindings)
-	r.With(s.requireAccount).Post("/account/sso/recover", s.accountSSORecover)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
 		r.Get("/organization/sso", s.ssoStatus)
@@ -529,7 +528,6 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 		r.Delete("/organization/sso/connections/{connectionID}", s.deleteSSOConnection)
 		r.Get("/organization/sso/members", s.ssoMembers)
 		r.Delete("/organization/sso/members/{memberID}/binding", s.unlinkSSOMember)
-		r.Post("/organization/sso/recovery-codes", s.generateRecoveryCodes)
 	})
 	r.With(s.requireAccountShell).Get("/me", s.me)
 	r.With(s.requireAccountShell).Post("/account/activity", s.accountActivity)

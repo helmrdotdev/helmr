@@ -378,13 +378,6 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 		t.Fatalf("activate = %d %s", got.Code, got.Body)
 	}
 	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
-		t.Fatalf("require without recovery codes = %d %s", got.Code, got.Body)
-	}
-	codes := owner.do(t, http.MethodPost, "/api/organization/sso/recovery-codes", "", console, selected)
-	if codes.Code != http.StatusOK || strings.Count(codes.Body.String(), "-") != 40 {
-		t.Fatalf("recovery codes = %d %s", codes.Code, codes.Body)
-	}
-	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
 		t.Fatalf("require by an owner who has not signed in through the connection = %d %s", got.Code, got.Body)
 	}
 	// The owner links their own company account, then requires SSO.
@@ -397,31 +390,21 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
 		t.Fatalf("require = %d %s", got.Code, got.Body)
 	}
-	// Another browser of the owner holds no SSO proof, so the organization asks for SSO.
+	// Another browser of the owner holds no SSO proof; owners keep their
+	// ordinary sign-in, so it still enters.
 	other := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, ownerUser(t, f, orgID), uuid.Nil())}}}
-	if got := other.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
-		t.Fatalf("organization under required SSO = %d %s", got.Code, got.Body)
+	if got := other.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusOK {
+		t.Fatalf("owner's ordinary browser under required SSO = %d %s", got.Code, got.Body)
 	}
-	owner = other
-	var recovery struct {
-		Codes []string `json:"codes"`
-	}
-	if err := json.Unmarshal(codes.Body.Bytes(), &recovery); err != nil {
-		t.Fatal(err)
-	}
-	recover := owner.do(t, http.MethodPost, "/api/account/sso/recover", `{"organization_id":"`+orgID.String()+`","code":"`+recovery.Codes[0]+`"}`, console, nil)
-	if recover.Code != http.StatusNoContent {
-		t.Fatalf("recover = %d %s", recover.Code, recover.Body)
-	}
-	status := owner.do(t, http.MethodGet, "/api/organization/sso", "", console, selected)
-	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"required":true`) || !strings.Contains(status.Body.String(), `"remaining":9`) {
+	status := other.do(t, http.MethodGet, "/api/organization/sso", "", console, selected)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"required":true`) {
 		t.Fatalf("status = %d %s", status.Code, status.Body)
 	}
 	member := f.user(t, "Member")
 	f.member(t, orgID, member, "member")
 	memberBrowser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, member, uuid.Nil())}}}
-	if got := memberBrowser.do(t, http.MethodGet, "/api/organization/sso", "", console, selected); got.Code != http.StatusForbidden {
-		t.Fatalf("member reads SSO settings = %d %s", got.Code, got.Body)
+	if got := memberBrowser.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
+		t.Fatalf("member's ordinary browser under required SSO = %d %s", got.Code, got.Body)
 	}
 }
 

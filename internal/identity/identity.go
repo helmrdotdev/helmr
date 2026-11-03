@@ -68,7 +68,6 @@ type Config struct {
 	emailCodeKey  []byte
 	deviceCodeKey []byte
 	invitationKey []byte
-	recoveryKey   []byte
 }
 
 // NewConfig derives the identity configuration from the authentication keys.
@@ -79,7 +78,6 @@ func NewConfig(keys auth.Keys, policy auditpolicy.Policy) Config {
 		emailCodeKey:  keys.EmailCode,
 		deviceCodeKey: keys.DeviceCode,
 		invitationKey: keys.Invitation,
-		recoveryKey:   keys.BrowserAuth,
 	}
 }
 

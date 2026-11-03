@@ -128,8 +128,6 @@ var definitions = []Definition{
 	{"sso.connection_activated", "sso_connection", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"sso.connection_retired", "sso_connection", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"sso.policy_updated", "organization", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"sso.recovery_codes_generated", "organization", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"sso.recovery_code_used", "member", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"identity.sign_in", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.session_revoked", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.device_started", "device_code", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},

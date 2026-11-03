@@ -119,12 +119,6 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "sso":
-			if err := runSSOCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
-				log.Error("change organization SSO", "error", err)
-				os.Exit(1)
-			}
-			return
 		case "worker-host":
 			if err := runWorkerHostStatusCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("manage worker instance state", "error", err)

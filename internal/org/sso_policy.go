@@ -7,11 +7,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// SSOPolicy is an organization's single sign-on policy. SessionSeconds is nil
-// for the 24-hour default.
+// SSOPolicy is an organization's single sign-on policy. SessionSeconds is how
+// long a browser SSO proof admits the organization.
 type SSOPolicy struct {
 	Required       bool
-	SessionSeconds *int32
+	SessionSeconds int32
 }
 
 // LockSSOPolicy reads the policy under the organization row lock, which every

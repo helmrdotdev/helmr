@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -271,6 +272,12 @@ func (s *Server) ssoOIDCFinish(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 	var flow browserAuthFlow
 	fail := func(code string) {
+		// A refused response never reaches completion, so the refusal is
+		// recorded here, without the response itself.
+		event := audit.Event{Evidence: audit.Unauthenticated("failed", "sso_assertion"), Action: "identity.sign_in", TargetKind: "login_session", Outcome: "denied", Unresolved: true}
+		if err := audit.RecordFailure(r.Context(), s.tx, s.auditPolicy, event, code); err != nil {
+			s.log.Warn("record SAML refusal", "error", err)
+		}
 		page := "/login"
 		switch flow.Kind {
 		case browserAuthSSOSelfLink:
@@ -355,13 +362,12 @@ func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browse
 	a := identity.SSOAssertion{ConnectionID: connection.ID, Protocol: connection.Protocol, Identity: validated}
 	if flow.Kind == browserAuthSSOTest {
 		p := s.optionalAccount(r)
-		member, memberErr := uuid.Parse(flow.MemberID)
-		fingerprint, fingerprintErr := base64.RawURLEncoding.DecodeString(flow.SSOFingerprint)
-		if memberErr != nil || fingerprintErr != nil || flow.SessionID == uuid.Nil() || p.SessionID != flow.SessionID {
+		member, err := uuid.Parse(flow.MemberID)
+		if err != nil || flow.SessionID == uuid.Nil() || p.SessionID != flow.SessionID {
 			s.writeIdentityError(w, r, identity.ErrWrongAccount)
 			return
 		}
-		if err := identity.CompleteSSOTest(r.Context(), s.tx, s.identity, s.ssoStore, p, connection.OrgID, member, connection.ID, fingerprint); err != nil {
+		if err := identity.CompleteSSOTest(r.Context(), s.tx, s.identity, s.ssoStore, p, connection.OrgID, member, connection.ID); err != nil {
 			s.writeOperationError(w, r, ssoAdminError(err))
 			return
 		}

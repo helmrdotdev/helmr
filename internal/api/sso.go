@@ -72,20 +72,14 @@ type SSOConnection struct {
 	ActivatedAt             *string `json:"activated_at"`
 }
 
-type SSORecoveryCodesStatus struct {
-	Remaining   int     `json:"remaining"`
-	GeneratedAt *string `json:"generated_at"`
-}
-
 type SSOStatusResponse struct {
-	Required        bool                   `json:"required"`
-	SessionSeconds  *int32                 `json:"session_seconds"`
-	Active          *SSOConnection         `json:"active"`
-	Candidate       *SSOConnection         `json:"candidate"`
-	MembersLinked   int                    `json:"members_linked"`
-	MembersTotal    int                    `json:"members_total"`
-	RecoveryCodes   SSORecoveryCodesStatus `json:"recovery_codes"`
-	OIDCRedirectURL string                 `json:"oidc_redirect_url"`
+	Required        bool           `json:"required"`
+	SessionSeconds  int32          `json:"session_seconds"`
+	Active          *SSOConnection `json:"active"`
+	Candidate       *SSOConnection `json:"candidate"`
+	MembersLinked   int            `json:"members_linked"`
+	MembersTotal    int            `json:"members_total"`
+	OIDCRedirectURL string         `json:"oidc_redirect_url"`
 }
 
 // SSOConnectionCreateRequest creates a candidate: OIDC with issuer, client ID
@@ -111,10 +105,10 @@ type SSOConnectionUpdateRequest struct {
 }
 
 type SSOPolicyResponse struct {
-	Required           bool   `json:"required"`
-	SessionSeconds     *int32 `json:"session_seconds"`
-	RevokedCLISessions int    `json:"revoked_cli_sessions"`
-	RevokedSlackLinks  int    `json:"revoked_slack_links"`
+	Required           bool  `json:"required"`
+	SessionSeconds     int32 `json:"session_seconds"`
+	RevokedCLISessions int   `json:"revoked_cli_sessions"`
+	RevokedSlackLinks  int   `json:"revoked_slack_links"`
 }
 
 type SSOMember struct {
@@ -127,13 +121,4 @@ type SSOMember struct {
 
 type SSOMembersResponse struct {
 	Members []SSOMember `json:"members"`
-}
-
-type SSORecoveryCodesResponse struct {
-	Codes []string `json:"codes"`
-}
-
-type AccountSSORecoverRequest struct {
-	OrganizationID string `json:"organization_id"`
-	Code           string `json:"code"`
 }

@@ -66,8 +66,6 @@ type browserAuthFlow struct {
 	SSOSubject         string    `json:"sso_subject,omitempty"`
 	SSOEmail           string    `json:"sso_email,omitempty"`
 	SSOAuthenticatedAt time.Time `json:"sso_authenticated_at,omitzero"`
-	// SSOFingerprint is a tested connection's material at the test's start.
-	SSOFingerprint string `json:"sso_fingerprint,omitempty"`
 }
 
 type browserAuthEnvelope struct {

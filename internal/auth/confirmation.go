@@ -42,15 +42,6 @@ func RequireRecentProof(p Principal) error {
 		return ErrRecentProofRequired
 	}
 	now := time.Now()
-	if p.SSORequired {
-		// The organization's SSO proof must be live. Fresh SSO proves it, and so
-		// does the account's own passkey or email code; GitHub does not, because
-		// it is not an account credential the organization controls.
-		if p.SSOProofID != uuid.Nil() && (ProvedRecently(p.SSOAuthenticatedAt, now) || (ProvedRecently(p.AuthenticatedAt, now) && p.ProofProvider != "github")) {
-			return nil
-		}
-		return ErrRecentProofRequired
-	}
 	if ProvedRecently(p.AuthenticatedAt, now) || (p.SSOProofID != uuid.Nil() && ProvedRecently(p.SSOAuthenticatedAt, now)) {
 		return nil
 	}
