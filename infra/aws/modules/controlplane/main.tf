@@ -437,12 +437,6 @@ resource "aws_vpc_security_group_ingress_rule" "postgres" {
   to_port                      = 5432
 }
 
-resource "aws_vpc_security_group_egress_rule" "postgres" {
-  security_group_id = aws_security_group.postgres.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
 resource "random_id" "postgres_final_snapshot" {
   byte_length = 4
 }

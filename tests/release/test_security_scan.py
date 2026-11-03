@@ -76,7 +76,7 @@ class SecurityScanTest(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
                             "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=repo, check=True)
-            tree, _ = tracked_source(root, repo)
+            tree, _, _ = tracked_source(root, repo)
             with self.assertRaisesRegex(ValueError, "inline suppression"):
                 check_terraform_inputs(tree)
 
@@ -87,6 +87,18 @@ class SecurityScanTest(unittest.TestCase):
             return collect([row], "image", "digest")[0]["key"]
         self.assertEqual(key(Layer="registry"), key(Fingerprint="local"))
         self.assertNotEqual(key(), key(FixedVersion="2"))
+
+    def test_template_key_requires_same_template_and_occurrence(self):
+        def key(source="source", templates="templates", resource="control", check="AWS-0104"):
+            entry = dict(ID=check, Status="FAIL", Severity="CRITICAL",
+                         CauseMetadata={"Occurrences": [{"Resource": resource}]})
+            row = dict(Type="terraform", Target="infra/aws/example/main.tf", Misconfigurations=[entry])
+            return collect([row], "source", source, templates)[0].get("template_key")
+        self.assertIsNotNone(key())
+        self.assertEqual(key(), key(source="unrelated change"))
+        self.assertNotEqual(key(), key(templates="changed"))
+        self.assertNotEqual(key(), key(resource="another rule"))
+        self.assertIsNone(key(check="another check"))
 
     def test_secret_summary_has_location_without_matched_bytes(self):
         secret = dict(RuleID="rule", Severity="HIGH", StartLine=7, EndLine=8, Match="secret bytes")

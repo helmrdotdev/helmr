@@ -47,9 +47,9 @@ def main():
             "exec openssl s_server -accept 443 -cert /tmp/server.crt "
             "-key /tmp/server.key -www -quiet"
         )
-        docker("run", "-d", "--name", upstream, "--network", name, "--ip", "203.0.113.20",
+        docker("run", "--platform", "linux/amd64", "-d", "--name", upstream, "--network", name, "--ip", "203.0.113.20",
                "--entrypoint", "/bin/sh", IMAGE, "-ec", server)
-        docker("run", "-d", "--name", proxy, "--network", name, "--ip", "203.0.113.10",
+        docker("run", "--platform", "linux/amd64", "-d", "--name", proxy, "--network", name, "--ip", "203.0.113.10",
                "--user", "13:13", "--read-only", "--cap-drop", "ALL",
                "--mount", f"type=volume,src={volume},dst=/var/spool/squid",
                "--add-host", "api.github.com:203.0.113.20", "--add-host", "wss-primary.slack.com:203.0.113.20",
@@ -57,8 +57,9 @@ def main():
                "-e", "SQUID_CONFIG=" + base64.b64encode(config.encode()).decode(),
                "--entrypoint", "/bin/sh", IMAGE, "-ec", (ROOT / "templates/proxy-start.sh").read_text())
         assert docker("exec", proxy, "stat", "-c", "%u:%g %a", "/var/spool/squid") == "13:13 755"
-        assert "/var/spool/squid" in json.loads(docker("image", "inspect", IMAGE))[0]["Config"]["Volumes"]
-        port = int(json.loads(docker("inspect", proxy))[0]["NetworkSettings"]["Ports"]["3128/tcp"][0]["HostPort"])
+        container = json.loads(docker("inspect", proxy))[0]
+        assert "/var/spool/squid" in json.loads(docker("image", "inspect", "--platform=linux/amd64", IMAGE))[0]["Config"]["Volumes"]
+        port = int(container["NetworkSettings"]["Ports"]["3128/tcp"][0]["HostPort"])
         deadline = time.monotonic() + 15
         while True:
             try:

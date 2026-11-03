@@ -18,8 +18,13 @@ def classify(report, rules):
         require(isinstance(reason, str) and reason.strip() and rule["evidence"].strip(),
                 "assessment requires a reason and evidence")
         status = rule["status"]
-        require(status in ("affected", "not_affected"), "unsupported assessment")
-        if "absent_module" in rule:
+        require(status in ("affected", "not_affected", "accepted_default"), "unsupported assessment")
+        if status == "accepted_default":
+            require(rule["id"] == "AWS-0104" and re.fullmatch("[a-f0-9]{64}", rule["template_key"]),
+                    "template acceptance requires an exact AWS outbound finding")
+            matched = [i for i in critical if i["component"] == "source" and i["id"] == rule["id"]
+                       and i.get("template_key") == rule["template_key"]]
+        elif "absent_module" in rule:
             require(status == "not_affected" and re.fullmatch(r"[a-z0-9_]+", rule["absent_module"]),
                     "invalid module predicate")
             module = rule["absent_module"]
@@ -76,7 +81,7 @@ def main():
             if args.previous:
                 previous = read(args.previous)["critical"] if args.previous.exists() else []
                 known = {(i["key"], i["status"]) for i in previous}
-                attention = any(i["status"] != "not_affected" and (i["key"], i["status"]) not in known
+                attention = any(i["status"] in ("affected", "needs_review") and (i["key"], i["status"]) not in known
                                 for i in verdict["critical"])
                 print(f"attention={str(attention).lower()}", file=stream)
             print("policy=" + verdict["policy"], file=stream)

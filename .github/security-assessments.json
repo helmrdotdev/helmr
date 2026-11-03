@@ -157,5 +157,26 @@
     "absent_module": "libiscsi",
     "reason": "The affected guest code requires the optional libiscsi module.",
     "evidence": "https://www.cve.org/CVERecord?id=CVE-2026-99154"
+  },
+  {
+    "id": "AWS-0104",
+    "status": "accepted_default",
+    "reason": "Standard intentionally provides outbound IPv4 connectivity from its platform tasks for operator-selected external endpoints and ports, including ClickHouse and SMTP. Operators with a restricted network must replace this default with service-specific egress rules.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/modules/controlplane/main.tf#L555-L562 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/standard/README.md#L9-L17",
+    "template_key": "5bab5802458c8bfa123f1ec9bb71de191f157f82e1b3e82da85f64c4b53b3a4f"
+  },
+  {
+    "id": "AWS-0104",
+    "status": "accepted_default",
+    "reason": "Private trusts its dedicated CONNECT proxy to enforce the configured external destinations for Control Plane and Dispatcher clients. Only the proxy group grants public IPv4 TCP 443 for these integrations. A process controlling the proxy can use that grant directly; deployments requiring containment of the proxy itself need upstream egress enforcement.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/private/proxy.tf#L10-L30 | https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/private/README.md#paths-and-controls | https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/tests/check_root_composition.py",
+    "template_key": "0a2d5ae1a22abb4e25bb5e9d90915e6ca1e56589131d0fb6be695218a16fc567"
+  },
+  {
+    "id": "AWS-0104",
+    "status": "accepted_default",
+    "reason": "Quickstart intentionally allows public IPv4 egress from the control host for operating-system bootstrap, image pulls and enabled integrations. Operators can replace the host's egress block to match their deployment.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L23-L28 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L68-L74 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/host.tf#L22-L28",
+    "template_key": "3009323237d934b128d105f32517432827605f84b97356077ff4af73402f5d01"
   }
 ]

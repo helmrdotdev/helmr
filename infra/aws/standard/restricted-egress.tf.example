@@ -1,0 +1,59 @@
+# Copy to restricted-egress.tf and edit module "controlplane" in main.tf as
+# described in README.md. All destination groups must be reachable and support
+# security-group references from the platform VPC.
+variable "restricted_egress" {
+  type = object({
+    origin_prefix_list_id = string
+    aws_endpoint_sg_id    = string
+    clickhouse_sg_id      = string
+    clickhouse_port       = number
+    proxy_sg_id           = string
+    proxy_hostname        = string
+    smtp_sg_id            = optional(string)
+    smtp_port             = optional(number)
+  })
+}
+
+locals {
+  platform_tcp_destinations = merge({
+    postgres   = { group = module.controlplane.postgres_security_group_id, port = 5432 }
+    aws        = { group = var.restricted_egress.aws_endpoint_sg_id, port = 443 }
+    clickhouse = { group = var.restricted_egress.clickhouse_sg_id, port = var.restricted_egress.clickhouse_port }
+    proxy      = { group = var.restricted_egress.proxy_sg_id, port = 3128 }
+    }, var.email_provider == "smtp" ? {
+    smtp = { group = var.restricted_egress.smtp_sg_id, port = var.restricted_egress.smtp_port }
+  } : {})
+}
+
+resource "aws_vpc_security_group_egress_rule" "restricted_platform_tcp" {
+  for_each                     = local.platform_tcp_destinations
+  security_group_id            = module.controlplane.controlplane_security_group_id
+  referenced_security_group_id = each.value.group
+  ip_protocol                  = "tcp"
+  from_port                    = each.value.port
+  to_port                      = each.value.port
+  lifecycle {
+    precondition {
+      condition     = each.value.group != null && each.value.port != null
+      error_message = "Each enabled service needs a destination group and TCP port."
+    }
+  }
+}
+
+resource "aws_vpc_security_group_egress_rule" "restricted_platform_s3" {
+  security_group_id = module.controlplane.controlplane_security_group_id
+  prefix_list_id    = module.controlplane_network.s3_prefix_list_id
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
+# Dispatcher calls the public Control Plane URL directly. Supply a maintained
+# prefix list for the actual DNS answers reached from the task subnets.
+resource "aws_vpc_security_group_egress_rule" "restricted_platform_origin" {
+  security_group_id = module.controlplane.controlplane_security_group_id
+  prefix_list_id    = var.restricted_egress.origin_prefix_list_id
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}

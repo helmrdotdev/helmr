@@ -77,7 +77,10 @@ Worker with a 320-GiB disk and one 1-vCPU/2-GiB execution slot. Use an Agent
 Template that fits that shape, or change the Worker inputs. This initial size is
 not a workload-performance guarantee.
 
-Both hosts have public outbound connectivity. The Worker opens no inbound ports.
+Both hosts have public outbound connectivity. The control host security group
+in `network.tf` permits all outbound protocols to any IPv4 destination by
+default. To restrict it, replace its egress block with rules for your package
+mirrors, image registries, AWS services and enabled integrations. The Worker opens no inbound ports.
 Guest egress denies include the VPC, metadata and the control host's public
 address; application authentication and the existing Worker isolation remain.
 Control-host containers share one host identity, unlike separate ECS task roles;
