@@ -130,7 +130,7 @@ func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
 			response.SingleOrganization = &o
 		}
 	}
-	// Company SSO is offered beside the account methods: in Managed Cloud by
+	// Single sign-on is offered beside the account methods: in Managed Cloud by
 	// organization slug, and in a self-hosted deployment once its organization
 	// has an active connection.
 	if s.ssoStore != nil {

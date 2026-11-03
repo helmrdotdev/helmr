@@ -362,11 +362,11 @@ func requireSSORevocations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (int
  WHERE d.org_id=$1 AND d.status='approved' AND m.id=d.decided_by_member_id AND m.org_id=d.org_id AND NOT m.is_owner`, orgID); err != nil {
 		return 0, 0, err
 	}
-	links, err := slack.RetireMemberLinks(ctx, tx, orgID)
+	slackLinks, err := slack.RetireMemberLinks(ctx, tx, orgID)
 	if err != nil {
 		return 0, 0, err
 	}
-	return int(sessions.RowsAffected()), links, nil
+	return int(sessions.RowsAffected()), slackLinks, nil
 }
 
 // retireSSOLinks revokes what retired links issued: their browser SSO
@@ -409,7 +409,7 @@ func UnlinkSSOMember(ctx context.Context, database db.TxBeginner, m org.Managing
 	})
 }
 
-// LinkedSSOMembers lists members and their company SSO links for owners.
+// LinkedSSOMembers lists members and their single sign-on links for owners.
 func LinkedSSOMembers(ctx context.Context, database db.TxBeginner, m org.ManagingMember) ([]sso.LinkedMember, error) {
 	var members []sso.LinkedMember
 	err := ssoOwnerTx(ctx, database, m, false, func(tx pgx.Tx, _ auth.Principal, _ org.SSOPolicy) error {

@@ -29,7 +29,7 @@ func newSSOAdminFixture(t *testing.T) ssoAdminFixture {
 	f := ssoAdminFixture{ssoFixture: newSSOFixture(t)}
 	f.owner = f.user(t, "Admin", "admin@example.test")
 	f.ownerMember = f.member(t, f.org, f.owner, "owner")
-	f.bind(t, "admin-subject", f.ownerMember, f.owner)
+	f.link(t, "admin-subject", f.ownerMember, f.owner)
 	f.ownerRaw = f.session(t, f.owner, uuid.Nil())
 	session, err := f.admits(t, f.ownerRaw, uuid.Nil())
 	if err != nil {
@@ -136,7 +136,7 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 		t.Fatalf("SSO browser under required SSO = %+v, %v", p, err)
 	}
 	// A member whose SSO proof predates their sign-in cutoff signs in again.
-	f.bind(t, "member-subject", memberID, member)
+	f.link(t, "member-subject", memberID, member)
 	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("member-subject", "", time.Now()), ordinaryBrowser, memberSession.SessionID); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestUnlinkingAndRetiringRevokeWhatTheLinkIssued(t *testing.T) {
 	f := newSSOAdminFixture(t)
 	member := f.user(t, "Member", "member@example.test")
 	memberID := f.member(t, f.org, member, "member")
-	f.bind(t, "member-subject", memberID, member)
+	f.link(t, "member-subject", memberID, member)
 	memberRaw := f.session(t, member, uuid.Nil())
 	memberSession, _ := f.admits(t, memberRaw, uuid.Nil())
 	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("member-subject", "", time.Now()), memberRaw, memberSession.SessionID); err != nil {

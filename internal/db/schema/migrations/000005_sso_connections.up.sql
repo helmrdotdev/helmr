@@ -65,8 +65,8 @@ CREATE TABLE sso_identities (
  UNIQUE (id,org_id,user_id)
 );
 
--- Binds an identity to one membership lifetime. Each identity and each member
--- has at most one live binding.
+-- Links an identity to one membership lifetime. Each identity and each member
+-- has at most one live link.
 CREATE TABLE sso_member_links (
  id uuid PRIMARY KEY,
  org_id uuid NOT NULL,

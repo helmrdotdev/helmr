@@ -37,7 +37,7 @@ type MembershipDetails struct {
 }
 type InvitationStateDetails struct{}
 
-// SSOLinkDetails names the company SSO identity a membership was linked to.
+// SSOLinkDetails names the single sign-on identity a membership was linked to.
 type SSOLinkDetails struct {
 	ConnectionID uuid.UUID `json:"connection_id"`
 	IdentityID   uuid.UUID `json:"identity_id"`
