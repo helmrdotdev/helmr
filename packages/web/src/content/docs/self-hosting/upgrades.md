@@ -198,7 +198,7 @@ submitted batch is not a completed drain phase. Keep Control Plane, dispatcher,
 worker connectivity, renewal, capture and cleanup running throughout the wait.
 You may pause submissions upstream; otherwise new work can queue durably.
 
-Do not substitute Group drain, Pool drain/retirement or on-host `worker drain`.
+Do not substitute Group drain, Pool drain/retirement or on-host `helmr worker drain`.
 They do not implement this full-stop procedure. A long-running Turn may block indefinitely.
 A timeout never permits deleting it or inventing loss. Wait, or have its owner
 explicitly cancel named work through its normal API. Maintenance does not choose

@@ -21,8 +21,6 @@ locals {
   parent_image         = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
   distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : sort(distinct(var.distribution_regions))
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
-    install_host_script               = trimsuffix(file("${path.module}/templates/install-worker-host.sh"), "\n")
-    install_host_digest               = filesha256("${path.module}/templates/install-worker-host.sh")
     prepare_root_script               = trimsuffix(file("${path.module}/templates/prepare-root.sh"), "\n")
     prepare_root_digest               = filesha256("${path.module}/templates/prepare-root.sh")
     host_artifacts_bundle_s3_uri      = var.host_artifacts_bundle_s3_uri
@@ -66,6 +64,8 @@ locals {
             inputs = {
               commands = [
                 "test -x /usr/local/bin/worker",
+                "test \"$(stat -c %U:%G:%a /usr/local/bin/helmr)\" = root:root:755",
+                "/usr/local/bin/helmr worker --help >/dev/null",
                 "test -f /usr/local/sbin/helmr-prepare-root && test ! -L /usr/local/sbin/helmr-prepare-root && test -x /usr/local/sbin/helmr-prepare-root",
                 "test \"$(stat -c %a /usr/local/sbin/helmr-prepare-root)\" = 755",
                 "test \"$(sha256sum /usr/local/sbin/helmr-prepare-root | awk '{print $1}')\" = \"${local.prepare_root_digest}\"",
@@ -103,6 +103,7 @@ locals {
                 "test \"$(systemctl show helmr-worker.service -p DelegateSubgroup --value)\" = supervisor",
                 "test \"$(systemctl show helmr-worker.service -p KillMode --value)\" = mixed",
                 "test \"$(systemctl show helmr-worker.service -p TasksMax --value)\" = infinity",
+                "test \"$(systemctl show helmr-worker.service -p RestartPreventExitStatus --value)\" = 78",
                 "getent passwd helmr-verifier >/dev/null",
               ]
             }

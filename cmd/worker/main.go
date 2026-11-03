@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
+	"github.com/helmrdotdev/helmr/internal/workerhost"
 )
 
 func main() {
@@ -37,44 +37,15 @@ func main() {
 	if len(os.Args) == 1 {
 		if err := run(log); err != nil {
 			log.Error("worker stopped", "error", err)
-			if errors.Is(err, errWorkerKeyRejected) {
+			if errors.Is(err, workerhost.ErrKeyRejected) {
 				// Service managers keep a stopped worker stopped on this
 				// status instead of restarting it.
-				os.Exit(exitWorkerKeyRejected)
+				os.Exit(workerhost.ExitKeyRejected)
 			}
 			os.Exit(1)
 		}
 		return
 	}
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "drain":
-			if err := runDrain(log, os.Args[2:]); err != nil {
-				log.Error("drain worker", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "fence":
-			if err := runFence(); err != nil {
-				log.Error("fence worker", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "status":
-			if err := runStatus(log); err != nil {
-				log.Error("get worker status", "error", err)
-				os.Exit(1)
-			}
-			return
-		default:
-			log.Error("unknown command", "command", os.Args[1])
-			os.Exit(1)
-		}
-	}
-}
-
-// defaultWorkDir is the worker's temporary state root when no work directory
-// is configured.
-func defaultWorkDir() string {
-	return filepath.Join(os.TempDir(), "helmr-worker")
+	log.Error("the worker takes no arguments; manage it with helmr worker", "arguments", os.Args[1:])
+	os.Exit(2)
 }

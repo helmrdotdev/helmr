@@ -1,4 +1,4 @@
-package main
+package workerhost
 
 import (
 	"context"
@@ -23,12 +23,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const workerIdentityFileName = "worker-identity.json"
+const IdentityFileName = "worker-identity.json"
 
-// workerIdentityFile is the machine's durable identity: the host it enrolled
+// Identity is the machine's durable identity: the host it enrolled
 // as and the Ed25519 machine key it proves itself with. The private key never
 // leaves this root-only file.
-type workerIdentityFile struct {
+type Identity struct {
 	WorkerHostID string    `json:"worker_host_id"`
 	MachineKey   []byte    `json:"machine_key"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -36,37 +36,37 @@ type workerIdentityFile struct {
 	JailerDir    string    `json:"jailer_dir"`
 }
 
-func (identity workerIdentityFile) key() ed25519.PrivateKey {
+func (identity Identity) Key() ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(identity.MachineKey)
 }
 
-func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir string) (workerIdentityFile, error) {
-	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, cfg.JailerChrootDir)
+func ResolveIdentity(ctx context.Context, cfg config.Worker, workDir string) (Identity, error) {
+	workDir, jailerDir, err := RecoveryRoots(workDir, cfg.JailerChrootDir)
 	if err != nil {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
-	validate := func(identity workerIdentityFile) error {
+	validate := func(identity Identity) error {
 		if identity.WorkDir != workDir || identity.JailerDir != jailerDir {
 			return errors.New("worker identity recovery roots are missing or do not match configured roots")
 		}
 		return nil
 	}
-	path := workerIdentityPath(workDir, cfg.WorkerIdentityPath)
-	if identity, err := readWorkerIdentity(path); err == nil {
+	path := IdentityPath(workDir, cfg.WorkerIdentityPath)
+	if identity, err := ReadIdentity(path); err == nil {
 		if _, err := os.Lstat(pendingMachineKeyPath(path)); err == nil {
 			// A pending key left by a crash after the identity was stored
 			// belongs to that identity and must not outlive it.
-			if err := withWorkerIdentityLock(path, func() error { return removePendingMachineKey(path) }); err != nil {
-				return workerIdentityFile{}, err
+			if err := withIdentityLock(path, func() error { return removePendingMachineKey(path) }); err != nil {
+				return Identity{}, err
 			}
 		}
 		return identity, validate(identity)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
-	var identity workerIdentityFile
-	if err := withWorkerIdentityLock(path, func() error {
-		if stored, err := readWorkerIdentity(path); err == nil {
+	var identity Identity
+	if err := withIdentityLock(path, func() error {
+		if stored, err := ReadIdentity(path); err == nil {
 			// A pending key left by a crash after the identity was stored
 			// belongs to that identity and must not outlive it.
 			if err := removePendingMachineKey(path); err != nil {
@@ -77,7 +77,7 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		enrollmentToken, err := readWorkerEnrollmentToken(cfg.WorkerEnrollmentTokenFile)
+		enrollmentToken, err := ReadEnrollmentToken(cfg.WorkerEnrollmentTokenFile)
 		if err != nil {
 			return err
 		}
@@ -122,65 +122,60 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 		if _, err := ids.Parse(registered.WorkerPoolID); err != nil {
 			return errors.New("worker enrollment response worker_pool_id is not a canonical UUIDv7")
 		}
-		identity = workerIdentityFile{
+		identity = Identity{
 			WorkerHostID: registered.WorkerHostID,
 			MachineKey:   private.Seed(),
 			CreatedAt:    time.Now().UTC(),
 			WorkDir:      workDir,
 			JailerDir:    jailerDir,
 		}
-		if err := writeWorkerIdentity(path, identity); err != nil {
+		if err := writeIdentity(path, identity); err != nil {
 			return err
 		}
 		return removePendingMachineKey(path)
 	}); err != nil {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
 	return identity, nil
 }
 
-// errWorkerKeyRejected means the Control Plane no longer accepts this machine
+// ErrKeyRejected means the Control Plane no longer accepts this machine
 // key: it was revoked, its host was retired or replaced, or its group no
 // longer admits it. The worker stops rather than enrolling itself again;
 // coming back takes a new enrollment with a valid token.
-var errWorkerKeyRejected = errors.New("the Control Plane no longer admits this machine: its key was revoked, its host was retired or replaced, or its group no longer admits it. Remove the worker identity and enroll this machine again with a valid enrollment token")
+var ErrKeyRejected = errors.New("the Control Plane no longer admits this machine: its key was revoked, its host was retired or replaced, or its group no longer admits it. Remove the worker identity and enroll this machine again with a valid enrollment token")
 
-// exitWorkerKeyRejected is the worker's exit status when the Control Plane no
+// ExitKeyRejected is the worker's exit status when the Control Plane no
 // longer admits its machine; service units list it in RestartPreventExitStatus.
-const exitWorkerKeyRejected = 78
+const ExitKeyRejected = 78
 
-func resolveAuthenticatedWorkerIdentity(
+func ResolveAuthenticatedIdentity(
 	ctx context.Context,
 	cfg config.Worker,
 	workDir string,
-	authenticate func(workerIdentityFile) error,
-) (workerIdentityFile, error) {
-	identity, err := resolveWorkerIdentity(ctx, cfg, workDir)
+	authenticate func(Identity) error,
+) (Identity, error) {
+	identity, err := ResolveIdentity(ctx, cfg, workDir)
 	if err != nil {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
 	if err := authenticate(identity); err != nil {
 		if httpclient.IsStatus(err, http.StatusUnauthorized) {
-			return workerIdentityFile{}, errWorkerKeyRejected
+			return Identity{}, ErrKeyRejected
 		}
-		return workerIdentityFile{}, fmt.Errorf("authenticate worker identity: %w", err)
+		return Identity{}, fmt.Errorf("authenticate worker identity: %w", err)
 	}
 	return identity, nil
 }
 
-func resolveWorkerControlPlaneIdentity(cfg config.WorkerControlPlane, workDir string) (workerIdentityFile, error) {
-	path := workerIdentityPath(workDir, cfg.WorkerIdentityPath)
-	return readWorkerIdentity(path)
-}
-
-func workerIdentityPath(workDir string, configured string) string {
+func IdentityPath(workDir string, configured string) string {
 	if configured = strings.TrimSpace(configured); configured != "" {
 		return configured
 	}
-	return filepath.Join(workDir, workerIdentityFileName)
+	return filepath.Join(workDir, IdentityFileName)
 }
 
-func readWorkerEnrollmentToken(path string) (string, error) {
+func ReadEnrollmentToken(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required for worker enrollment")
@@ -241,9 +236,9 @@ func removePendingMachineKey(identityPath string) error {
 // generates and stores a new one. The caller holds the identity lock.
 func pendingMachineKey(identityPath string) (ed25519.PrivateKey, error) {
 	path := pendingMachineKeyPath(identityPath)
-	pending, err := readWorkerIdentityFile(path)
+	pending, err := readIdentityFile(path)
 	if err == nil && len(pending.MachineKey) == ed25519.SeedSize {
-		return pending.key(), nil
+		return pending.Key(), nil
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -252,60 +247,60 @@ func pendingMachineKey(identityPath string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate worker machine key: %w", err)
 	}
-	if err := writeWorkerIdentity(path, workerIdentityFile{MachineKey: private.Seed(), CreatedAt: time.Now().UTC()}); err != nil {
+	if err := writeIdentity(path, Identity{MachineKey: private.Seed(), CreatedAt: time.Now().UTC()}); err != nil {
 		return nil, err
 	}
 	return private, nil
 }
 
-func readWorkerIdentity(path string) (workerIdentityFile, error) {
-	identity, err := readWorkerIdentityFile(path)
+func ReadIdentity(path string) (Identity, error) {
+	identity, err := readIdentityFile(path)
 	if err != nil {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
 	identity.WorkerHostID = strings.TrimSpace(identity.WorkerHostID)
 	if identity.WorkerHostID == "" || len(identity.MachineKey) != ed25519.SeedSize {
-		return workerIdentityFile{}, fmt.Errorf("worker identity %s is incomplete", path)
+		return Identity{}, fmt.Errorf("worker identity %s is incomplete", path)
 	}
 	return identity, nil
 }
 
-func readWorkerIdentityFile(path string) (workerIdentityFile, error) {
+func readIdentityFile(path string) (Identity, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return workerIdentityFile{}, err
+		return Identity{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return workerIdentityFile{}, fmt.Errorf("worker identity %s is not a regular file", path)
+		return Identity{}, fmt.Errorf("worker identity %s is not a regular file", path)
 	}
 	if info.Mode().Perm() != 0o600 {
-		return workerIdentityFile{}, fmt.Errorf("worker identity %s must have mode 0600", path)
+		return Identity{}, fmt.Errorf("worker identity %s must have mode 0600", path)
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return workerIdentityFile{}, fmt.Errorf("open worker identity %s without following links: %w", path, err)
+		return Identity{}, fmt.Errorf("open worker identity %s without following links: %w", path, err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return workerIdentityFile{}, fmt.Errorf("inspect opened worker identity %s: %w", path, err)
+		return Identity{}, fmt.Errorf("inspect opened worker identity %s: %w", path, err)
 	}
 	if !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 {
-		return workerIdentityFile{}, fmt.Errorf("opened worker identity %s changed type or permissions", path)
+		return Identity{}, fmt.Errorf("opened worker identity %s changed type or permissions", path)
 	}
 	bytes, err := io.ReadAll(file)
 	if err != nil {
-		return workerIdentityFile{}, fmt.Errorf("read worker identity %s: %w", path, err)
+		return Identity{}, fmt.Errorf("read worker identity %s: %w", path, err)
 	}
-	var identity workerIdentityFile
+	var identity Identity
 	if err := json.Unmarshal(bytes, &identity); err != nil {
-		return workerIdentityFile{}, fmt.Errorf("read worker identity %s: %w", path, err)
+		return Identity{}, fmt.Errorf("read worker identity %s: %w", path, err)
 	}
 	return identity, nil
 }
 
-func writeWorkerIdentity(path string, identity workerIdentityFile) error {
+func writeIdentity(path string, identity Identity) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create worker identity directory: %w", err)
 	}
@@ -345,7 +340,7 @@ func writeWorkerIdentity(path string, identity workerIdentityFile) error {
 	return nil
 }
 
-func withWorkerIdentityLock(path string, fn func() error) error {
+func withIdentityLock(path string, fn func() error) error {
 	lockPath := path + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return fmt.Errorf("create worker identity lock directory: %w", err)
@@ -376,7 +371,7 @@ func syncDirectory(path string) error {
 // Resolve the effective launch and recovery roots before acquiring host authority.
 // Persist canonical paths so changing a symlink or a custom identity path
 // cannot make a successor inventory a different directory from its predecessor.
-func resolveWorkerRecoveryRoots(workDir, jailerDir string) (string, string, error) {
+func RecoveryRoots(workDir, jailerDir string) (string, string, error) {
 	canonical := func(path string) (string, error) {
 		absolute, err := filepath.Abs(path)
 		if err != nil {

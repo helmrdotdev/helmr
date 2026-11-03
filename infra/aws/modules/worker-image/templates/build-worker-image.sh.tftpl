@@ -29,10 +29,6 @@ cat >"$work/helmr-prepare-root" <<'HELMR_PREPARE_ROOT'
 ${prepare_root_script}
 HELMR_PREPARE_ROOT
 printf '%s  %s\n' '${prepare_root_digest}' "$work/helmr-prepare-root" | sha256sum -c -
-cat >"$work/install-worker-host" <<'HELMR_INSTALL_HOST'
-${install_host_script}
-HELMR_INSTALL_HOST
-printf '%s  %s\n' '${install_host_digest}' "$work/install-worker-host" | sha256sum -c -
 
 aws_cli_version=2.31.39
 aws_cli_digest=5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663
@@ -53,9 +49,19 @@ test "$(aws --version 2>&1 | awk '{print $1}')" = "aws-cli/$aws_cli_version"
 
 aws s3 cp '${host_artifacts_bundle_s3_uri}' "$work/worker-host-artifacts.tar"
 aws s3 cp '${runtime_artifacts_bundle_s3_uri}' "$work/runtime-artifacts.tar"
-bash "$work/install-worker-host" install \
-  "$work/worker-host-artifacts.tar" '${host_artifacts_bundle_digest}' '${host_artifacts_manifest_digest}' \
-  "$work/runtime-artifacts.tar" '${runtime_artifacts_bundle_digest}' '${runtime_artifacts_manifest_digest}' \
-  "$work/helmr-prepare-root"
+# Run the installer customers use: the host bundle's own helmr, taken from the
+# bundle only after its digest matches, verifies and installs both bundles.
+printf '%s  %s\n' '${host_artifacts_bundle_digest}' "$work/worker-host-artifacts.tar" | sha256sum -c -
+install -d -m 0700 "$work/installer"
+tar --no-same-owner -C "$work/installer" -xf "$work/worker-host-artifacts.tar" helmr
+"$work/installer/helmr" worker install \
+  --host-bundle "$work/worker-host-artifacts.tar" \
+  --host-bundle-digest 'sha256:${host_artifacts_bundle_digest}' \
+  --host-manifest-digest 'sha256:${host_artifacts_manifest_digest}' \
+  --runtime-bundle "$work/runtime-artifacts.tar" \
+  --runtime-bundle-digest 'sha256:${runtime_artifacts_bundle_digest}' \
+  --runtime-manifest-digest 'sha256:${runtime_artifacts_manifest_digest}'
+install -d -m 0755 /usr/local/sbin
+install -m 0755 "$work/helmr-prepare-root" /usr/local/sbin/helmr-prepare-root
 apt-get clean
 rm -rf /var/lib/apt/lists/*

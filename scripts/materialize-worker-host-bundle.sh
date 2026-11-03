@@ -33,7 +33,7 @@ host_dir=$2
 [ -d "${host_dir}/bin" ] || die "Worker host bin directory does not exist: ${host_dir}/bin"
 [ -d "${host_dir}/share/helmr" ] || die "Worker host share directory does not exist: ${host_dir}/share/helmr"
 
-files=(cpu-template-helper firecracker jailer mkfs.ext4 worker)
+files=(cpu-template-helper firecracker jailer mkfs.ext4 worker helmr)
 for name in "${files[@]}"; do
   path="${host_dir}/bin/${name}"
   [ ! -L "${path}" ] && [ -f "${path}" ] && [ -x "${path}" ] ||
@@ -98,7 +98,7 @@ jq -cn \
 ' >"${payload}/worker-host-artifacts.json"
 chmod 0644 "${payload}/worker-host-artifacts.json"
 
-members=(cpu-template-helper firecracker jailer mkfs.ext4 worker mke2fs.conf worker-host-artifacts.json)
+members=(cpu-template-helper firecracker jailer mkfs.ext4 worker helmr mke2fs.conf worker-host-artifacts.json)
 tar \
   --sort=name \
   --mtime='@0' \

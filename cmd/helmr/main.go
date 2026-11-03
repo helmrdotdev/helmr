@@ -52,6 +52,7 @@ func newRootCommand() *cobra.Command {
 		roleCommand(),
 		groupCommand(),
 		memberCommand(),
+		workerCommand(),
 	)
 	return root
 }

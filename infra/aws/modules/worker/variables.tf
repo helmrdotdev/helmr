@@ -174,6 +174,12 @@ variable "worker_binary_path" {
   default     = "/usr/local/bin/worker"
 }
 
+variable "helmr_binary_path" {
+  description = "Absolute path to the helmr CLI on the worker AMI; the lifecycle integration runs its worker commands."
+  type        = string
+  default     = "/usr/local/bin/helmr"
+}
+
 variable "root_volume_size_gb" {
   description = "Worker root EBS volume size in GiB."
   type        = number

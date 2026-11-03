@@ -211,7 +211,7 @@ let
               cd "infra/aws/modules/$module"
               if [ "$module" = worker-image ]; then
                 bash tests/prepare-root.test.sh
-                python3 tests/test_install.py
+                python3 tests/test_image.py
               fi
               if [ "$module" = worker ]; then
                 python3 tests/test_lifecycle.py

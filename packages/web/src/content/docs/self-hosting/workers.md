@@ -136,7 +136,7 @@ activation recheck the result. Do not bypass overlap checks or activation fences
 
 ## AMI and enrollment contract
 
-Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. Use the public checkout's [`infra/aws/stacks/worker-image/README.md`](https://github.com/helmrdotdev/helmr/blob/main/infra/aws/stacks/worker-image/README.md) for the complete input, build and cleanup procedure; use the documentation from your selected source commit when reproducing an older release. The prepared AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
+Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. Use the public checkout's [`infra/aws/stacks/worker-image/README.md`](https://github.com/helmrdotdev/helmr/blob/main/infra/aws/stacks/worker-image/README.md) for the complete input, build and cleanup procedure; use the documentation from your selected source commit when reproducing an older release. The image build installs the release's bundles with `helmr worker install`, the installer `helmr worker up` uses, so the prepared AMI contains the worker binary and unit, the `helmr` CLI, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
@@ -170,7 +170,7 @@ control-plane release publish-hosts \
 
 The command verifies the index's Sigstore signature from the release workflow,
 checks every host asset (`worker-host-artifacts.tar` and `.json`,
-`runtime-artifacts.tar` and `.json`, `helmr-linux-amd64.tar.gz`) against it, puts
+`runtime-artifacts.tar` and `.json`) against it, puts
 them in the platform store and records the release. Hosts verify the same
 signature again before installing. A Control Plane built from source names no
 release, so its hosts install from the deployment's own build and never update
@@ -180,6 +180,61 @@ Each release embeds the Sigstore trusted root current when it was built, so
 hosts verify releases without reaching Sigstore. If Sigstore rotates its signing
 keys, a host whose release predates the rotation cannot verify releases signed
 only with the new keys; reinstall it from a current release.
+
+## Running a worker on your own machine
+
+A Linux x86_64 machine with KVM joins an organization's worker group with
+`helmr worker up`, run as root:
+
+```sh
+sudo helmr login
+sudo helmr worker up --group <worker-group-id>
+```
+
+With `--group`, `up` uses the login to mint a single-use enrollment token for
+this machine. Given a token instead, run `sudo helmr worker up --token-file
+<path> --control-plane-url <url>`; the file must have mode `0400` or `0600`.
+
+`up` first checks the machine and names everything it is missing with what to
+do about it: `/dev/kvm`, the cgroup v2 hierarchy, systemd, `/etc/machine-id`,
+and the `systemctl`, `journalctl`, `modprobe`, `ip` (iproute2), `nft`
+(nftables), `sysctl`, `getent`, `groupadd` and `useradd` commands. It then
+writes the worker's environment to `/etc/helmr/worker.env` (mode `0600`):
+
+- `WORKER_RESOURCE_ID` is `machine-` followed by `/etc/machine-id`, so a
+  reinstalled machine keeps its resource ID and a replacement does not take
+  over a lost machine's;
+- `WORKER_NETWORK_RESOLVER_IPV4` is the machine's first non-loopback IPv4
+  nameserver, from systemd-resolved's upstream list when it runs; pass
+  `--resolver` when the machine has none;
+- `WORKER_POOL_NAME` is `default`; give machines of different shapes their own
+  pools with `--pool`;
+- `WORKER_COMPUTER_DEVICES` lists `--computer-devices` NBD devices (16 by
+  default); `up` loads the `nbd` module with that many devices and refuses one
+  another process holds;
+- the rest are the same defaults as the AWS reference stacks. `--env-file`
+  applies `KEY=VALUE` lines over them, for example
+  `WORKER_NETWORK_BLOCKED_IPV4_CIDRS` for the machine's own networks or VM
+  sizing.
+
+`up` then enrolls the machine with a new machine key, downloads the Control
+Plane's release, verifies it against its signed index, installs it and starts
+the `helmr-worker` service. Rerun on an enrolled machine, `up` resumes where it
+stopped and starts the service. A Control Plane built from source names no
+release; install the bundles you built with `helmr worker install`, then run
+`up`.
+
+On the machine:
+
+| Command | What it does |
+| --- | --- |
+| `helmr worker status` | Shows the host, its group and readiness; exits non-zero unless the worker is active and ready. |
+| `helmr worker drain` | Stops new work and waits for running work to finish. A drained host's key is retired. |
+| `helmr worker down` | Stops the worker and keeps the machine enrolled; the group sees it as lost until `up` starts it again. |
+| `helmr worker fence` | Records that the machine's work is lost, so it resumes elsewhere in the group now. Run it from a provider termination hook after a drain did not finish, or by hand before wiping the machine. |
+| `helmr worker remove` | Drains, stops and uninstalls the worker and deletes the machine's identity. When it cannot drain, `--group` with a login revokes the machine's key. |
+| `helmr worker logs` | Shows the worker's journal; `-f` follows it. |
+| `helmr worker install` | Installs a release's bundles from local files, pinned by digest, without enrolling. Machine image builds use it. |
 
 ## Machine keys, token rotation and revocation
 
@@ -264,14 +319,14 @@ Every update and count reduction uses the [full-stop maintenance procedure](/doc
 Drain the whole source population with the deployment Capacity API, wait for all
 exact Host epochs to become `termination_ready`, and only then remove that
 population. Keep Control Plane, dispatcher and networking available during drain.
-Group drain, Pool retirement and on-host `worker drain` have different purposes
+Group drain, Pool retirement and on-host `helmr worker drain` have different purposes
 and do not implement this procedure. A long-running Turn can postpone maintenance
 indefinitely; an observation timeout does not authorize cancellation or deletion.
 
 Check connectivity and activation with:
 
 ```sh
-worker status
+sudo helmr worker status
 ```
 
 The status command exits non-zero unless the worker can authenticate to the Control Plane and is active.

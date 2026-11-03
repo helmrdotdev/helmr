@@ -27,7 +27,7 @@ class TerminationLifecycle(unittest.TestCase):
                 "autoscaling_group_name": "source-asg", "launch_lifecycle_hook_name": "launch",
                 "launch_readiness_timeout_seconds": "10", "termination_lifecycle_hook_name": "terminate",
                 "termination_wait_timeout_seconds": "1", "lifecycle_heartbeat_interval_seconds": "0",
-                "worker_binary_path": str(root / "worker"), "worker_work_dir": str(root),
+                "helmr_binary_path": str(root / "helmr"), "worker_work_dir": str(root),
                 "worker_service_name": "worker",
             }
             script = re.sub(r"\$\{([a-z_]+)\}", lambda m: values[m[1]], script).replace("$${", "${")
@@ -56,7 +56,7 @@ case "$1" in
  is-active) test -f "$TEST_ROOT/ready";;
 esac
 ''',
-                "worker": '#!/bin/sh\necho worker-status >>"$TEST_ROOT/calls"\ntest -f "$TEST_ROOT/ready"\n',
+                "helmr": '#!/bin/sh\ntest "$1 $2" = "worker status" || exit 2\necho worker-status >>"$TEST_ROOT/calls"\ntest -f "$TEST_ROOT/ready"\n',
                 "aws": '''#!/bin/sh
 printf '%s\\n' "$*" >>"$TEST_ROOT/calls"
 case "$*" in
@@ -117,8 +117,8 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
         self.assertNotIn("Requires=helmr-worker-enrollment-token.service", template)
         self.assertNotIn("ExecCondition=", template)
         self.assertIn("systemctl disable '${worker_service_name}'", template)
-        image = TEMPLATE.parents[2] / "worker-image/templates/install-worker-host.sh"
-        self.assertIn("Restart=on-failure", image.read_text())
+        installer = TEMPLATE.parents[5] / "internal/hostinstall/install.go"
+        self.assertIn("Restart=on-failure", installer.read_text())
 
     def run_termination(self, state="Terminated", after_state=None, drain_ok=False, fence_ok=True, enrolled=True, action="drain_and_complete_termination"):
         with tempfile.TemporaryDirectory() as directory:
@@ -134,7 +134,7 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
                 "autoscaling_group_name": "source-asg", "launch_lifecycle_hook_name": "launch",
                 "launch_readiness_timeout_seconds": "10", "termination_lifecycle_hook_name": "terminate",
                 "termination_wait_timeout_seconds": "1", "lifecycle_heartbeat_interval_seconds": "0",
-                "worker_binary_path": str(root / "worker"), "worker_work_dir": str(root),
+                "helmr_binary_path": str(root / "helmr"), "worker_work_dir": str(root),
                 "worker_service_name": "worker",
             }
             script = re.sub(r"\$\{([a-z_]+)\}", lambda m: values[m[1]], script)
@@ -149,7 +149,9 @@ target_lifecycle_state() { cat "$TEST_ROOT/state"; }
                 "curl": '#!/bin/sh\ncase "$*" in *instance-id*) echo i-source;; *) echo \'{"region":"us-east-1"}\';; esac\n',
                 "systemctl": '#!/bin/sh\nprintf "systemctl %s\\n" "$*" >> "$TEST_ROOT/calls"\n',
                 "aws": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_ROOT/calls"\n',
-                "worker": '''#!/bin/sh
+                "helmr": '''#!/bin/sh
+test "$1" = worker || exit 2
+shift
 printf '%s\\n' "$*" >> "$TEST_ROOT/calls"
 if [ "$1" = drain ]; then
  [ -z "$AFTER_STATE" ] || printf '%s' "$AFTER_STATE" > "$TEST_ROOT/state"

@@ -1,4 +1,4 @@
-package main
+package workerhost
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestReadWorkerEnrollmentToken(t *testing.T) {
 	if err := os.WriteFile(path, []byte(token.Raw), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readWorkerEnrollmentToken(path)
+	got, err := ReadEnrollmentToken(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 	}
 	for _, path := range []string{symlink, wrongMode, newline, large} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := readWorkerEnrollmentToken(path); err == nil {
+			if _, err := ReadEnrollmentToken(path); err == nil {
 				t.Fatal("unsafe token file accepted")
 			}
 		})
@@ -93,19 +93,19 @@ func TestWorkerIdentitySurvivesAPIVersionMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 	workDir := t.TempDir()
-	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, "")
+	workDir, jailerDir, err := RecoveryRoots(workDir, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored := workerIdentityFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
-	path := workerIdentityPath(workDir, "")
-	if err := writeWorkerIdentity(path, stored); err != nil {
+	stored := Identity{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
+	path := IdentityPath(workDir, "")
+	if err := writeIdentity(path, stored); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL}
-	_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, workDir, func(identity workerIdentityFile) error {
+	_, err = ResolveAuthenticatedIdentity(t.Context(), cfg, workDir, func(identity Identity) error {
 		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
-			workerclient.WithAuth(identity.WorkerHostID, identity.key()), workerclient.WithService("service"))
+			workerclient.WithAuth(identity.WorkerHostID, identity.Key()), workerclient.WithService("service"))
 		if err != nil {
 			return err
 		}
@@ -115,7 +115,7 @@ func TestWorkerIdentitySurvivesAPIVersionMismatch(t *testing.T) {
 	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.APIVersionMismatchCode {
 		t.Fatalf("error = %v, want version mismatch", err)
 	}
-	if kept, err := readWorkerIdentity(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
+	if kept, err := ReadIdentity(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
 		t.Fatalf("stored identity = %+v, err = %v; want it kept", kept, err)
 	}
 	if len(requests) != 1 || requests["/worker/v1/instance/challenge"] != 1 {
@@ -127,14 +127,14 @@ func TestWorkerIdentityBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 	for _, change := range []string{"work", "jailer", "missing", "alias", "retarget"} {
 		t.Run(change, func(t *testing.T) {
 			base := t.TempDir()
-			work, jailer, err := resolveWorkerRecoveryRoots(filepath.Join(base, "work"), "")
+			work, jailer, err := RecoveryRoots(filepath.Join(base, "work"), "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if jailer != filepath.Join(work, "vms", "jailer") {
 				t.Fatal("incorrect default jailer root")
 			}
-			identity := workerIdentityFile{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: work, JailerDir: jailer}
+			identity := Identity{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: work, JailerDir: jailer}
 			cfg := config.Worker{WorkerIdentityPath: filepath.Join(base, "credential"), JailerChrootDir: jailer}
 			switch change {
 			case "work":
@@ -161,11 +161,11 @@ func TestWorkerIdentityBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 					}
 				}
 			}
-			if err := writeWorkerIdentity(cfg.WorkerIdentityPath, identity); err != nil {
+			if err := writeIdentity(cfg.WorkerIdentityPath, identity); err != nil {
 				t.Fatal(err)
 			}
 			called := false
-			_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, work, func(workerIdentityFile) error { called = true; return nil })
+			_, err = ResolveAuthenticatedIdentity(t.Context(), cfg, work, func(Identity) error { called = true; return nil })
 			if change == "alias" {
 				if err != nil || !called {
 					t.Fatalf("equivalent alias rejected: %v", err)
@@ -173,7 +173,7 @@ func TestWorkerIdentityBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 			} else if err == nil || called {
 				t.Fatalf("root change authenticated: called=%v err=%v", called, err)
 			}
-			kept, err := readWorkerIdentity(cfg.WorkerIdentityPath)
+			kept, err := ReadIdentity(cfg.WorkerIdentityPath)
 			if err != nil || !reflect.DeepEqual(kept, identity) {
 				t.Fatal("binding rejection modified stored credential")
 			}
@@ -212,17 +212,17 @@ func TestWorkerEnrollmentRetriesWithTheStoredKey(t *testing.T) {
 	}
 	workDir := filepath.Join(dir, "work")
 	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "laptop", WorkerPoolName: "run"}
-	if _, err := resolveWorkerIdentity(t.Context(), cfg, workDir); err == nil {
+	if _, err := ResolveIdentity(t.Context(), cfg, workDir); err == nil {
 		t.Fatal("enrollment succeeded on a lost response")
 	}
-	identity, err := resolveWorkerIdentity(t.Context(), cfg, workDir)
+	identity, err := ResolveIdentity(t.Context(), cfg, workDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 2 || !bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.key().Public().(ed25519.PublicKey)) {
-		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.key().Public())
+	if len(keys) != 2 || !bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.Key().Public().(ed25519.PublicKey)) {
+		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.Key().Public())
 	}
-	if _, err := os.Stat(pendingMachineKeyPath(workerIdentityPath(identity.WorkDir, ""))); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(pendingMachineKeyPath(IdentityPath(identity.WorkDir, ""))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pending key left behind: %v", err)
 	}
 }
@@ -257,31 +257,31 @@ func TestWorkerEnrollmentReplacesARegisteredPendingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "machine", WorkerPoolName: "run"}
-	identity, err := resolveWorkerIdentity(t.Context(), cfg, filepath.Join(dir, "work"))
+	identity, err := ResolveIdentity(t.Context(), cfg, filepath.Join(dir, "work"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(keys) != 2 || bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.key().Public().(ed25519.PublicKey)) {
-		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.key().Public())
+	if len(keys) != 2 || bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.Key().Public().(ed25519.PublicKey)) {
+		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.Key().Public())
 	}
 }
 
 // A pending key left by a crash after the identity was stored is removed, so
 // a later re-enrollment cannot reuse the identity's key.
 func TestWorkerIdentityRemovesALeftoverPendingKey(t *testing.T) {
-	workDir, jailerDir, err := resolveWorkerRecoveryRoots(t.TempDir(), "")
+	workDir, jailerDir, err := RecoveryRoots(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := workerIdentityPath(workDir, "")
-	stored := workerIdentityFile{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: workDir, JailerDir: jailerDir}
-	if err := writeWorkerIdentity(path, stored); err != nil {
+	path := IdentityPath(workDir, "")
+	stored := Identity{WorkerHostID: "host", MachineKey: testMachineKey(), WorkDir: workDir, JailerDir: jailerDir}
+	if err := writeIdentity(path, stored); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeWorkerIdentity(pendingMachineKeyPath(path), workerIdentityFile{MachineKey: testMachineKey()}); err != nil {
+	if err := writeIdentity(pendingMachineKeyPath(path), Identity{MachineKey: testMachineKey()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveWorkerIdentity(t.Context(), config.Worker{}, workDir); err != nil {
+	if _, err := ResolveIdentity(t.Context(), config.Worker{}, workDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(pendingMachineKeyPath(path)); !errors.Is(err, os.ErrNotExist) {
@@ -313,31 +313,31 @@ func TestWorkerStopsWhenItsKeyIsRejected(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(token.Raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	workDir, jailerDir, err := resolveWorkerRecoveryRoots(filepath.Join(dir, "work"), "")
+	workDir, jailerDir, err := RecoveryRoots(filepath.Join(dir, "work"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored := workerIdentityFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
-	path := workerIdentityPath(workDir, "")
-	if err := writeWorkerIdentity(path, stored); err != nil {
+	stored := Identity{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
+	path := IdentityPath(workDir, "")
+	if err := writeIdentity(path, stored); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "machine", WorkerPoolName: "run"}
-	_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, workDir, func(identity workerIdentityFile) error {
+	_, err = ResolveAuthenticatedIdentity(t.Context(), cfg, workDir, func(identity Identity) error {
 		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
-			workerclient.WithAuth(identity.WorkerHostID, identity.key()), workerclient.WithService("service"))
+			workerclient.WithAuth(identity.WorkerHostID, identity.Key()), workerclient.WithService("service"))
 		if err != nil {
 			return err
 		}
 		return client.AuthenticateWorker(t.Context())
 	})
-	if !errors.Is(err, errWorkerKeyRejected) {
+	if !errors.Is(err, ErrKeyRejected) {
 		t.Fatalf("error = %v, want the rejected-key stop", err)
 	}
 	if requests["/worker/v1/enrollment"] != 0 {
 		t.Fatalf("requests = %v, want no enrollment", requests)
 	}
-	if kept, err := readWorkerIdentity(path); err != nil || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
+	if kept, err := ReadIdentity(path); err != nil || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
 		t.Fatalf("identity = %+v, %v; want it kept", kept, err)
 	}
 }

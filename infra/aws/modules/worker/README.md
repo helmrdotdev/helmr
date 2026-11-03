@@ -9,6 +9,8 @@ volume. The module does not build the worker AMI.
 The AMI must provide:
 
 - `worker` at `worker_binary_path`
+- `helmr` at `helmr_binary_path`; the lifecycle watcher runs `helmr worker status`, `drain` and
+  `fence`
 - the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
 - `/usr/local/sbin/helmr-prepare-root`, matching the checked-in

@@ -277,10 +277,11 @@ These are per-producer memory limits, not durable queue reservations.
 
 
 Required for every Worker: `CONTROL_PLANE_URL`, `WORKER_RESOURCE_ID`,
-`WORKER_POOL_NAME`, `WORKER_ENROLLMENT_TOKEN_FILE`, `JAILER_UID`, `JAILER_GID`,
-`WORKER_NETWORK_LINK_POOL`, `WORKER_NETWORK_TRANSLATION_POOL`,
-`WORKER_NETWORK_RESOLVER_IPV4`, and
-`WORKER_NETWORK_BLOCKED_IPV4_CIDRS`. The blocked-prefix value is a canonical,
+`WORKER_POOL_NAME`, `JAILER_UID`, `JAILER_GID`, `WORKER_NETWORK_LINK_POOL`,
+`WORKER_NETWORK_TRANSLATION_POOL`, `WORKER_NETWORK_RESOLVER_IPV4`, and
+`WORKER_NETWORK_BLOCKED_IPV4_CIDRS`. `WORKER_ENROLLMENT_TOKEN_FILE` is required
+only while the machine has no worker identity; `helmr worker up` enrolls the
+machine itself and leaves it unset. The blocked-prefix value is a canonical,
 ordered JSON array; use `[]` only when the deployment intentionally supplies no
 additional blocked destinations. Built-in reserved-address, metadata, host and
 peer restrictions still apply.
