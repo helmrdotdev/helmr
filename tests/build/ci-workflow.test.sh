@@ -11,7 +11,7 @@ assert.deepEqual([...workflow.jobs.checks.strategy.matrix.check].sort(), ["go", 
 assert.equal(workflow.concurrency["cancel-in-progress"], true)
 const aggregate = workflow.jobs["ci-complete"]
 assert.equal(aggregate.name, "ci complete")
-assert.deepEqual([aggregate.needs].flat(), ["checks"])
+assert.deepEqual([aggregate.needs].flat(), ["checks","security"])
 const always = value => ["always()", "${{always()}}"].includes(value?.replace(/\s/g, ""))
 assert.ok(always(aggregate.if), "aggregate must run after failed or skipped checks")
 assert.ok(!aggregate["continue-on-error"], "aggregate failure must fail the job")
@@ -23,13 +23,15 @@ assert.ok(!gate["continue-on-error"], "gate failure must fail the aggregate")
 assert.equal(gate.shell ?? aggregate.defaults?.run?.shell ?? workflow.defaults?.run?.shell ?? "bash", "bash")
 assert.equal(typeof gate.run, "string")
 for (const result of ["success", "failure", "cancelled", "skipped", ""]) {
-  const execution = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", gate.run], {
-    env: { ...process.env, CHECKS_RESULT: result }, encoding: "utf8",
-  })
-  assert.ifError(execution.error)
-  assert.equal(execution.signal, null)
-  assert.equal(execution.status === 0, result === "success", `aggregate result ${JSON.stringify(result)}: ${execution.stderr}`)
-  console.log(`ok - aggregate ${result || "empty"} ${execution.status === 0 ? "passes" : "fails"}`)
+  for (const security of ["success","failure","cancelled","skipped",""]) {
+    const execution = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", gate.run], {
+      env: { ...process.env, CHECKS_RESULT: result, SECURITY_RESULT: security }, encoding: "utf8",
+    })
+    assert.ifError(execution.error)
+    assert.equal(execution.signal, null)
+    assert.equal(execution.status === 0, (result === "success" && security === "success"), `aggregate result ${JSON.stringify(result)}: ${execution.stderr}`)
+  }
+  console.log(`ok - aggregate ${result || "empty"} checks all security outcomes`)
 }
 JS
 printf 'ok - fixed source CI and failing aggregate\n'

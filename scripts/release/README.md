@@ -1,7 +1,7 @@
 # Product release checkpoints
 
-PRs and main pushes run the same three fixed source checks: workflow/security
-policy, Go command compilation and unit tests, and TypeScript types and unit tests.
+PRs and main pushes run workflow policy, Go and TypeScript checks, and a
+source dependency, secret and configuration scan.
 The `ci complete` gate rejects failure, cancellation or a skipped check. Source CI
 never produces distribution artifacts. There is no changed-path classifier or
 full-check label. Repository-wide databases, browser acceptance, generated-source
@@ -227,3 +227,83 @@ Consumers may reuse an existing AMI only after verifying that its complete image
 definition and artifact digests match those current-cohort bytes. The original AMI
 build identity stays intact. A byte mismatch, OS or recipe change requires a new
 image; unavailable or unverified images must not be accepted.
+
+## Security assessment
+
+A completed scan produces findings and a separate applicability decision. Source
+CI checks Go modules, Bun and npm lockfiles, tracked source for exposed secrets,
+and Terraform configurations. Release scans also inspect the four CLI binaries,
+the Worker and Control Plane Go binaries, the packaged guest kernel, the Wolfi rootfs, and the exact
+Control Plane and bundle-builder images. Builds submit their frozen bytes and
+the scheduled scan downloads the latest immutable stable release and its source
+commit. The workflow verifies release asset attestations and selects OCI images
+by digest. The kernel scan uses OSV Linux ranges and explicit tags. Trivy uses
+its vulnerability database and configuration checks. A missing expected package
+inventory, unreadable input, stale vulnerability database or scanner failure
+fails the job. Inline Terraform suppressions prevent a complete scan and are
+rejected. Use reviewed applicability evidence instead. Package-based matching cannot establish full coverage of copied
+native libraries, stripped binaries, host kernels or deployed AWS settings.
+
+Unscored kernel entries remain visible in the report. Critical observations
+(including those without a fix) and High secret findings need an applicability decision.
+The JSON artifacts include lesser findings for investigation. Secret observations
+contain rule and location metadata only. Source CI reports findings without failing
+the scan. Publication requires a successful build and an explicit `clear` verdict.
+
+- **clear** — no open findings at the review threshold.
+- **needs_review** — both preview and tag publication wait at the existing
+  protected `release` environment. Inspect the findings and record evidence
+  before approving the waiting review job.
+- **affected** — fix the product and submit a new candidate. Publication jobs
+  are skipped. There is no risk-acceptance status.
+- **Scan error** — resolve the missing evidence or technical failure. A scan
+  error cannot produce permission to publish.
+
+Maintain decisions in `.github/security-assessments.json` on main. A required
+user reviewer of the release environment must inspect the complete policy and
+post a new, unedited comment `security-assessments-sha256 <SHA256 of the complete file>` on the PR
+that introduces that blob on main. This authorizes the entire file, including
+inherited entries. A merge or environment approval alone is insufficient.
+Release and scheduled scans verify the comment, exact main blob and current
+reviewer membership using the hosted runner’s GitHub CLI for the unedited
+comment check. Advisory metadata updates can reopen a finding conservatively.
+A direct finding assessment uses the exact
+`id` and `key` copied from the report, `status` (`affected` or `not_affected`),
+`reason`, and `evidence` identifying the necessary attack condition and the
+inspected source or artifact. Only use facts bound to the scanned candidate.
+For evidence contained entirely in the scanned component, set `basis` to
+`component`. When reachability depends on product source or configuration, use
+`basis: product` and copy the report's `source` fingerprint. A changed component
+or advisory reopens a finding. Product-scoped evidence also expires when the
+source changes.
+Editing only the assessments does not invalidate all findings.
+
+For a kernel path known to require a loadable module, a reviewed rule may
+instead bind the exact advisory fingerprint and kernel digest to `absent_module`.
+Each scan must identify that module in the optional build inventory, exclude it
+from the built-in inventory, and check its absence in both shipped filesystems.
+A changed kernel, changed advisory or newly shipped module reopens the finding.
+
+Other reviewed kernel findings can use a named `guest_fact` and its required
+value (`equals`). The scanner inventories the initramfs and root filesystem on
+every run. The perf rule checks both filesystems for the packaged command and its aliases,
+and the Wolfi package inventory for perf and linux-tools packages.
+The NTFS and Airoha rules check built-in and shipped drivers. The mlx5 rule
+compares the hashes of all shipped mlx5_core modules with the reviewed bytes.
+Driver rules also bind the reviewed kernel binary. Each rule binds the exact
+advisory revision. An unrelated root filesystem change preserves a matching
+decision. Missing evidence, changed relevant bytes or a newly present affected
+component cannot clear the finding.
+
+After a reviewer approves, a fresh read-only job scans the original bytes and
+reads the current policy from main again. Approval alone cannot clear a finding.
+If the decision is still pending or affected, the workflow records the verdict
+and ends without publishing. Resolve the findings before starting a fresh
+checkpoint. Follow the tag recovery rules above for an unpublished tag.
+The publisher checks policy identity and a 24-hour assessment window before
+writing. Frozen parts expire after seven days.
+
+Daily scans retain reports for 30 days. A new or changed unresolved observation
+requests reviewer attention through GitHub's protected environment. Acknowledging
+that notification does not authorize a release. Identical findings continue to
+appear in the next report without another notification.

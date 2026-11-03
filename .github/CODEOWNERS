@@ -6,3 +6,4 @@
 /flake.lock @aktky
 /nix/ @aktky
 /images/ @aktky
+/scripts/release/ @aktky

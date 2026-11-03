@@ -147,7 +147,7 @@ rec {
   ];
 
   ciPolicy = ciShell ++ [
-    pkgs.python3
+    (pkgs.python3.withPackages (ps: [ ps.cvss ]))
     helmrPackages.bun
     pkgs.actionlint
     pkgs.zizmor

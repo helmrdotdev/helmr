@@ -33,20 +33,35 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 const workflow = Bun.YAML.parse(readFileSync(process.argv[2], "utf8"))
 const results = ["success", "failure", "cancelled", "skipped"]
+const security = Bun.YAML.parse(readFileSync(".github/workflows/release-security.yaml", "utf8"))
+const selector = security.on.workflow_call.outputs.security_state.value
+assert.equal(security.jobs.review.environment, "release")
+assert.equal(security.jobs.review.if, "needs.scan.outputs.state == 'needs_review'")
+for (const first of ["", "affected", "needs_review", "clear"]) {
+  for (const second of ["", "affected", "needs_review", "clear"]) {
+    const expression = selector.slice(3, -2)
+      .replaceAll("jobs.scan.outputs.state", JSON.stringify(first))
+      .replaceAll("jobs.review.outputs.state", JSON.stringify(second))
+    assert.match(expression, /^(?:'[^']*'|"[^"\\]*"|==|&&|\|\||\s)+$/)
+    const value = Function(`"use strict"; return (${expression})`)()
+    assert.equal(value === "clear", first === "clear" || (first === "needs_review" && second === "clear"))
+  }
+}
 for (const name of ["publish-preview", "publish-tag"]) {
   const job = workflow.jobs[name]
-  assert.deepEqual([...job.needs].sort(), ["admission", "build", "integration"])
-  for (const admission of results) for (const build of results) for (const integration of results)
+  assert.deepEqual([...job.needs].sort(), ["admission", "build", "integration", "security"])
+  for (const securityResult of results) for (const security of ["clear", "needs_review", "affected", ""]) for (const admission of results) for (const build of results) for (const integration of results)
   for (const complete of ["false", "true"]) for (const mode of ["preview", "tag"]) {
-    const values = { admission, build, integration }
+    const values = { admission, build, integration, security: securityResult }
     const expression = job.if.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1")
       .replace(/always\(\)/g, "true")
+      .replace(/needs\.security\.outputs\.security_state/g, JSON.stringify(security))
       .replace(/fromJSON\(needs\.admission\.outputs\.selection\)\.build\.mode/g, JSON.stringify(mode))
       .replace(/needs\.admission\.outputs\.complete/g, JSON.stringify(complete))
-      .replace(/needs\.(admission|build|integration)\.result/g, (_, key) => JSON.stringify(values[key]))
+      .replace(/needs\.(admission|build|integration|security)\.result/g, (_, key) => JSON.stringify(values[key]))
     assert.match(expression, /^(?:true|false|'[^']*'|"[^"\\]*"|==|!=|&&|\|\||[()!\s])+$/, `${name}: unsupported guard expression`)
     const allowed = Function(`"use strict"; return (${expression})`)()
-    const expected = admission === "success" && build === "success" && integration === "success" && complete !== "true" && ((mode === "tag") === (name === "publish-tag"))
+    const expected = securityResult === "success" && security === "clear" && admission === "success" && build === "success" && integration === "success" && complete !== "true" && ((mode === "tag") === (name === "publish-tag"))
     assert.equal(allowed, expected, `${name}: ${JSON.stringify({ ...values, complete, mode })}`)
   }
   console.log(`ok - ${name} rejects failed, skipped, cancelled and already-complete publication`)

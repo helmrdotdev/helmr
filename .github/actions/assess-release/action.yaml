@@ -1,0 +1,83 @@
+name: Assess frozen release artifacts
+description: Scan the selected source and frozen images before publication
+inputs:
+  selection:
+    required: true
+    description: Admitted release selection
+  published:
+    required: true
+    description: Scan verified public bytes during discovery recovery
+  phase:
+    required: true
+    description: Initial scan or review
+outputs:
+  state:
+    description: Applicability verdict
+    value: ${{ steps.decide.outputs.state }}
+  policy:
+    description: Digest of the assessment policy
+    value: ${{ steps.decide.outputs.policy }}
+  checked:
+    description: Scan start in Unix seconds
+    value: ${{ steps.scan.outputs.checked }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        ref: ${{ fromJSON(inputs.selection).sourceCommit }}
+        path: source
+        persist-credentials: false
+    - uses: ./tools/.github/actions/setup-nix
+    - name: Restore the original build parts
+      if: inputs.published != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_SELECTION: ${{ inputs.selection }}
+      run: |
+        mkdir "$RUNNER_TEMP/assets"
+        for part in guest builder controlplane host cli; do
+          python3 tools/scripts/release/main.py restore --part "$part" --directory "$RUNNER_TEMP/$part"
+          mv "$RUNNER_TEMP/$part/"* "$RUNNER_TEMP/assets/"
+        done
+    - name: Read the signed completed preview during discovery recovery
+      if: inputs.published == 'true'
+      shell: bash
+      env:
+        RELEASE_SELECTION: ${{ inputs.selection }}
+      run: |
+        cd tools
+        nix develop .#release-consumer -c python3 - "$RUNNER_TEMP/assets" <<'PYTHON'
+        import json, os, sys
+        sys.path.insert(0, 'scripts/release')
+        from preview_store import complete
+        if complete(json.loads(os.environ['RELEASE_SELECTION']), sys.argv[1]) is None:
+            raise ValueError("completed preview unavailable")
+        PYTHON
+    - name: Scan immutable inputs
+      id: scan
+      shell: bash
+      env:
+        PUBLISHED: ${{ inputs.published }}
+      run: |
+        echo "checked=$(date +%s)" >> "$GITHUB_OUTPUT"
+        mode=()
+        if [[ "$PUBLISHED" == true ]]; then mode+=(--published); fi
+        nix run ./tools#security-scan -- --source source --assets "$RUNNER_TEMP/assets" "${mode[@]}" --report "$RUNNER_TEMP/findings.json"
+    - name: Evaluate current assessments
+      id: decide
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python3 tools/scripts/release/security_policy.py "$RUNNER_TEMP/assessments.json"
+        python3 tools/scripts/release/security_decision.py "$RUNNER_TEMP/findings.json" "$RUNNER_TEMP/assessments.json" "$RUNNER_TEMP/decision.json"
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-security-${{ github.run_attempt }}-${{ inputs.phase }}
+        path: |
+          ${{ runner.temp }}/findings.json
+          ${{ runner.temp }}/decision.json
+        if-no-files-found: error
+        retention-days: 7
