@@ -48,10 +48,10 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 func loadSSOProof(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, uuid.UUID, error) {
 	p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
 	var member uuid.UUID
-	err := q.QueryRow(ctx, `SELECT p.id,p.authenticated_at,p.member_id FROM browser_sso_proofs p
- JOIN org_sso_member_bindings b ON b.id=p.binding_id AND b.retired_at IS NULL
- JOIN org_sso_identities i ON i.id=b.identity_id
- JOIN org_sso_connections c ON c.id=i.connection_id AND c.state='active'
+	err := q.QueryRow(ctx, `SELECT p.id,p.authenticated_at,p.member_id FROM sso_proofs p
+ JOIN sso_member_bindings b ON b.id=p.binding_id AND b.retired_at IS NULL
+ JOIN sso_identities i ON i.id=b.identity_id
+ JOIN sso_connections c ON c.id=i.connection_id AND c.state='active'
  JOIN organizations o ON o.id=p.org_id
  WHERE p.session_id=$1 AND p.org_id=$2 AND p.user_id=$3 AND p.revoked_at IS NULL
  AND p.authenticated_at+make_interval(secs=>o.sso_session_seconds)>clock_timestamp()`, p.SessionID, p.OrgID, p.UserID).Scan(&p.SSOProofID, &p.SSOAuthenticatedAt, &member)

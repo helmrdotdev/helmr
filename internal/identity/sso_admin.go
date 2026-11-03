@@ -380,10 +380,10 @@ func retireSSOBindings(ctx context.Context, tx pgx.Tx, bindings []uuid.UUID) err
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE channel='cli' AND revoked_at IS NULL
- AND sso_proof_id IN (SELECT id FROM browser_sso_proofs WHERE binding_id=ANY($1))`, bindings); err != nil {
+ AND sso_proof_id IN (SELECT id FROM sso_proofs WHERE binding_id=ANY($1))`, bindings); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE device_codes d SET status='denied' FROM org_sso_member_bindings b
+	_, err := tx.Exec(ctx, `UPDATE device_codes d SET status='denied' FROM sso_member_bindings b
  WHERE b.id=ANY($1) AND d.org_id=b.org_id AND d.decided_by_member_id=b.member_id AND d.status='approved'`, bindings)
 	return err
 }

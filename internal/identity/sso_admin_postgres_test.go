@@ -75,7 +75,7 @@ func (f ssoAdminFixture) revoked(t *testing.T, session uuid.UUID) bool {
 func (f ssoAdminFixture) liveProof(t *testing.T, member uuid.UUID) uuid.UUID {
 	t.Helper()
 	var proof uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM browser_sso_proofs WHERE member_id=$1 AND revoked_at IS NULL`, member).Scan(&proof); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sso_proofs WHERE member_id=$1 AND revoked_at IS NULL`, member).Scan(&proof); err != nil {
 		t.Fatal(err)
 	}
 	return proof
@@ -234,7 +234,7 @@ func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
 	}
 	var required bool
 	var liveBindings int
-	if err := f.pool.QueryRow(t.Context(), `SELECT sso_required,(SELECT count(*) FROM org_sso_member_bindings WHERE org_id=$1 AND retired_at IS NULL) FROM organizations WHERE id=$1`, f.org).Scan(&required, &liveBindings); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT sso_required,(SELECT count(*) FROM sso_member_bindings WHERE org_id=$1 AND retired_at IS NULL) FROM organizations WHERE id=$1`, f.org).Scan(&required, &liveBindings); err != nil {
 		t.Fatal(err)
 	}
 	if required || liveBindings != 0 {
@@ -338,7 +338,7 @@ func TestSSOTestActivationAndReplacement(t *testing.T) {
 	// The previous connection retired with its bindings, so the owner's proof
 	// through it no longer admits.
 	var state string
-	if err := f.pool.QueryRow(t.Context(), `SELECT state FROM org_sso_connections WHERE id=$1`, f.connection).Scan(&state); err != nil || state != "retired" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT state FROM sso_connections WHERE id=$1`, f.connection).Scan(&state); err != nil || state != "retired" {
 		t.Fatalf("previous connection state = %q, %v", state, err)
 	}
 	if p, err := f.admits(t, f.ownerRaw, f.org); err != nil || p.SSOProofID != uuid.Nil() {
