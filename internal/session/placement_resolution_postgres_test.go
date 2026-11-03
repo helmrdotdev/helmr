@@ -3,6 +3,7 @@ package session_test
 import (
 	"errors"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -211,6 +212,19 @@ func TestPlacementDemandCountsOnlyTheServingGroupPostgres(t *testing.T) {
 			if err != nil || queued != tc.pinned {
 				t.Fatalf("organization group queued demand = %v %v", queued, err)
 			}
+			// The capacity plan the scaler reads for deployment capacity never
+			// counts work placed on an organization group.
+			var pool string
+			if err := f.pool.QueryRow(t.Context(), `SELECT id::text FROM worker_pools WHERE worker_group_id=$1 AND status='active'`, f.group).Scan(&pool); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := workergroup.Plan(t.Context(), db.New(f.pool), f.limits, f.group, workergroup.PlanRequest{Pools: []workergroup.PoolRequest{{PoolID: pool, MaxAdditionalWorkers: 2}}}, time.Now())
+			if err != nil || len(plan.Pools) != 1 {
+				t.Fatalf("deployment capacity plan = %+v %v", plan, err)
+			}
+			if counted := plan.Pools[0].CompatibleQueuedItems != 0; counted == tc.pinned {
+				t.Fatalf("deployment capacity plan counts %d queued items", plan.Pools[0].CompatibleQueuedItems)
+			}
 		})
 	}
 }
@@ -238,6 +252,34 @@ func TestPlacementRetiredGroupRejectsNewWorkAtOncePostgres(t *testing.T) {
 		var retired workergroup.GroupRetiredError
 		if !errors.As(err, &retired) || retired.Placement != definition.DefaultPlacement || retired.Status != status || !errors.Is(err, workergroup.ErrCapacityIncompatible) {
 			t.Fatalf("start under a %s group: %v", status, err)
+		}
+	}
+	if count("sessions") != sessions || count("computers") != computers {
+		t.Fatal("rejected work was queued")
+	}
+}
+
+func TestPlacementOrganizationGroupWithoutActiveHostRejectsAtOncePostgres(t *testing.T) {
+	f := newAdmissionFixture(t)
+	group, host := organizationCapacity(t, f)
+	assignDefault(t)(f, group)
+	count := func(table string) int {
+		var n int
+		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table+` WHERE environment_id=$1`, f.env).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	sessions, computers := count("sessions"), count("computers")
+	// Fixed capacity has no scaler to wait for: with no active host, new work
+	// is rejected as unavailable instead of waiting for the start deadline,
+	// even while deployment capacity in the region could run it.
+	for _, status := range []string{"draining", "lost"} {
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status=$2,draining_at=COALESCE(draining_at,now()),drain_reason=COALESCE(drain_reason,'replacement'),
+ lost_at=CASE WHEN $2='lost' THEN now() END WHERE id=$1`, host, status)
+		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, nil, f.caller(), f.startRequest("without-host-"+status))
+		if !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+			t.Fatalf("start with a %s organization host: %v", status, err)
 		}
 	}
 	if count("sessions") != sessions || count("computers") != computers {

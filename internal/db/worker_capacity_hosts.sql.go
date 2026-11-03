@@ -114,6 +114,7 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, 
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
   FROM worker_hosts
  WHERE worker_hosts.id = $1
+   AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NULL)
 `
 
 type GetCapacityWorkerHostRow struct {
@@ -134,6 +135,8 @@ type GetCapacityWorkerHostRow struct {
 	UnreconciledSessionProcesses int64              `json:"unreconciled_session_processes"`
 }
 
+// The capacity protocol sees only deployment hosts; organization groups are
+// fixed capacity their organization operates.
 func (q *Queries) GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error) {
 	row := q.db.QueryRow(ctx, getCapacityWorkerHost, workerHostID)
 	var i GetCapacityWorkerHostRow
@@ -180,6 +183,7 @@ WITH current_instances AS (
        (SELECT count(*) FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE l.worker_host_id=worker_hosts.id AND l.fenced_at IS NULL AND p.fenced_at IS NULL)::bigint AS unreconciled_session_processes
      FROM worker_hosts
      WHERE ($3::uuid IS NULL OR worker_group_id = $3)
+       AND EXISTS (SELECT 1 FROM worker_groups g WHERE g.id = worker_hosts.worker_group_id AND g.owner_org_id IS NULL)
        AND (
            NOT $4::boolean
            OR EXISTS (
