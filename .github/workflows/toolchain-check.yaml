@@ -12,7 +12,13 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - run: nix build -L .#bundleBuilderImage
+      - run: |
+          if ! nix build -L .#bundleBuilderImage > "$RUNNER_TEMP/build.log" 2>&1; then
+            drv=$(grep -oE "/nix/store/[a-z0-9]+-docker-layer-helmr-builder-base.drv" "$RUNNER_TEMP/build.log" | tail -1)
+            if test -n "$drv"; then nix log "$drv" 2>&1 | tr '\r' '\n' | sed '/^$/d' | tail -180; fi
+            tail -30 "$RUNNER_TEMP/build.log"
+            exit 1
+          fi
       - run: cp -L result "$RUNNER_TEMP/builder.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
