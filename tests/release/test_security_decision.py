@@ -48,6 +48,21 @@ class SecurityDecisionTest(unittest.TestCase):
                 item["advisory"] = "changed"
                 self.assertEqual(state(), "needs_review")
 
+    def test_approved_template_default_only_clears_its_own_finding(self):
+        rule = dict(id="AWS-0104", template_key="f"*64, status="accepted_default",
+                    reason="Operator-configured destinations", evidence="template and operator guide")
+        item = dict(id=rule["id"], template_key=rule["template_key"], key="a"*64,
+                    severity="CRITICAL", component="source")
+        verdict = classify(dict(findings=[item]), [rule])
+        self.assertEqual(verdict["state"], "clear")
+        self.assertEqual(verdict["critical"][0]["status"], "accepted_default")
+        for other in [dict(item, template_key="c"*64), dict(item, component="kernel"),
+                      dict(item, id="another check"), {k:v for k,v in item.items() if k!="template_key"}]:
+            self.assertEqual(classify(dict(findings=[item, dict(other, key="b"*64)]), [rule])["state"],
+                             "needs_review")
+        with self.assertRaises(ValueError):
+            classify(dict(findings=[item]), [dict(rule, id="another check")])
+
     def test_findings_and_scanner_errors_are_distinct(self):
         self.assertEqual(classify(self.report, [])["state"], "needs_review")
         entry = dict(id="example", status="affected", key=self.item["key"], basis="component", reason="callable", evidence="source")

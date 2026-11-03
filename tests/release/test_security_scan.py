@@ -88,6 +88,18 @@ class SecurityScanTest(unittest.TestCase):
         self.assertEqual(key(Layer="registry"), key(Fingerprint="local"))
         self.assertNotEqual(key(), key(FixedVersion="2"))
 
+    def test_template_key_requires_same_template_and_occurrence(self):
+        def key(source="source", templates="templates", resource="control", check="AWS-0104"):
+            entry = dict(ID=check, Status="FAIL", Severity="CRITICAL",
+                         CauseMetadata={"Occurrences": [{"Resource": resource}]})
+            row = dict(Type="terraform", Target="infra/aws/example/main.tf", Misconfigurations=[entry])
+            return collect([row], "source", source, templates)[0].get("template_key")
+        self.assertIsNotNone(key())
+        self.assertEqual(key(), key(source="unrelated change"))
+        self.assertNotEqual(key(), key(templates="changed"))
+        self.assertNotEqual(key(), key(resource="another rule"))
+        self.assertIsNone(key(check="another check"))
+
     def test_secret_summary_has_location_without_matched_bytes(self):
         secret = dict(RuleID="rule", Severity="HIGH", StartLine=7, EndLine=8, Match="secret bytes")
         finding, = collect([dict(Type="text", Target="config", Secrets=[secret])], "source", "digest")
