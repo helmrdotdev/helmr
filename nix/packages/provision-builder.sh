@@ -5,7 +5,7 @@ export DEBIAN_FRONTEND=noninteractive
 work=$(mktemp -d)
 cd "$work"
 apt-mark showmanual > original-manual
-apt-get --no-download --no-install-recommends -y install "$1"/*.deb
+apt-get -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=- --no-install-recommends -y install "$1"/*.deb
 
 tar xf "$2"
 cd openssh-10.0p1

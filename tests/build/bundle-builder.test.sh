@@ -84,7 +84,9 @@ docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
     for (const command of ["bun", "gcc", "g++", "make", "python3", "git", "pkg-config"]) {
       execFileSync(command, ["--version"], {stdio:"ignore"})
     }
-    execFileSync("/usr/bin/ssh", ["-G", "localhost"], {stdio:"ignore"})
+    const sshConfig = execFileSync("/usr/bin/ssh", ["-G", "-o", "GSSAPIAuthentication=yes", "localhost"], {encoding:"utf8"})
+    assert.match(sshConfig, /^gssapiauthentication yes$/m)
+    assert.match(readFileSync("/etc/ssh/ssh_config", "utf8"), /^Include \/etc\/ssh\/ssh_config\.d\/\*\.conf$/m)
     // Objects compiled here must load under the Runtime: its glibc may not be older.
     const version = text => text.match(/(\d+)\.(\d+)/).slice(1).map(Number)
     const builder = version(execFileSync("ldd", ["--version"], {encoding:"utf8"}).split("\n")[0].split(" ").at(-1))
