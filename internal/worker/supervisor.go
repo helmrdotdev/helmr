@@ -503,7 +503,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.observeOnce(ctx, s.observation(ctx, StatusDraining, evidence))
+			status, _, err := s.observeOnce(ctx, s.observation(ctx, StatusDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveInstances == 0 {
 				return nil
 			}
@@ -627,7 +627,7 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 
 // A black-holed request must not prevent fresh observations or drain completion
 // after recovery. One observation period leaves room for retries before staleness.
-func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, bool, error) {
 	observationCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
 	defer cancel()
 	if s.cfg.Resources != nil {
@@ -651,10 +651,38 @@ func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Obse
 			}
 		}
 	}
-	return status, err
+	advanced := err == nil && s.cfg.Resources != nil && status.ResourcePolicy.Revision > observation.Resources.PolicyRevision
+	return status, advanced, err
+}
+
+// Report the new policy with measured local occupancy while the regular tick
+// still has time left. Further revisions converge at the normal cadence.
+func (s *Supervisor) observeCycle(ctx context.Context, nextTick time.Time, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse)) error {
+	state := s.state.Load().(Status)
+	observation := s.observation(ctx, state, evidence)
+	status, advanced, err := s.observeOnce(ctx, observation)
+	if err != nil {
+		return err
+	}
+	statusReturned(status)
+	if !advanced || status.Status != workerapi.StatusActive || s.state.Load().(Status) != StatusActive {
+		return nil
+	}
+	followCtx, cancel := context.WithDeadline(ctx, nextTick)
+	defer cancel()
+	if followCtx.Err() != nil {
+		return nil
+	}
+	// Keep this cycle's health report; observeOnce resamples occupancy and sequence.
+	status, _, err = s.observeOnce(followCtx, observation)
+	if err == nil {
+		statusReturned(status)
+	}
+	return err
 }
 
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse), fatalWork chan<- error) {
+	tick := time.Now()
 	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
@@ -662,8 +690,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 			return
 		}
 		// Placement needs a fresh health observation even for a newly activated Worker.
-		state := s.state.Load().(Status)
-		status, err := s.observeOnce(ctx, s.observation(ctx, state, evidence))
+		err := s.observeCycle(ctx, tick.Add(s.cfg.ObservationEvery), evidence, statusReturned)
 		if err != nil && ctx.Err() == nil {
 			if workerAuthorityRejected(err) {
 				select {
@@ -673,13 +700,11 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 				return
 			}
 			s.cfg.Log.Warn("worker observation failed", "error", err)
-		} else if err == nil {
-			statusReturned(status)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case tick = <-ticker.C:
 		}
 	}
 }
