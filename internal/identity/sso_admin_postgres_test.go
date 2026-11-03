@@ -107,6 +107,17 @@ func TestRequiringSSORevokesOnceAndAdmitsOnlySSOProof(t *testing.T) {
 		t.Fatalf("recovery under optional SSO: %v", err)
 	}
 
+	// The owner's proof is two days old: a 30-day lifetime admits it, a 1-day
+	// lifetime in the same change would not.
+	f.exec(t, `UPDATE organizations SET sso_session_seconds=2592000 WHERE id=$1`, f.org)
+	f.exec(t, `UPDATE browser_sso_proofs SET authenticated_at=clock_timestamp()-interval '2 days' WHERE member_id=$1 AND revoked_at IS NULL`, f.ownerMember)
+	day := int32(86400)
+	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes, SessionSeconds: &day}); !errors.Is(err, sso.ErrEnforcerNotLinked) {
+		t.Fatalf("requiring with a lifetime that rejects the owner's proof: %v", err)
+	}
+	f.exec(t, `UPDATE browser_sso_proofs SET authenticated_at=clock_timestamp() WHERE member_id=$1 AND revoked_at IS NULL`, f.ownerMember)
+	f.exec(t, `UPDATE organizations SET sso_session_seconds=NULL WHERE id=$1`, f.org)
+
 	result, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &yes})
 	if err != nil || !result.Policy.Required || result.RevokedCLISessions != 1 {
 		t.Fatalf("require = %+v, %v", result, err)

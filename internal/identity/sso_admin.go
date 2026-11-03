@@ -356,15 +356,7 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 			if remaining == 0 {
 				return sso.ErrNoRecoveryCodes
 			}
-			// The owner enforcing SSO proves the connection works for them, so
-			// enforcement does not lock them out.
-			linked, err := sso.BindingProof(ctx, tx, current.SSOProofID)
-			if err != nil {
-				return err
-			}
-			if !linked {
-				return sso.ErrEnforcerNotLinked
-			}
+
 			if result.RevokedCLISessions, result.RevokedSlackLinks, err = requireSSORevocations(ctx, tx, m.OrgID); err != nil {
 				return err
 			}
@@ -373,6 +365,17 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 		if before.Required && !after.Required {
 			if err := sso.RevokeRecoveryProofs(ctx, tx, m.OrgID); err != nil {
 				return err
+			}
+		}
+		// The owner enforcing SSO, or shortening its lifetime while required,
+		// must keep a linked proof that the resulting policy still admits.
+		if after.Required && (!before.Required || lifetimeSeconds(after) < lifetimeSeconds(before)) {
+			linked, err := sso.BindingProof(ctx, tx, current.SSOProofID)
+			if err != nil {
+				return err
+			}
+			if !linked || !current.SSOAuthenticatedAt.Add(time.Duration(lifetimeSeconds(after))*time.Second).After(time.Now()) {
+				return sso.ErrEnforcerNotLinked
 			}
 		}
 		if err := org.SetSSOPolicy(ctx, tx, m.OrgID, after); err != nil {
@@ -409,6 +412,13 @@ func UnrequireSSO(ctx context.Context, database db.TxBeginner, policy auditpolic
 		}
 		return ssoPolicyEvent(ctx, tx, policy, actor, orgID, before, after, SSOPolicyResult{Policy: after})
 	})
+}
+
+func lifetimeSeconds(p org.SSOPolicy) int32 {
+	if p.SessionSeconds == nil {
+		return 86400
+	}
+	return *p.SessionSeconds
 }
 
 func requireSSORevocations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (int, int, error) {
