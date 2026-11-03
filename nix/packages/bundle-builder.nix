@@ -31,7 +31,7 @@ buildGoModule {
         );
   };
 
-  vendorHash = "sha256-6AuLhYY/rYZ1pHaF4EKyjRnZNjfz1GB2raXzz2QtV3I=";
+  vendorHash = "sha256-FS+TYONf2nQuHj54v7no8vSXija1o25uWTVfWph7dkM=";
   subPackages = [ "cmd/internal/bundle-builder" ];
 
   postConfigure = ''
