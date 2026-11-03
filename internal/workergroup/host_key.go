@@ -231,6 +231,10 @@ func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, 
 		if back.OwnerOrgID.Valid {
 			returned.ownerOrgID = uuid.UUID(back.OwnerOrgID.Bytes)
 		}
+	case db.IsUniqueViolation(err):
+		// A replacement enrolled under the same resource while this return
+		// waited for the group: the lost host stays lost.
+		return HostCredential{}, ErrUnauthenticated
 	case !errors.Is(err, pgx.ErrNoRows):
 		return HostCredential{}, fmt.Errorf("return worker host %s: %w", hostID, err)
 	}

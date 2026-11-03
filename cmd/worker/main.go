@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,6 +37,11 @@ func main() {
 	if len(os.Args) == 1 {
 		if err := run(log); err != nil {
 			log.Error("worker stopped", "error", err)
+			if errors.Is(err, errWorkerKeyRejected) {
+				// Service managers keep a stopped worker stopped on this
+				// status instead of restarting it.
+				os.Exit(exitWorkerKeyRejected)
+			}
 			os.Exit(1)
 		}
 		return

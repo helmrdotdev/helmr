@@ -160,7 +160,9 @@ signs a short-lived challenge from the Control Plane with that key; no bearer
 secret ever crosses the network. The key stays valid until it is revoked. A key
 is registered once: a revoked key can neither authenticate nor enroll again, so
 a machine comes back only by enrolling with a new key and a valid enrollment
-token. A worker whose key is rejected stops; it does not enroll itself again.
+token. A worker whose key is rejected stops with exit status 78 and does not
+enroll itself again; service units should list 78 in `RestartPreventExitStatus`
+so the machine stays stopped until it is enrolled again.
 
 A group has a reusable enrollment token, for fleets that keep it in their own
 secret store. An organization can also issue a single-use enrollment token for
@@ -201,7 +203,10 @@ working, but it keeps its key. When the machine comes back, for example from
 sleep or after its own scaling stopped it, it proves its key again and returns
 under a new epoch with no operator step. Its startup recovery reports the VMs it
 still runs and stops them, which releases what earlier epochs held. A lost host
-does not return over a replacement enrolled under the same resource ID.
+does not return over a replacement enrolled under the same resource ID, and a
+host that was draining, or being scaled in, stays retired: release its custody
+by confirming the provider's absence or, for an organization's machine, by
+declaring it permanently lost.
 
 An organization manages its own hosts through the Organization API:
 
@@ -211,7 +216,8 @@ An organization manages its own hosts through the Organization API:
   lost and revokes its key, so the machine cannot return. Its VMs' custody stays
   with it until the host is declared permanently lost.
 - **Declare permanently lost** (`POST /api/worker-groups/{id}/hosts/{host}/permanently-lost`)
-  records the member's attestation that the machine is gone for good. It revokes
+  records the member's attestation that the machine is gone for good. The host
+  must already be lost, by fencing, revocation or silence. It revokes
   the key and releases the host's custody, so its Computers can resume elsewhere
   in the group. Nothing confirms the machine stopped; declare it only once the
   machine is destroyed or wiped. Each declaration is audited as

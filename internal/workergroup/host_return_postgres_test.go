@@ -104,3 +104,26 @@ func TestDrainingHostDoesNotReturn(t *testing.T) {
 		t.Fatalf("drained host status = %s, want lost", status)
 	}
 }
+
+// Enrolling a replacement retires the key of the resource's lost incarnation,
+// so the old machine cannot later return under that host once the
+// replacement is lost too.
+func TestReplacementRetiresTheLostIncarnationKey(t *testing.T) {
+	f := newSupplyFixture(t)
+	cfg := testHostAuthConfig(t)
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	operator := DeploymentOperator(audit.Internal(audit.ControlPlane))
+	first := f.start(t, cfg, "default", "machine", validHostTemplate(t))
+	_, claim := f.hostState(t, first.enrolled.HostID)
+	if _, err := MarkHostLost(t.Context(), f.pool, policy, operator, f.groupID(), "machine", first.enrolled.HostID, claim); err != nil {
+		t.Fatal(err)
+	}
+	replacement := f.enroll(t, cfg, "default", "machine")
+	_, claim = f.hostState(t, replacement.HostID)
+	if _, err := MarkHostLost(t.Context(), f.pool, policy, operator, f.groupID(), "machine", replacement.HostID, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IssueHostCredential(t.Context(), f.pool, policy, cfg, signedExchange(t, cfg, first.enrolled, uuid.NewV7().String()), time.Now); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("replaced incarnation returned: %v", err)
+	}
+}

@@ -88,3 +88,20 @@ func TestOrganizationHostReturnsUntilRevoked(t *testing.T) {
 		}
 	}
 }
+
+// A host still reporting cannot be declared permanently lost: the attestation
+// would release custody of a machine that may still run its VMs.
+func TestPermanentLossRequiresALostHost(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	organization, _ := f.organizationOwner(t, "live-loss")
+	deploymentHTTPEnvironment(t, f, organization)
+	_, manager := f.workerMember(t, organization, "worker_groups.manage")
+	created := decodeAdmin[api.CreateWorkerGroupResponse](t, f.request(t, http.MethodPost, "/api/worker-groups", manager,
+		`{"region_id":"deployment-test","name":"lab"}`), http.StatusCreated)
+	public, _ := newMachineKey(t)
+	var enrolled workerapi.EnrollmentResponse
+	if err := json.Unmarshal(f.machineEnrollment(t, created.EnrollmentToken, "laptop", public).Body.Bytes(), &enrolled); err != nil {
+		t.Fatal(err)
+	}
+	assertAdminError(t, f.request(t, http.MethodPost, "/api/worker-groups/"+created.WorkerGroup.ID+"/hosts/"+enrolled.WorkerHostID+"/permanently-lost", manager, ""), http.StatusConflict, "conflict")
+}

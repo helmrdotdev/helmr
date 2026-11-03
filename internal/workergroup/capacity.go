@@ -255,12 +255,18 @@ func DeclareHostPermanentlyLost(ctx context.Context, tx pgx.Tx, policy auditpoli
 	if err != nil {
 		return ConfirmedProviderAbsence{}, err
 	}
-	var inGroup bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE id=$1 AND worker_group_id=$2)`, hostID, groupID).Scan(&inGroup); err != nil {
+	var state string
+	err = tx.QueryRow(ctx, `SELECT status FROM worker_hosts WHERE id=$1 AND worker_group_id=$2`, hostID, groupID).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ConfirmedProviderAbsence{}, ErrHostNotFound
+	}
+	if err != nil {
 		return ConfirmedProviderAbsence{}, err
 	}
-	if !inGroup {
-		return ConfirmedProviderAbsence{}, ErrHostNotFound
+	// A host still reporting may still be running its VMs; fence or revoke it
+	// first, so the attestation never releases custody of a live machine.
+	if state != db.WorkerHostStatusLost {
+		return ConfirmedProviderAbsence{}, conflict("only a lost worker host can be declared permanently lost; fence or revoke it first")
 	}
 	// Every attestation is the member's own record, even one repeating an
 	// earlier declaration.

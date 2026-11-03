@@ -131,6 +131,8 @@ EnvironmentFile=/etc/helmr/worker.env
 ExecStart=/usr/local/bin/worker
 Restart=on-failure
 RestartSec=5
+# The worker exits 78 when the Control Plane no longer admits its machine.
+RestartPreventExitStatus=78
 Delegate=yes
 DelegateSubgroup=supervisor
 KillMode=mixed

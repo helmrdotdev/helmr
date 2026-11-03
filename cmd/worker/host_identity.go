@@ -140,10 +140,14 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 }
 
 // errWorkerKeyRejected means the Control Plane no longer accepts this machine
-// key: it was revoked, or its host was declared permanently lost. The worker
-// stops rather than enrolling itself again; coming back takes a new
-// enrollment with a valid token.
-var errWorkerKeyRejected = errors.New("the Control Plane rejected this machine's key; it was revoked or its host was removed. Remove the worker identity and enroll this machine again with a valid enrollment token")
+// key: it was revoked, its host was retired or replaced, or its group no
+// longer admits it. The worker stops rather than enrolling itself again;
+// coming back takes a new enrollment with a valid token.
+var errWorkerKeyRejected = errors.New("the Control Plane no longer admits this machine: its key was revoked, its host was retired or replaced, or its group no longer admits it. Remove the worker identity and enroll this machine again with a valid enrollment token")
+
+// exitWorkerKeyRejected is the worker's exit status when the Control Plane no
+// longer admits its machine; service units list it in RestartPreventExitStatus.
+const exitWorkerKeyRejected = 78
 
 func resolveAuthenticatedWorkerIdentity(
 	ctx context.Context,
