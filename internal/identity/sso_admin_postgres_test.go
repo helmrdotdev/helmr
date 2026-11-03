@@ -308,6 +308,13 @@ func TestRecoveryCodeAdmitsAnOwnerWithoutTheIdentityProvider(t *testing.T) {
 	if err := RecoverSSO(t.Context(), f.pool, f.cfg, account, f.org, codes[2]); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("a code of a replaced set: %v", err)
 	}
+	no := false
+	if _, err := UpdateSSOPolicy(t.Context(), f.pool, f.manager(t), SSOPolicyChange{Required: &no}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := f.admits(t, raw, f.org); err != nil || p.SSOProofID != uuid.Nil() {
+		t.Fatalf("recovery proof after returning to optional = %+v, %v", p, err)
+	}
 }
 
 func TestCLISessionApprovedUnderRequiredSSORecordsTheProof(t *testing.T) {

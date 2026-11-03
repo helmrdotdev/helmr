@@ -369,6 +369,12 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 				return err
 			}
 		}
+		// Recovery proofs exist only for required SSO.
+		if before.Required && !after.Required {
+			if err := sso.RevokeRecoveryProofs(ctx, tx, m.OrgID); err != nil {
+				return err
+			}
+		}
 		if err := org.SetSSOPolicy(ctx, tx, m.OrgID, after); err != nil {
 			return err
 		}
