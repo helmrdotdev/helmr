@@ -130,7 +130,7 @@ def compile_config(raw):
         'CONTROL_PLANE_URL': 'http://127.0.0.1:58088' if reply_faults else 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
         'WORKER_ENROLLMENT_TOKEN_FILE': str(CONFIG / 'enrollment-token'),
         'WORKER_WORK_DIR': str(WORKER_DATA), 'WORKER_IMAGES_DIR': '/var/lib/helmr/images',
-        'WORKER_HOST_SECRET_PATH': str(WORKER_DATA / 'worker-host-secret.json'),
+        'WORKER_IDENTITY_PATH': str(WORKER_DATA / 'worker-identity.json'),
         'JAILER_CHROOT_DIR': '/var/lib/helmr/jailer', 'JAILER_UID': '1001', 'JAILER_GID': '1001',
         'FIRECRACKER_PATH': '/usr/local/bin/firecracker', 'JAILER_PATH': '/usr/local/bin/jailer',
         'CPU_TEMPLATE_HELPER_PATH': '/usr/local/bin/cpu-template-helper',

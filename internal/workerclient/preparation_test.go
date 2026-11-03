@@ -34,6 +34,9 @@ func TestPreparationSensitiveResponsesAreBoundedAndSanitized(t *testing.T) {
 					body = append(body, bytes.Repeat([]byte{' '}, 2*wire.PreparationControlFrameBytes+1)...)
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveHostChallenge(w, r) {
+						return
+					}
 					if r.URL.Path == "/worker/v1/instance/credential" {
 						_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 						return
@@ -46,7 +49,7 @@ func TestPreparationSensitiveResponsesAreBoundedAndSanitized(t *testing.T) {
 					_, _ = w.Write(body)
 				}))
 				defer server.Close()
-				c, err := New(server.URL, WithAuth(uuid.NewV7().String(), "fixture"), WithService(uuid.NewV7().String()))
+				c, err := New(server.URL, WithAuth(uuid.NewV7().String(), testMachineKey), WithService(uuid.NewV7().String()))
 				if err != nil {
 					t.Fatal(err)
 				}

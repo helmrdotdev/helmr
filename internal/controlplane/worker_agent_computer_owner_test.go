@@ -121,7 +121,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 			defer server.Close()
 			defer unblockReceipt()
 			defer unblockCommit()
-			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+			client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 			request, captureResult, capture := beginWorkerAgentCapture(t, f, client)
 			observed := &agentv1.ComputerSessionReceipt{CheckpointId: capture.CheckpointId, DesiredVersion: capture.DesiredVersion, Frozen: true}
 			if err := client.SealAgentComputerCapture(t.Context(), workerapi.AgentComputerReceiptRequest{EnvironmentID: request.EnvironmentID, CheckpointID: request.CheckpointID, Receipt: agentComputerBytes(t, observed)}); err != nil {

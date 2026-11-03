@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -56,20 +55,14 @@ func TestRevokeGroupHostCredentialsFencesEveryLiveHost(t *testing.T) {
 		t.Fatalf("revoked registering host credential authorization error = %v", err)
 	}
 	for _, enrolled := range []EnrolledHost{active.enrolled, registering} {
-		if _, err := IssueHostCredential(t.Context(), f.pool, cfg, HostCredentialRequest{
-			HostID: enrolled.HostID.String(), Secret: enrolled.Secret, ServiceID: uuid.NewV7().String(),
-		}, time.Now); !errors.Is(err, ErrUnauthenticated) {
-			t.Fatalf("revoked host secret exchange error = %v", err)
+		if _, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, enrolled, uuid.NewV7().String()), time.Now); !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("revoked host key exchange error = %v", err)
 		}
 	}
 	other.authenticate(t, AuthenticateHost, cfg, untouched.credential)
 
 	// The enrollment token is unchanged, so a returning machine enrolls again.
-	tokenHash, err := auth.ParseEnrollmentToken(f.enrollmentToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-replacement"}); err != nil {
+	if _, err := enrollWithMachineKey(t, f.pool, Enrollment{Token: parsedEnrollmentToken(t, f.enrollmentToken), PoolName: "default", ResourceID: "i-replacement"}); err != nil {
 		t.Fatalf("enrollment after revocation: %v", err)
 	}
 	var audited int

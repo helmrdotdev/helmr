@@ -114,7 +114,7 @@ func TestDiagnosticAuthenticationLockPreservesAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Rollback(context.Background())
-	if _, err = lock.Exec(t.Context(), `SELECT id FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL FOR UPDATE`, f.Worker); err != nil {
+	if _, err = lock.Exec(t.Context(), `SELECT id FROM worker_host_keys WHERE worker_host_id=$1 AND revoked_at IS NULL FOR UPDATE`, f.Worker); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

@@ -1,13 +1,14 @@
 package session_test
 
 import (
-	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -34,12 +35,8 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='lost',lost_at=clock_timestamp(),claim_version=claim_version+1 WHERE id=$1;
  UPDATE computer_leases SET status='lost' WHERE worker_host_id=$1 AND fenced_at IS NULL;
  UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE worker_host_id=$1 AND fenced_at IS NULL`, pgx.QueryExecModeSimpleProtocol, f.worker)
-			cfg, err := workergroup.NewHostAuthConfig(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), time.Hour)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"}
-			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, request); !errors.Is(err, workergroup.ErrHostCustody) {
+			request := fixtureEnrollment(t, "host")
+			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, request); !errors.Is(err, workergroup.ErrHostCustody) {
 				t.Fatalf("lost resource enrollment: %v", err)
 			}
 			q := db.New(f.pool)
@@ -47,18 +44,30 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			if err != nil || len(listed) != 1 || pgvalue.MustUUIDValue(listed[0].ID) != f.worker || listed[0].Status != "lost" {
 				t.Fatalf("provider lost-host visibility: %d rows: %v", len(listed), err)
 			}
-			other := request
-			other.ResourceID = "unrelated-host"
-			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, other); err != nil {
+			other := fixtureEnrollment(t, "unrelated-host")
+			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, other); err != nil {
 				t.Fatalf("custody blocked a different physical resource: %v", err)
 			}
 			if err := confirmComputerHostAbsent(t.Context(), f.fixture, f.worker); err != nil {
 				t.Fatal(err)
 			}
-			registered, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, request)
+			registered, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, request)
 			if err != nil || registered.HostID == f.worker || registered.HostID == uuid.Nil() {
 				t.Fatalf("fresh enrollment after physical absence: %v", err)
 			}
 		})
+	}
+}
+
+// fixtureEnrollment enrolls a resource in the fixture group's pool with a new
+// machine key.
+func fixtureEnrollment(t *testing.T, resourceID string) workergroup.Enrollment {
+	t.Helper()
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workergroup.Enrollment{
+		Token: auth.ParsedEnrollmentToken{Hash: make([]byte, 32)}, PoolName: "pool", ResourceID: resourceID, PublicKey: publicKey,
 	}
 }

@@ -15,6 +15,9 @@ import (
 func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
@@ -37,7 +40,7 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}

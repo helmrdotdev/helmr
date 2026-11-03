@@ -41,34 +41,56 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	// An unparsable enrollment token is rejected by the owner after it has
 	// validated the rest of the request.
-	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
+	token, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
 	if err != nil {
-		tokenHash = nil
+		token = auth.ParsedEnrollmentToken{}
 	}
-	enrolled, err := workergroup.EnrollHost(r.Context(), s.tx, s.auditPolicy, s.hostAuth, workergroup.Enrollment{
-		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.tx, s.auditPolicy, workergroup.Enrollment{
+		Token: token, PoolName: request.PoolName, ResourceID: request.ResourceID, PublicKey: request.PublicKey,
 	})
 	if err != nil {
 		s.writeWorkerHostError(w, "enroll worker", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, workerapi.EnrollmentResponse{
-		WorkerHostID:     enrolled.HostID.String(),
-		WorkerGroupID:    enrolled.GroupID.String(),
-		WorkerPoolID:     enrolled.PoolID.String(),
-		WorkerHostSecret: enrolled.Secret,
+		WorkerHostID:  enrolled.HostID.String(),
+		WorkerGroupID: enrolled.GroupID.String(),
+		WorkerPoolID:  enrolled.PoolID.String(),
 	})
 }
 
-func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
+func strictWorkerEnrollmentBearer(values []string) (auth.ParsedEnrollmentToken, error) {
 	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
-		return nil, errors.New("worker enrollment bearer is required")
+		return auth.ParsedEnrollmentToken{}, errors.New("worker enrollment bearer is required")
 	}
 	raw := values[0][len("Bearer "):]
 	if raw == "" || strings.ContainsAny(raw, " \t\r\n") {
-		return nil, errors.New("worker enrollment bearer is invalid")
+		return auth.ParsedEnrollmentToken{}, errors.New("worker enrollment bearer is invalid")
 	}
 	return auth.ParseEnrollmentToken(raw)
+}
+
+// workerHostChallenge issues the challenge a host signs with its machine key.
+// It answers the same way whether or not the host exists.
+func (s *Server) workerHostChallenge(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.HostChallengeRequest
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker host challenge request JSON: %w", err))
+		return
+	}
+	if err := checkWorkerAPIVersion(request.APIVersion); err != nil {
+		writeError(w, err)
+		return
+	}
+	challenge, err := workergroup.IssueHostChallenge(s.hostAuth, request.WorkerHostID, request.ServiceID, time.Now())
+	if err != nil {
+		s.writeWorkerHostError(w, "issue worker host challenge", err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, workerapi.HostChallengeResponse{
+		Challenge: challenge.Value, ExpiresInSeconds: int64(challenge.ExpiresIn / time.Second),
+	})
 }
 
 func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +104,7 @@ func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	credential, err := workergroup.IssueHostCredential(r.Context(), s.tx, s.hostAuth, workergroup.HostCredentialRequest{
-		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
+		HostID: request.WorkerHostID, ServiceID: request.ServiceID, Challenge: request.Challenge, Signature: request.Signature,
 	}, time.Now)
 	if err != nil {
 		s.writeWorkerHostError(w, "issue worker host credential", err)

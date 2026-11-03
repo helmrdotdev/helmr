@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -52,19 +54,32 @@ func (f workerHTTPFixture) enrollRequest(t *testing.T, enrollmentToken string, b
 	return f.request(t, http.MethodPost, "/worker/v1/enrollment", enrollmentToken, body)
 }
 
-// enroll enrolls a worker host in the named pool of the fixture's group.
-func (f workerHTTPFixture) enroll(t *testing.T, pool string, resourceID string) workerapi.EnrollmentResponse {
+// enrolledWorkerHost is an enrolled worker host and the machine key it
+// enrolled with.
+type enrolledWorkerHost struct {
+	workerapi.EnrollmentResponse
+	key ed25519.PrivateKey
+}
+
+// enroll enrolls a worker host with a new machine key in the named pool of the
+// fixture's group.
+func (f workerHTTPFixture) enroll(t *testing.T, pool string, resourceID string) enrolledWorkerHost {
 	t.Helper()
-	response := f.enrollRequest(t, f.enrollmentToken, `{"api_version":"`+workerapi.APIVersion+`","resource_id":"`+resourceID+`","pool_name":"`+pool+`"}`)
+	public, key := newMachineKey(t)
+	body, err := json.Marshal(workerapi.EnrollmentRequest{APIVersion: workerapi.APIVersion, ResourceID: resourceID, PoolName: pool, PublicKey: public})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := f.enrollRequest(t, f.enrollmentToken, string(body))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enrollment status = %d: %s", response.Code, response.Body.String())
 	}
-	var enrolled workerapi.EnrollmentResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &enrolled); err != nil {
+	enrolled := enrolledWorkerHost{key: key}
+	if err := json.Unmarshal(response.Body.Bytes(), &enrolled.EnrollmentResponse); err != nil {
 		t.Fatal(err)
 	}
-	if enrolled.WorkerGroupID != f.group.ID || !strings.HasPrefix(enrolled.WorkerHostSecret, "hlmr_wi_") {
-		t.Fatalf("enrolled = %+v", enrolled)
+	if enrolled.WorkerGroupID != f.group.ID || enrolled.WorkerHostID == "" {
+		t.Fatalf("enrolled = %+v", enrolled.EnrollmentResponse)
 	}
 	return enrolled
 }
@@ -72,15 +87,15 @@ func (f workerHTTPFixture) enroll(t *testing.T, pool string, resourceID string) 
 // workerHost is an enrolled worker host with the service that holds its
 // epoch.
 type workerHost struct {
-	enrolled  workerapi.EnrollmentResponse
+	enrolled  enrolledWorkerHost
 	serviceID string
 	client    *workerclient.Client
 }
 
-func (f workerHTTPFixture) host(t *testing.T, enrolled workerapi.EnrollmentResponse) workerHost {
+func (f workerHTTPFixture) host(t *testing.T, enrolled enrolledWorkerHost) workerHost {
 	t.Helper()
 	host := workerHost{enrolled: enrolled, serviceID: uuid.NewV7().String()}
-	client, err := workerclient.New(f.url, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(host.serviceID), workerclient.WithNetwork(networkpolicy.Installation{}))
+	client, err := workerclient.New(f.url, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.key), workerclient.WithService(host.serviceID), workerclient.WithNetwork(networkpolicy.Installation{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +103,10 @@ func (f workerHTTPFixture) host(t *testing.T, enrolled workerapi.EnrollmentRespo
 	return host
 }
 
-// issue exchanges the host secret for a host credential.
+// issue answers a challenge with the host's machine key for a host credential.
 func (h workerHost) issue(t *testing.T, f workerHTTPFixture) string {
 	t.Helper()
-	return issueWorkerHostCredential(t, f.handler, h.enrolled.WorkerHostID, h.enrolled.WorkerHostSecret, h.serviceID)
+	return issueWorkerHostCredential(t, f.handler, h.enrolled.WorkerHostID, h.enrolled.key, h.serviceID)
 }
 
 // start recovers the host and activates it with capabilities, as a worker
@@ -122,31 +137,49 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	f := newWorkerHTTPFixture(t)
 
 	// The request is validated before the enrollment token.
+	public, _ := newMachineKey(t)
+	publicKey, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"api_version":"`+workerapi.APIVersion+`","resource_id":" padded","pool_name":"default"}`), http.StatusBadRequest, "bad_request")
 	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"Default"}`), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
-	assertAdminError(t, f.enrollRequest(t, "", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default","public_key":"c2hvcnQ="}`), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default","public_key":`+string(publicKey)+`}`), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, "", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default","public_key":`+string(publicKey)+`}`), http.StatusUnauthorized, "unauthorized")
 
 	enrolled := f.enroll(t, "default", "i-lifecycle")
 	service := uuid.NewV7().String()
+	for name, body := range map[string]workerapi.HostChallengeRequest{
+		"host missing":      {ServiceID: service},
+		"host malformed":    {WorkerHostID: "host", ServiceID: service},
+		"service malformed": {WorkerHostID: enrolled.WorkerHostID, ServiceID: "service"},
+	} {
+		t.Run("challenge "+name, func(t *testing.T) {
+			body.APIVersion = workerapi.APIVersion
+			assertAdminError(t, serveWorkerJSON(t, f.handler, "/worker/v1/instance/challenge", body), http.StatusBadRequest, "bad_request")
+		})
+	}
+	signed := signedHostCredentialRequest(t, f.handler, enrolled.WorkerHostID, enrolled.key, service)
+	_, foreignKey := newMachineKey(t)
+	otherService := signedHostCredentialRequest(t, f.handler, enrolled.WorkerHostID, enrolled.key, uuid.NewV7().String())
+	otherService.ServiceID = service
 	for name, test := range map[string]struct {
 		body   workerapi.HostCredentialRequest
 		status int
 		code   string
 	}{
-		"host missing":      {body: workerapi.HostCredentialRequest{WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
-		"host malformed":    {body: workerapi.HostCredentialRequest{WorkerHostID: "host", WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
-		"secret blank":      {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: "service"}, status: http.StatusUnauthorized, code: "unauthorized"},
-		"service malformed": {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: "service"}, status: http.StatusBadRequest, code: "bad_request"},
-		"secret wrong":      {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: "hlmr_wi_wrong", ServiceID: service}, status: http.StatusUnauthorized, code: "unauthorized"},
+		"host missing":          {body: workerapi.HostCredentialRequest{ServiceID: service, Challenge: signed.Challenge, Signature: signed.Signature}, status: http.StatusBadRequest, code: "bad_request"},
+		"host malformed":        {body: workerapi.HostCredentialRequest{WorkerHostID: "host", ServiceID: service, Challenge: signed.Challenge, Signature: signed.Signature}, status: http.StatusBadRequest, code: "bad_request"},
+		"service malformed":     {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: "service", Challenge: signed.Challenge, Signature: signed.Signature}, status: http.StatusBadRequest, code: "bad_request"},
+		"challenge missing":     {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: service, Signature: signed.Signature}, status: http.StatusUnauthorized, code: "unauthorized"},
+		"challenge for service": {body: otherService, status: http.StatusUnauthorized, code: "unauthorized"},
+		"signature missing":     {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: service, Challenge: signed.Challenge}, status: http.StatusUnauthorized, code: "unauthorized"},
+		"signature foreign":     {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: service, Challenge: signed.Challenge, Signature: ed25519.Sign(foreignKey, auth.HostChallengeMessage(signed.Challenge))}, status: http.StatusUnauthorized, code: "unauthorized"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			test.body.APIVersion = workerapi.APIVersion
-			body, err := json.Marshal(test.body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertAdminError(t, f.request(t, http.MethodPost, "/worker/v1/instance/credential", "", string(body)), test.status, test.code)
+			assertAdminError(t, serveWorkerJSON(t, f.handler, "/worker/v1/instance/credential", test.body), test.status, test.code)
 		})
 	}
 

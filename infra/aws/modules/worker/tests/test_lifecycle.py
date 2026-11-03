@@ -127,7 +127,7 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
             (root / "identity").write_text("i-source")
             (root / "calls").touch()
             if enrolled:
-                (root / "worker-host-secret.json").touch()
+                (root / "worker-identity.json").touch()
             script = TEMPLATE.read_text().split("cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
             script = script.split('case "$${1:-watch}" in', 1)[0]
             values = {

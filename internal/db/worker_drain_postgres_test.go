@@ -21,13 +21,12 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	hostSecretID := uuid.NewV7()
+	hostKeyID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO worker_host_secrets (
-			id, worker_group_id, worker_host_id, key_prefix, claim_version,
-			secret_hash
-		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("drain-secret"))
+		INSERT INTO worker_host_keys (
+			id, worker_group_id, worker_host_id, public_key, claim_version
+		) VALUES ($1, $2, $3, $4, 1)
+	`, hostKeyID, dbtest.DefaultWorkerGroupID, workerID, newHostPublicKey(t))
 
 	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
 		ID:                   pgvalue.UUID(workerID),
@@ -70,9 +69,9 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	var revoked bool
 	if err := pool.QueryRow(ctx, `
 		SELECT revoked_at IS NOT NULL
-		  FROM worker_host_secrets
+		  FROM worker_host_keys
 		 WHERE id = $1
-	`, hostSecretID).Scan(&revoked); err != nil {
+	`, hostKeyID).Scan(&revoked); err != nil {
 		t.Fatal(err)
 	}
 	if !revoked {
@@ -163,13 +162,12 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	hostSecretID := uuid.NewV7()
+	hostKeyID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO worker_host_secrets (
-			id, worker_group_id, worker_host_id, key_prefix, claim_version,
-			secret_hash
-		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("fence-secret"))
+		INSERT INTO worker_host_keys (
+			id, worker_group_id, worker_host_id, public_key, claim_version
+		) VALUES ($1, $2, $3, $4, 1)
+	`, hostKeyID, dbtest.DefaultWorkerGroupID, workerID, newHostPublicKey(t))
 
 	params := db.FenceWorkerHostParams{
 		ID:                   pgvalue.UUID(workerID),
@@ -197,7 +195,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	}
 
 	if _, err := q.AuthorizeWorkerFenceReplay(ctx, db.AuthorizeWorkerFenceReplayParams{
-		HostSecretID: pgvalue.UUID(hostSecretID), ClaimVersion: 1,
+		HostKeyID: pgvalue.UUID(hostKeyID), ClaimVersion: 1,
 		WorkerEpoch: pgtype.Int8{Int64: 1, Valid: true},
 	}); err != nil {
 		t.Fatalf("authorize exact fence replay: %v", err)
@@ -207,7 +205,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 func TestWorkerDrainRequiresPriorEpochPhysicalAllocationFenced(t *testing.T) {
 	f := sessiontest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.Worker)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,claim_version,secret_hash) VALUES($1,$2,$3,$4,1,$5)`, uuid.NewV7(), f.Group, f.Worker, uuid.NewV7().String(), []byte("drain-test"))
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_keys(id,worker_group_id,worker_host_id,public_key,claim_version) VALUES($1,$2,$3,$4,1)`, uuid.NewV7(), f.Group, f.Worker, newHostPublicKey(t))
 	q := db.New(f.Pool)
 	row, err := q.DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.Worker), WorkerGroupID: pgvalue.UUID(f.Group), ExpectedEpoch: pgtype.Int8{Int64: 2, Valid: true}, ExpectedClaimVersion: 1})
 	if err != nil {

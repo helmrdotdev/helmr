@@ -16,8 +16,16 @@ func TestStrictWorkerEnrollmentBearer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, token.Hash) {
-		t.Fatal("bearer hash did not match token")
+	if !bytes.Equal(got.Hash, token.Hash) || got.SingleUse {
+		t.Fatalf("bearer = %+v, want the group token hash", got)
+	}
+	single, err := auth.GenerateSingleUseEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = strictWorkerEnrollmentBearer([]string{"Bearer " + single.Raw})
+	if err != nil || !bytes.Equal(got.Hash, single.Hash) || !got.SingleUse {
+		t.Fatalf("single-use bearer = %+v, %v", got, err)
 	}
 	for _, values := range [][]string{
 		nil,

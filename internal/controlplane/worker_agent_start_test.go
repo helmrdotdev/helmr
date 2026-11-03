@@ -57,7 +57,7 @@ func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 			}
 			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = everyOrganization[cas.UploadStore](store) }))
 			defer server.Close()
-			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+			client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 			session := runtimeTestSession(f)
 			attachment, err := client.AcquireAgentAttachment(t.Context(), session)
 			if err != nil {
@@ -152,7 +152,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		cfg.SecretProxy = secrets
 	}))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	session := runtimeTestSession(f)
 	attachment, err := client.AcquireAgentAttachment(t.Context(), session)
 	if err != nil {

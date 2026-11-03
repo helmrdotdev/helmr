@@ -87,7 +87,7 @@ var tableOwners = map[string]string{
 	"diagnostic_chunks": "internal/telemetry", "deployment_events": "internal/deployment",
 	// worker supply
 	"vm_platforms": "internal/workergroup", "worker_group_tokens": "internal/workergroup", "worker_groups": "internal/workergroup",
-	"worker_host_secrets": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
+	"worker_host_keys": "internal/workergroup", "worker_enrollment_tokens": "internal/workergroup", "worker_hosts": "internal/workergroup", "worker_pool_cpu_shapes": "internal/workergroup",
 	"worker_scale_in_operations": "internal/workergroup",
 	"worker_pools":               "internal/workergroup",
 	"environment_placements":     "internal/workergroup",
@@ -119,7 +119,7 @@ var queryFileOwners = map[string]string{
 	"worker_capacity_hosts.sql":  "internal/workergroup",
 	"worker_drain.sql":           "internal/workergroup",
 	"worker_groups.sql":          "internal/workergroup",
-	"worker_host_secrets.sql":    "internal/workergroup",
+	"worker_host_keys.sql":       "internal/workergroup",
 	"worker_lifecycle.sql":       "internal/workergroup",
 	"worker_liveness.sql":        "internal/workergroup",
 	"worker_startup.sql":         "internal/workergroup",

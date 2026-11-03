@@ -170,7 +170,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 
 	workRoot := filepath.Join(filepath.Dir(input.Evidence), "w")
-	if input.WorkerEnv["WORKER_WORK_DIR"] != workRoot || input.WorkerEnv["JAILER_CHROOT_DIR"] != filepath.Join(workRoot, "jailer") || input.WorkerEnv["WORKER_HOST_SECRET_PATH"] != filepath.Join(workRoot, "host-secret.json") {
+	if input.WorkerEnv["WORKER_WORK_DIR"] != workRoot || input.WorkerEnv["JAILER_CHROOT_DIR"] != filepath.Join(workRoot, "jailer") || input.WorkerEnv["WORKER_IDENTITY_PATH"] != filepath.Join(workRoot, "identity.json") {
 		t.Fatal("worker state must use the fixture's new owned working directory")
 	}
 	if _, err := os.Lstat(workRoot); !errors.Is(err, os.ErrNotExist) {

@@ -92,7 +92,7 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery, pressure bool) {
 		t.Fatal("Worker-loss fixture requires its own isolated storage and a live CP")
 	}
 	baseWork := filepath.Join(filepath.Dir(input.Evidence), "w")
-	if input.WorkerEnv["WORKER_WORK_DIR"] != baseWork || input.WorkerEnv["JAILER_CHROOT_DIR"] != filepath.Join(baseWork, "jailer") || input.WorkerEnv["WORKER_HOST_SECRET_PATH"] != filepath.Join(baseWork, "host-secret.json") {
+	if input.WorkerEnv["WORKER_WORK_DIR"] != baseWork || input.WorkerEnv["JAILER_CHROOT_DIR"] != filepath.Join(baseWork, "jailer") || input.WorkerEnv["WORKER_IDENTITY_PATH"] != filepath.Join(baseWork, "identity.json") {
 		t.Fatal("fixture must own the configured Worker roots")
 	}
 	if version := input.WorkerEnv["JAILER_CGROUP_VERSION"]; version != "" && version != "2" {
@@ -128,7 +128,7 @@ func testWorkerAuthorityLoss(t *testing.T, networkRecovery, pressure bool) {
 			work := baseWork + strconv.Itoa(index)
 			config.WorkerEnv["WORKER_WORK_DIR"] = work
 			config.WorkerEnv["JAILER_CHROOT_DIR"] = filepath.Join(work, "jailer")
-			config.WorkerEnv["WORKER_HOST_SECRET_PATH"] = filepath.Join(work, "host-secret.json")
+			config.WorkerEnv["WORKER_IDENTITY_PATH"] = filepath.Join(work, "identity.json")
 			if networkRecovery {
 				// Preserve a full probe envelope alongside one retained owner.
 				config.WorkerEnv["WORKER_EXECUTION_SLOTS"] = "2"

@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
@@ -280,7 +281,7 @@ func TestPoolRetirementPostgresFencesWaitingEnrollment(t *testing.T) {
 			if target == "draining" {
 				pool = f.activePool(t, "retiring-active")
 			}
-			cfg := testHostAuthConfig(t)
+			publicKey := newMachineKey(t).Public().(ed25519.PublicKey)
 			token, err := auth.ParseEnrollmentToken(f.enrollmentToken)
 			if err != nil {
 				t.Fatal(err)
@@ -301,7 +302,7 @@ func TestPoolRetirementPostgresFencesWaitingEnrollment(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := EnrollHost(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
+				_, err := EnrollHost(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, Enrollment{Token: token, PoolName: pool.Name, ResourceID: "late", PublicKey: publicKey})
 				done <- err
 			}()
 			for {

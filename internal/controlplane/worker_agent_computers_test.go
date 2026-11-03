@@ -46,7 +46,7 @@ func TestWorkerAgentMCPListsOnlyWorkloadComputers(t *testing.T) {
 	}
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()
@@ -136,7 +136,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
     `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted, f.Agent)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	operation := "spawn"
 	call := func(cursor string) workerapi.AgentOperationResponse {

@@ -1,6 +1,7 @@
 package workergroup
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"reflect"
@@ -199,21 +200,23 @@ func TestFenceHostRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
 }
 
 func TestEnrollHostValidatesInputBeforeTheEnrollmentToken(t *testing.T) {
-	cfg := testHostAuthConfig(t)
+	key := make([]byte, ed25519.PublicKeySize)
 	for _, test := range []struct {
 		name       string
 		enrollment Enrollment
 		input      bool
 	}{
-		{name: "resource missing", enrollment: Enrollment{PoolName: "default"}, input: true},
-		{name: "resource padded", enrollment: Enrollment{PoolName: "default", ResourceID: " i-1"}, input: true},
-		{name: "resource too long", enrollment: Enrollment{PoolName: "default", ResourceID: strings.Repeat("r", MaxResourceIDBytes+1)}, input: true},
-		{name: "pool name", enrollment: Enrollment{PoolName: "Default", ResourceID: "i-1"}, input: true},
-		{name: "token", enrollment: Enrollment{PoolName: "default", ResourceID: "i-1"}},
+		{name: "resource missing", enrollment: Enrollment{PoolName: "default", PublicKey: key}, input: true},
+		{name: "resource padded", enrollment: Enrollment{PoolName: "default", ResourceID: " i-1", PublicKey: key}, input: true},
+		{name: "resource too long", enrollment: Enrollment{PoolName: "default", ResourceID: strings.Repeat("r", MaxResourceIDBytes+1), PublicKey: key}, input: true},
+		{name: "pool name", enrollment: Enrollment{PoolName: "Default", ResourceID: "i-1", PublicKey: key}, input: true},
+		{name: "public key missing", enrollment: Enrollment{PoolName: "default", ResourceID: "i-1"}, input: true},
+		{name: "public key short", enrollment: Enrollment{PoolName: "default", ResourceID: "i-1", PublicKey: key[:31]}, input: true},
+		{name: "token", enrollment: Enrollment{PoolName: "default", ResourceID: "i-1", PublicKey: key}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// A call past validation has no database executor.
-			_, err := EnrollHost(t.Context(), nil, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, test.enrollment)
+			_, err := EnrollHost(t.Context(), nil, auditpolicy.Policy{RetentionSeconds: 3600}, test.enrollment)
 			var input InputError
 			if test.input && !errors.As(err, &input) {
 				t.Fatalf("error = %v, want InputError", err)

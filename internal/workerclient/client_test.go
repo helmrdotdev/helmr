@@ -3,6 +3,7 @@ package workerclient
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -24,6 +26,18 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
+		case "/worker/v1/instance/challenge":
+			if got := r.Header.Get("authorization"); got != "" {
+				t.Fatalf("worker host challenge request auth = %s", got)
+			}
+			var request workerapi.HostChallengeRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
+				t.Fatalf("worker host challenge request = %+v", request)
+			}
+			serveHostChallenge(w, r)
 		case "/worker/v1/instance/credential":
 			if got := r.Header.Get("authorization"); got != "" {
 				t.Fatalf("worker host credential request auth = %s", got)
@@ -32,8 +46,11 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.WorkerHostSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
+			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.ServiceID != "00000000-0000-0000-0000-000000000901" || request.Challenge != testHostChallenge {
 				t.Fatalf("worker host credential request = %+v", request)
+			}
+			if !ed25519.Verify(testMachineKey.Public().(ed25519.PublicKey), auth.HostChallengeMessage(request.Challenge), request.Signature) {
+				t.Fatal("worker host credential request is not signed by the machine key")
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7,
 				Credential:       workerCredential,
@@ -88,7 +105,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", testMachineKey), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +124,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err := client.FenceWorker(context.Background(), "provider_termination"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/challenge,/worker/v1/instance/credential,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -116,6 +133,9 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 	attempts := 0
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
@@ -136,7 +156,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +173,9 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	attempts := 0
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
@@ -173,7 +196,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +213,9 @@ func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauth
 	var activateBodies [][]byte
 	var statusRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
 			credentialRequests++
@@ -224,7 +250,7 @@ func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauth
 	defer server.Close()
 
 	client, err := New(server.URL, WithHTTPClient(server.Client()),
-		WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"),
+		WithAuth("00000000-0000-0000-0000-000000000401", testMachineKey),
 		WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
@@ -241,6 +267,22 @@ func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauth
 	if credentialRequests != 3 || statusRequests != 2 {
 		t.Fatalf("credential requests=%d status requests=%d, want 3 and 2", credentialRequests, statusRequests)
 	}
+}
+
+// testMachineKey is the machine key fixture hosts sign challenges with.
+var testMachineKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
+
+// testHostChallenge is the challenge fixture Control Planes issue.
+const testHostChallenge = "fixture-challenge"
+
+// serveHostChallenge answers a host challenge request with testHostChallenge
+// and reports whether the request was one.
+func serveHostChallenge(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/worker/v1/instance/challenge" {
+		return false
+	}
+	_ = json.NewEncoder(w).Encode(workerapi.HostChallengeResponse{Challenge: testHostChallenge, ExpiresInSeconds: 60})
+	return true
 }
 
 func workerClientCapabilities() workerapi.Capabilities {
@@ -275,7 +317,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 			}
 		}
 		switch r.URL.Path {
-		case "/worker/v1/enrollment", "/worker/v1/instance/credential", "/worker/v1/instance/activate":
+		case "/worker/v1/enrollment", "/worker/v1/instance/challenge", "/worker/v1/instance/credential", "/worker/v1/instance/activate":
 			var version string
 			if err := json.Unmarshal(body["api_version"], &version); err != nil || version != workerapi.APIVersion {
 				t.Errorf("%s version = %q, error = %v", r.URL.Path, version, err)
@@ -288,6 +330,8 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/worker/v1/enrollment":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{})
+		case "/worker/v1/instance/challenge":
+			serveHostChallenge(w, r)
 		case "/worker/v1/instance/credential":
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/recover":
@@ -297,7 +341,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	client, err := New(server.URL, WithAuth("host", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,8 +363,8 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 	if _, err = client.GetWorkerStatus(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if seen["/worker/v1/instance/credential"] != 1 {
-		t.Fatalf("host credential issues = %d", seen["/worker/v1/instance/credential"])
+	if seen["/worker/v1/instance/challenge"] != 1 || seen["/worker/v1/instance/credential"] != 1 {
+		t.Fatalf("host challenges = %d, credential issues = %d", seen["/worker/v1/instance/challenge"], seen["/worker/v1/instance/credential"])
 	}
 }
 
@@ -329,6 +373,10 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The challenge is the credential phase's first connection request.
+				if phase == "activation" && serveHostChallenge(w, r) {
+					return
+				}
 				if phase == "activation" && r.URL.Path == "/worker/v1/instance/credential" {
 					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 					return
@@ -338,7 +386,7 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": workerapi.APIVersionMismatchCode, "message": "worker version differs from control plane version"}})
 			}))
 			defer server.Close()
-			client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+			client, err := New(server.URL, WithAuth("host", testMachineKey), WithService("service"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -361,9 +409,14 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 func TestHostAuthorityRejectionClassification(t *testing.T) {
 	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusServiceUnavailable} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "credential issuance rejected", code) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveHostChallenge(w, r) {
+					return
+				}
+				http.Error(w, "credential issuance rejected", code)
+			}))
 			defer server.Close()
-			client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "secret"), WithService("00000000-0000-0000-0000-000000000901"))
+			client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", testMachineKey), WithService("00000000-0000-0000-0000-000000000901"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -382,6 +435,9 @@ func TestHostAuthorityRejectionClassification(t *testing.T) {
 func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		if r.URL.Path == "/worker/v1/instance/credential" {
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 			return
@@ -394,7 +450,7 @@ func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "secret"), WithService("00000000-0000-0000-0000-000000000901"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", testMachineKey), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,6 +467,9 @@ func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
 func TestHostIdentityRetainsAuthenticatedIncarnation(t *testing.T) {
 	var epoch int64 = 19
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		if r.URL.Path != "/worker/v1/instance/credential" {
 			t.Errorf("unexpected request %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -419,7 +478,7 @@ func TestHostIdentityRetainsAuthenticatedIncarnation(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600, WorkerEpoch: epoch})
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	client, err := New(server.URL, WithAuth("host", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,10 +509,13 @@ func TestHostIdentityRetainsAuthenticatedIncarnation(t *testing.T) {
 
 func TestHostCredentialRejectsMissingEpoch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	client, err := New(server.URL, WithAuth("host", testMachineKey), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}

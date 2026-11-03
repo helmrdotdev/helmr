@@ -19,7 +19,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
 	attachment, err := client.AcquireAgentAttachment(t.Context(), sessionID)
 	if err != nil {

@@ -17,7 +17,7 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	request := workerapi.AgentComputerLeaseRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), AllocationID: f.Computer.String(), LeaseEpoch: 1}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '10 seconds'`)
 	response, err := client.RenewAgentComputerLease(t.Context(), request)
@@ -26,7 +26,7 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 	}
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::uuid,'resource_id','other-worker','current_service_id',$2::uuid))).* FROM worker_hosts h WHERE id=$1`, f.Worker, other)
-	otherClient := seedHostSecret(t, f.Pool, other).client(t, server.URL)
+	otherClient := seedHostKey(t, f.Pool, other).client(t, server.URL)
 	if err = otherClient.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: request}); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("non-owner fenced Computer: %v", err)
 	}

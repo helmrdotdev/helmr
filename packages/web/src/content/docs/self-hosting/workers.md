@@ -140,7 +140,7 @@ Prepare `worker_ami_id` from the verified public release's host/runtime bundles 
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
-Workers send their worker API version in the JSON `api_version` field when enrolling, exchanging their host secret for a host credential, and activating. The Control Plane rejects a missing or different revision with HTTP 409 `worker_api_version_mismatch` before the operation changes host state. The error names both API versions. A rejected worker keeps its stored host secret; use a compatible worker release or roll the Control Plane back.
+Workers send their worker API version in the JSON `api_version` field when enrolling, requesting and answering a host credential challenge, and activating. The Control Plane rejects a missing or different revision with HTTP 409 `worker_api_version_mismatch` before the operation changes host state. The error names both API versions. A rejected worker keeps its stored machine key; use a compatible worker release or roll the Control Plane back.
 
 Ordinary worker API calls do not require a version header. Compatible releases keep the same API version. Connection checks do not guarantee compatibility after a Control Plane replacement: drain workers before deploying an incompatible release, as described in [Upgrades](/docs/self-hosting/upgrades#worker-api-version-changes).
 
@@ -151,22 +151,34 @@ Worker role grants only lifecycle actions and the enrollment token secret. They 
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 
-## Host secrets, token rotation and revocation
+## Machine keys, token rotation and revocation
 
-Enrollment returns a host secret that the worker stores in
-`worker-host-secret.json` and exchanges for 15-minute host credentials. The host
-secret stays valid until its host is fenced, for example after it stops sending
-heartbeats, or until the group's host credentials are revoked.
+At enrollment the worker generates an Ed25519 machine key and sends only its
+public half. The private key stays in `worker-identity.json`, a root-only file
+in the worker's state directory. To get a 15-minute host credential, the worker
+signs a short-lived challenge from the Control Plane with that key; no bearer
+secret ever crosses the network. The key stays valid until its host is fenced,
+for example after it stops sending heartbeats, or until the group's host
+credentials are revoked. A key is registered once: a revoked key can neither
+authenticate nor enroll again, so a machine comes back only by enrolling with a
+new key and a valid enrollment token.
+
+A group has a reusable enrollment token, for fleets that keep it in their own
+secret store. An organization can also issue a single-use enrollment token for
+its group (`POST /api/worker-groups/{id}/enrollment-tokens`), which admits one
+machine and expires after an hour. It has no revoke of its own: rotating the
+group's token expires every single-use token not yet used.
 
 Two Admin API operations change worker group credentials, with different effects:
 
 - **Rotate token** (`POST /admin/api/v1/worker-groups/{id}/token/rotate`) replaces
-  the group's enrollment token. The old token stops enrolling hosts immediately.
-  Enrolled hosts keep their host secrets and keep running. Propagate the new token
+  the group's enrollment token. The old token, and every single-use token not
+  yet used, stop enrolling hosts immediately.
+  Enrolled hosts keep their machine keys and keep running. Propagate the new token
   to the group's provisioning before hosts are replaced.
 - **Revoke host credentials** (`POST /admin/api/v1/worker-groups/{id}/host-credentials/revoke`)
   fences every registering, active and draining host of the group as lost and
-  revokes every host secret the group issued. Their host credentials and Secret
+  revokes every machine key the group registered. Their host credentials and Secret
   proxy grants fail every authorization check from then on; a request already
   authorized before the revocation may still complete. Storage requests the
   Control Plane signed for those hosts before the revocation stay usable until

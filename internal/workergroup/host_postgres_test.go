@@ -3,9 +3,11 @@ package workergroup
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -26,13 +28,52 @@ type startedHost struct {
 	principal  HostPrincipal
 }
 
-func (f supplyFixture) enroll(t *testing.T, cfg HostAuthConfig, poolName string, resourceID string) EnrolledHost {
+// enrolledMachineKeys holds the machine key each enrolled test host proves
+// itself with, by host ID.
+var enrolledMachineKeys sync.Map
+
+// enrollWithMachineKey enrolls a host with a new machine key and records the
+// key for its host ID.
+func enrollWithMachineKey(t *testing.T, pool db.TxBeginner, enrollment Enrollment) (EnrolledHost, error) {
 	t.Helper()
-	tokenHash, err := auth.ParseEnrollmentToken(f.enrollmentToken)
+	key := newMachineKey(t)
+	enrollment.PublicKey = key.Public().(ed25519.PublicKey)
+	enrolled, err := EnrollHost(t.Context(), pool, auditpolicy.Policy{RetentionSeconds: 3600}, enrollment)
+	if err == nil {
+		enrolledMachineKeys.Store(enrolled.HostID, key)
+	}
+	return enrolled, err
+}
+
+// machineKey returns the machine key the host last enrolled with.
+func machineKey(t *testing.T, hostID uuid.UUID) ed25519.PrivateKey {
+	t.Helper()
+	key, ok := enrolledMachineKeys.Load(hostID)
+	if !ok {
+		t.Fatalf("worker host %s has no recorded machine key", hostID)
+	}
+	return key.(ed25519.PrivateKey)
+}
+
+// signedExchange answers a new challenge for the enrolled host with its
+// machine key.
+func signedExchange(t *testing.T, cfg HostAuthConfig, enrolled EnrolledHost, serviceID string) HostCredentialRequest {
+	t.Helper()
+	return signedHostCredentialRequest(t, cfg, enrolled.HostID.String(), serviceID, machineKey(t, enrolled.HostID), time.Now())
+}
+
+func parsedEnrollmentToken(t *testing.T, raw string) auth.ParsedEnrollmentToken {
+	t.Helper()
+	token, err := auth.ParseEnrollmentToken(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrolled, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: poolName, ResourceID: resourceID})
+	return token
+}
+
+func (f supplyFixture) enroll(t *testing.T, _ HostAuthConfig, poolName string, resourceID string) EnrolledHost {
+	t.Helper()
+	enrolled, err := enrollWithMachineKey(t, f.pool, Enrollment{Token: parsedEnrollmentToken(t, f.enrollmentToken), PoolName: poolName, ResourceID: resourceID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +85,7 @@ func (f supplyFixture) enroll(t *testing.T, cfg HostAuthConfig, poolName string,
 
 func (f supplyFixture) exchange(t *testing.T, cfg HostAuthConfig, enrolled EnrolledHost, serviceID string) HostCredential {
 	t.Helper()
-	credential, err := IssueHostCredential(t.Context(), f.pool, cfg, HostCredentialRequest{
-		HostID: enrolled.HostID.String(), Secret: enrolled.Secret, ServiceID: serviceID,
-	}, time.Now)
+	credential, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, enrolled, serviceID), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,9 +252,19 @@ func TestIssueHostCredentialAdvancesEpochPerService(t *testing.T) {
 	if next := f.exchange(t, cfg, enrolled, uuid.NewV7().String()); next.Epoch != 2 {
 		t.Fatalf("new service epoch = %d, want 2", next.Epoch)
 	}
+	other := f.enroll(t, cfg, "default", "i-epochs-other")
+	wrongSignature := signedExchange(t, cfg, enrolled, service)
+	wrongSignature.Signature[0] ^= 1
+	foreignChallenge := signedExchange(t, cfg, enrolled, service)
+	foreignChallenge.Challenge = signedExchange(t, cfg, other, service).Challenge
+	foreignChallenge.Signature = ed25519.Sign(machineKey(t, enrolled.HostID), auth.HostChallengeMessage(foreignChallenge.Challenge))
+	otherKey := signedHostCredentialRequest(t, cfg, enrolled.HostID.String(), service, machineKey(t, other.HostID), time.Now())
+	unknownHost := uuid.NewV7().String()
 	for name, exchange := range map[string]HostCredentialRequest{
-		"wrong secret": {HostID: enrolled.HostID.String(), Secret: hostSecretPrefix + "wrong", ServiceID: service},
-		"other host":   {HostID: uuid.NewV7().String(), Secret: enrolled.Secret, ServiceID: service},
+		"wrong signature":   wrongSignature,
+		"another host key":  otherKey,
+		"foreign challenge": foreignChallenge,
+		"unknown host":      signedHostCredentialRequest(t, cfg, unknownHost, service, machineKey(t, enrolled.HostID), time.Now()),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := IssueHostCredential(t.Context(), f.pool, cfg, exchange, time.Now); !errors.Is(err, ErrUnauthenticated) {
@@ -227,15 +276,11 @@ func TestIssueHostCredentialAdvancesEpochPerService(t *testing.T) {
 
 func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	f := newSupplyFixture(t)
-	cfg := testHostAuthConfig(t)
-	tokenHash, err := auth.ParseEnrollmentToken(f.enrollmentToken)
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := parsedEnrollmentToken(t, f.enrollmentToken)
 	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
+	if _, err := enrollWithMachineKey(t, f.pool, Enrollment{Token: token, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
 		t.Fatalf("error = %v, want ErrInvalidEnrollmentToken", err)
 	}
 }
@@ -296,10 +341,8 @@ func TestFenceHostReplaysAfterFence(t *testing.T) {
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("fenced host authenticated for ordinary routes: %v", err)
 	}
-	if _, err := IssueHostCredential(t.Context(), f.pool, cfg, HostCredentialRequest{
-		HostID: host.enrolled.HostID.String(), Secret: host.enrolled.Secret, ServiceID: host.serviceID,
-	}, time.Now); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("fenced host exchanged its revoked host secret: %v", err)
+	if _, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, host.enrolled, host.serviceID), time.Now); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("fenced host exchanged its revoked host key: %v", err)
 	}
 }
 
@@ -332,8 +375,8 @@ type lockWaitQuerier struct {
 	wait func()
 }
 
-func (q lockWaitQuerier) AuthenticateWorkerHostSecret(ctx context.Context, params db.AuthenticateWorkerHostSecretParams) (db.AuthenticateWorkerHostSecretRow, error) {
-	row, err := q.Querier.AuthenticateWorkerHostSecret(ctx, params)
+func (q lockWaitQuerier) AuthenticateWorkerHostKey(ctx context.Context, params db.AuthenticateWorkerHostKeyParams) (db.AuthenticateWorkerHostKeyRow, error) {
+	row, err := q.Querier.AuthenticateWorkerHostKey(ctx, params)
 	q.wait()
 	return row, err
 }
@@ -351,9 +394,7 @@ func TestIssueHostCredentialIssuesAfterAuthentication(t *testing.T) {
 	enrolled := f.enroll(t, cfg, "default", "i-lock-wait")
 	clock := time.Now()
 	authenticated := clock.Add(time.Minute)
-	credential, err := issueHostCredential(t.Context(), lockWaitQuerier{Querier: f.q, wait: func() { clock = authenticated }}, cfg, HostCredentialRequest{
-		HostID: enrolled.HostID.String(), Secret: enrolled.Secret, ServiceID: uuid.NewV7().String(),
-	}, func() time.Time { return clock })
+	credential, err := issueHostCredential(t.Context(), lockWaitQuerier{Querier: f.q, wait: func() { clock = authenticated }}, cfg, signedHostCredentialRequest(t, cfg, enrolled.HostID.String(), uuid.NewV7().String(), machineKey(t, enrolled.HostID), clock), func() time.Time { return clock })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,28 +450,23 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 
 func TestEnrolledPoolAuditAtomicityAndSingleCreation(t *testing.T) {
 	f := newSupplyFixture(t)
-	cfg := testHostAuthConfig(t)
-	tokenHash, err := auth.ParseEnrollmentToken(f.enrollmentToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment := Enrollment{TokenHash: tokenHash, PoolName: "new-pool", ResourceID: "i-first-enrollment"}
+	enrollment := Enrollment{Token: parsedEnrollmentToken(t, f.enrollmentToken), PoolName: "new-pool", ResourceID: "i-first-enrollment"}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_pool_creation_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_pool_creation_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_pool_creation_audit()`)
-	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); err == nil {
+	if _, err := enrollWithMachineKey(t, f.pool, enrollment); err == nil {
 		t.Fatal("audit failure allowed pool bootstrap")
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM worker_pools)+(SELECT count(*) FROM worker_hosts)+(SELECT count(*) FROM worker_host_secrets)`).Scan(&count); err != nil || count != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM worker_pools)+(SELECT count(*) FROM worker_hosts)+(SELECT count(*) FROM worker_host_keys)`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("pool or host credentials survived rollback", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_pool_creation_audit ON audit_events`)
-	first, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment)
+	first, err := enrollWithMachineKey(t, f.pool, enrollment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	enrollment.ResourceID = "i-second-enrollment"
-	second, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment)
+	second, err := enrollWithMachineKey(t, f.pool, enrollment)
 	if err != nil {
 		t.Fatal(err)
 	}

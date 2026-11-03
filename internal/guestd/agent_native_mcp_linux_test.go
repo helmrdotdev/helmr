@@ -4,6 +4,7 @@ package guestd
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -37,9 +38,10 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 		t.Skip("requires the outer CP/native qualification")
 	}
 	var config struct {
-		BaseURL, Environment, Computer, Worker, Service, Secret, TargetSession, ServerName string
-		Certificate                                                                        []byte
-		Sessions                                                                           map[string]string
+		BaseURL, Environment, Computer, Worker, Service, TargetSession, ServerName string
+		MachineKey                                                                 []byte
+		Certificate                                                                []byte
+		Sessions                                                                   map[string]string
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -58,7 +60,7 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 	roots.AddCert(certificate)
 	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: config.ServerName, MinVersion: tls.VersionTLS12}}
 	defer transport.CloseIdleConnections()
-	client, err := workerclient.New(config.BaseURL, workerclient.WithAuth(config.Worker, config.Secret), workerclient.WithService(config.Service), workerclient.WithHTTPClient(&http.Client{Transport: transport, Timeout: 10 * time.Second}))
+	client, err := workerclient.New(config.BaseURL, workerclient.WithAuth(config.Worker, ed25519.PrivateKey(config.MachineKey)), workerclient.WithService(config.Service), workerclient.WithHTTPClient(&http.Client{Transport: transport, Timeout: 10 * time.Second}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +162,7 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 		_ = peer.connection.Close()
 		<-peer.stopped
 		peer.serving = false
-		replacement, err := workerclient.New(config.BaseURL, workerclient.WithAuth(config.Worker, config.Secret), workerclient.WithService(config.Service), workerclient.WithHTTPClient(&http.Client{Transport: transport, Timeout: 10 * time.Second}))
+		replacement, err := workerclient.New(config.BaseURL, workerclient.WithAuth(config.Worker, ed25519.PrivateKey(config.MachineKey)), workerclient.WithService(config.Service), workerclient.WithHTTPClient(&http.Client{Transport: transport, Timeout: 10 * time.Second}))
 		if err != nil {
 			t.Fatal(err)
 		}

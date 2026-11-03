@@ -156,12 +156,12 @@ WITH target AS (
               worker_hosts.worker_group_id, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.current_epoch
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 ), completed AS (
     SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
@@ -201,11 +201,11 @@ WITH target AS (
        AND worker_hosts.status IN ('registering', 'active', 'draining')
     RETURNING worker_hosts.id
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = now()
-     WHERE worker_host_secrets.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 )
 SELECT target.id
   FROM target
@@ -285,13 +285,13 @@ WITH transitioned AS (
        AND worker_hosts.claim_version IN (sqlc.arg(expected_claim_version), sqlc.arg(expected_claim_version) + 1)
        AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), host_secret_fence AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET claim_version = target.claim_version
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-       AND worker_host_secrets.claim_version < target.claim_version
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+       AND worker_host_keys.claim_version < target.claim_version
+    RETURNING worker_host_keys.id
 )
 SELECT target.*
   FROM target
@@ -309,12 +309,12 @@ WITH target AS (
        AND worker_hosts.status IN ('active', 'draining')
     RETURNING *
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 )
 SELECT target.*
   FROM target

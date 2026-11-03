@@ -298,6 +298,7 @@ POST /api/worker-groups
 POST /api/worker-groups/{groupID}/activate
 POST /api/worker-groups/{groupID}/disable
 POST /api/worker-groups/{groupID}/drain
+POST /api/worker-groups/{groupID}/enrollment-tokens
 POST /api/worker-groups/{groupID}/host-credentials/revoke
 POST /api/worker-groups/{groupID}/hosts/{hostID}/fence
 POST /api/worker-groups/{groupID}/pause
@@ -388,6 +389,7 @@ POST /worker/v1/computer-saves/publish
 POST /worker/v1/computer-storage/pressure
 POST /worker/v1/enrollment
 POST /worker/v1/instance/activate
+POST /worker/v1/instance/challenge
 POST /worker/v1/instance/credential
 POST /worker/v1/instance/drain
 POST /worker/v1/instance/drain/complete

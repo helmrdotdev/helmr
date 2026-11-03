@@ -2,67 +2,102 @@ package workergroup
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerpoolname"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Enrollment is a worker host's request to join the worker group whose
-// enrollment token hashes to TokenHash, in the pool named PoolName. A nil
-// TokenHash is an enrollment token that could not be parsed.
+// Enrollment is a worker host's request to join the worker group that its
+// enrollment token admits, in the pool named PoolName, with the public half of
+// the machine key it generated for itself.
 type Enrollment struct {
-	TokenHash  []byte
+	Token      auth.ParsedEnrollmentToken
 	PoolName   string
 	ResourceID string
+	PublicKey  []byte
 }
 
-// EnrolledHost is a new worker host with its raw host secret, which is
-// returned only once.
+// EnrolledHost is a new worker host and the key it proves itself with.
 type EnrolledHost struct {
 	HostID  uuid.UUID
 	GroupID uuid.UUID
 	PoolID  uuid.UUID
-	Secret  string
+	KeyID   uuid.UUID
 }
 
-// EnrollHost creates a registering worker host with a new host secret in the
-// named pool of the worker group that the enrollment token authorizes,
-// creating the pool when it does not exist. Authority is locked before checking
-// existing allocations so a lock wait cannot hide a newly committed writer.
-// This uses the database's READ COMMITTED isolation; allocation transactions
-// must retain at least a shared group lock through their commit.
-func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
+// EnrollHost creates a registering worker host with its machine key in the
+// named pool of the worker group that the enrollment token admits, creating
+// the pool when it does not exist. A single-use token is consumed by this
+// host and must name a resource ID no enrolled host holds. Repeating an
+// enrollment with the same token, resource and key returns the same host.
+// Authority is locked
+// before checking existing allocations so a lock
+// wait cannot hide a newly committed writer. This uses the database's READ
+// COMMITTED isolation; allocation transactions must retain at least a shared
+// group lock through their commit.
+func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, enrollment Enrollment) (EnrolledHost, error) {
 	if enrollment.ResourceID == "" || strings.TrimSpace(enrollment.ResourceID) != enrollment.ResourceID || len(enrollment.ResourceID) > MaxResourceIDBytes {
 		return EnrolledHost{}, invalidInput("resource_id is required and must not exceed %d bytes", MaxResourceIDBytes)
 	}
 	if err := workerpoolname.Validate(enrollment.PoolName); err != nil {
 		return EnrolledHost{}, invalidInput("worker pool name: %v", err)
 	}
-	if len(enrollment.TokenHash) == 0 {
+	if len(enrollment.PublicKey) != ed25519.PublicKeySize {
+		return EnrolledHost{}, invalidInput("public_key must be a %d-byte Ed25519 public key", ed25519.PublicKeySize)
+	}
+	if len(enrollment.Token.Hash) == 0 {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
 	}
-	generated, err := generateHostSecret(cfg.hostSecretKey)
-	if err != nil {
-		return EnrolledHost{}, fmt.Errorf("generate worker host secret: %w", err)
-	}
-	var hostSecret db.EnrollWorkerHostRow
-	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var group uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT g.id FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
- WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.TokenHash).Scan(&group); err != nil {
+	var hostKey db.EnrollWorkerHostRow
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		var group, token uuid.UUID
+		var consumedBy *uuid.UUID
+		live := true
+		var lookup pgx.Row
+		if enrollment.Token.SingleUse {
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, t.worker_host_id, t.expires_at > clock_timestamp() FROM worker_enrollment_tokens t JOIN worker_groups g ON g.id=t.worker_group_id
+ WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
+		} else {
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, NULL::uuid, true FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
+ WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
+		}
+		if err := lookup.Scan(&group, &token, &consumedBy, &live); err != nil {
 			return err
+		}
+		// Repeating an enrollment whose response was lost returns the same
+		// host: the machine still holds the token and the key it enrolled.
+		// A single-use token replays only for the host that consumed it, also
+		// after it expired; it admits a new host only before then.
+		var replayHost, replayPool, replayKey uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT h.id, h.worker_pool_id, k.id FROM worker_hosts h
+ JOIN worker_host_keys k ON k.worker_host_id=h.id AND k.revoked_at IS NULL
+ WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND h.status IN ('registering','active','draining') AND k.public_key=$3`,
+			group, enrollment.ResourceID, enrollment.PublicKey).Scan(&replayHost, &replayPool, &replayKey)
+		switch {
+		case err == nil && (!enrollment.Token.SingleUse || consumedBy != nil && *consumedBy == replayHost):
+			hostKey = db.EnrollWorkerHostRow{ID: pgvalue.UUID(replayKey), WorkerHostID: pgvalue.UUID(replayHost), WorkerGroupID: pgvalue.UUID(group), WorkerPoolID: pgvalue.UUID(replayPool)}
+			return nil
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("read enrollment replay: %w", err)
+		}
+		if consumedBy != nil || !live {
+			return ErrInvalidEnrollmentToken
 		}
 		// Use a fresh statement snapshot after the group lock. An allocation
 		// committed while enrollment waited must remain visible across every
@@ -75,26 +110,54 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		if custody {
 			return ErrHostCustody
 		}
-		var err error
+		// A single-use token admits one new machine. Re-registering a host
+		// that is already enrolled, which replaces its key, takes the group's
+		// token.
+		if enrollment.Token.SingleUse {
+			var enrolled bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE worker_group_id=$1 AND resource_id=$2 AND status IN ('registering','active','draining'))`, group, enrollment.ResourceID).Scan(&enrolled); err != nil {
+				return err
+			}
+			if enrolled {
+				return ErrHostResourceEnrolled
+			}
+		}
 		proposedPool := uuid.NewV7()
-		hostSecret, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
-			TokenHash:        enrollment.TokenHash,
+		hostKey, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
+			WorkerGroupID:    pgvalue.UUID(group),
 			WorkerPoolID:     pgvalue.UUID(proposedPool),
 			PoolName:         enrollment.PoolName,
 			WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
 			CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
 			ResourceID:       enrollment.ResourceID,
-			HostSecretID:     pgvalue.UUID(uuid.NewV7()),
-			KeyPrefix:        generated.KeyPrefix,
-			SecretHash:       generated.SecretHash,
+			HostKeyID:        pgvalue.UUID(uuid.NewV7()),
+			PublicKey:        enrollment.PublicKey,
 		})
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "worker_host_keys_public_key_key" {
+			return ErrHostKeyRegistered
+		}
 		if err != nil {
 			return err
 		}
-		if err = dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
+		if enrollment.Token.SingleUse {
+			// Expiry is rechecked at consumption: the lookup's predicate is not
+			// re-evaluated after a lock wait.
+			consumed, err := tx.Exec(ctx, `UPDATE worker_enrollment_tokens SET consumed_at=clock_timestamp(),worker_host_id=$2
+ WHERE id=$1 AND consumed_at IS NULL AND expires_at > clock_timestamp()`, token, hostKey.WorkerHostID)
+			if err != nil {
+				return fmt.Errorf("consume enrollment token: %w", err)
+			}
+			if consumed.RowsAffected() != 1 {
+				return ErrInvalidEnrollmentToken
+			}
+		} else if _, err := tx.Exec(ctx, `UPDATE worker_group_tokens SET last_used_at=now() WHERE id=$1`, token); err != nil {
+			return fmt.Errorf("record enrollment token use: %w", err)
+		}
+		if err := dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
 			return err
 		}
-		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
+		if pgvalue.MustUUIDValue(hostKey.WorkerPoolID) == proposedPool {
 			return audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
 		}
 		return nil
@@ -102,15 +165,64 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
 	}
+	if errors.Is(err, ErrHostCustody) || errors.Is(err, ErrHostKeyRegistered) || errors.Is(err, ErrHostResourceEnrolled) || errors.Is(err, ErrInvalidEnrollmentToken) {
+		return EnrolledHost{}, err
+	}
 	if err != nil {
 		return EnrolledHost{}, fmt.Errorf("enroll worker host %q: %w", enrollment.ResourceID, err)
 	}
 	return EnrolledHost{
-		HostID:  pgvalue.MustUUIDValue(hostSecret.WorkerHostID),
-		GroupID: pgvalue.MustUUIDValue(hostSecret.WorkerGroupID),
-		PoolID:  pgvalue.MustUUIDValue(hostSecret.WorkerPoolID),
-		Secret:  generated.Raw,
+		HostID:  pgvalue.MustUUIDValue(hostKey.WorkerHostID),
+		GroupID: pgvalue.MustUUIDValue(hostKey.WorkerGroupID),
+		PoolID:  pgvalue.MustUUIDValue(hostKey.WorkerPoolID),
+		KeyID:   pgvalue.MustUUIDValue(hostKey.ID),
 	}, nil
+}
+
+// SingleUseEnrollmentTokenTTL is how long a single-use enrollment token can
+// admit its machine.
+const SingleUseEnrollmentTokenTTL = time.Hour
+
+// IssuedEnrollmentToken is a new single-use enrollment token, returned once.
+type IssuedEnrollmentToken struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+// IssueEnrollmentToken issues a single-use enrollment token for an active or
+// paused group. It admits one machine before SingleUseEnrollmentTokenTTL
+// passes.
+func IssueEnrollmentToken(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) (IssuedEnrollmentToken, error) {
+	if operator.safety {
+		return IssuedEnrollmentToken{}, errSafetyOperation
+	}
+	token, err := auth.GenerateSingleUseEnrollmentToken()
+	if err != nil {
+		return IssuedEnrollmentToken{}, err
+	}
+	var issued IssuedEnrollmentToken
+	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		id := uuid.NewV7()
+		err = tx.QueryRow(ctx, `INSERT INTO worker_enrollment_tokens(id,worker_group_id,token_hash,expires_at)
+ SELECT $1,g.id,$3,clock_timestamp()+make_interval(secs => $4) FROM worker_groups g WHERE g.id=$2 AND g.status IN ('active','paused')
+ RETURNING expires_at`, id, groupID, token.Hash, SingleUseEnrollmentTokenTTL.Seconds()).Scan(&issued.ExpiresAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conflict("worker group is draining or disabled")
+		}
+		if err != nil {
+			return fmt.Errorf("issue enrollment token: %w", err)
+		}
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_group.enrollment_token_issued", TargetKind: "worker_group", TargetID: groupID})
+	})
+	if err != nil {
+		return IssuedEnrollmentToken{}, err
+	}
+	issued.Token = token.Raw
+	return issued, nil
 }
 
 // Activation is the capacity a worker host reports for its epoch: the pool

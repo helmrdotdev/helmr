@@ -1,5 +1,5 @@
 // Package workergroup owns worker supply: worker groups, their pools and
-// hosts, worker host enrollment, host secrets, host credentials and
+// hosts, worker host enrollment, machine keys, host credentials and
 // lifecycle, the /capacity/v1 scaling protocol's operations and planning,
 // and the self-hosted bootstrap seed. Operations take domain inputs, own their
 // transactions and locks, and return the errors declared here; callers map
@@ -18,14 +18,20 @@ var (
 	// ErrQueuedDemand rejects a drain that requires zero queued demand while
 	// the worker group's region still has queued work.
 	ErrQueuedDemand = errors.New("queued demand is present")
-	// ErrUnauthenticated rejects a worker host secret or host credential that does
-	// not authenticate a current worker host.
+	// ErrUnauthenticated rejects a challenge answer or host credential that
+	// does not authenticate a current worker host.
 	ErrUnauthenticated = errors.New("worker authentication is required")
 	// ErrInvalidEnrollmentToken rejects an enrollment that no active or
 	// paused worker group's enrollment token authorizes.
 	ErrInvalidEnrollmentToken = errors.New("worker enrollment token is invalid")
 	// ErrHostCustody prevents registration from hiding an unfenced physical owner.
-	ErrHostCustody = errors.New("worker resource has retained VM allocations; confirm physical cleanup before enrollment")
+	// ErrHostKeyRegistered refuses a machine key that was registered before,
+	// including one that was revoked. The machine enrolls with a new key.
+	// ErrHostResourceEnrolled refuses a single-use enrollment for a resource ID
+	// that an enrolled host already holds in the group.
+	ErrHostResourceEnrolled = errors.New("a worker host with this resource ID is already enrolled in the group")
+	ErrHostKeyRegistered    = errors.New("worker machine key is already registered; enroll with a new key")
+	ErrHostCustody          = errors.New("worker resource has retained VM allocations; confirm physical cleanup before enrollment")
 	// ErrObservationConflict rejects a worker host observation that does not
 	// match the host's current epoch.
 	ErrObservationConflict = errors.New("worker observation conflicts with this worker epoch")

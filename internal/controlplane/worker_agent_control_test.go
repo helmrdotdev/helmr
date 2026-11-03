@@ -32,7 +32,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	attachment, err := client.AcquireAgentAttachment(t.Context(), runtimeTestSession(f))
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestWorkerAgentSupersededControlReceiptKeepsCurrentAttachment(t *testing.T)
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	a, err := client.AcquireAgentAttachment(t.Context(), runtimeTestSession(f))
 	if err != nil {
 		t.Fatal(err)

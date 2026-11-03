@@ -82,7 +82,7 @@ func TestWorkerAgentNativeManagedMCP(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	hostKey := seedHostKey(t, f.Pool, f.Worker)
 	// These independent native clients address one common target. A real
 	// activation gives all participants the Environment origin this requires;
 	// unrelated personal Sessions cannot send work to one another.
@@ -105,10 +105,10 @@ INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,comput
 	}
 	endpoint.Host = net.JoinHostPort("host.docker.internal", endpoint.Port())
 	configuration, err := json.Marshal(struct {
-		BaseURL, Environment, Computer, Worker, Service, Secret, TargetSession, ServerName string
-		Certificate                                                                        []byte
-		Sessions                                                                           map[string]string
-	}{endpoint.String(), f.Environment.String(), f.Computer.String(), f.Worker.String(), secret.serviceID.String(), secret.secret, f.Session.String(), server.Certificate().DNSNames[0], server.Certificate().Raw, sessions})
+		BaseURL, Environment, Computer, Worker, Service, TargetSession, ServerName string
+		MachineKey, Certificate                                                    []byte
+		Sessions                                                                   map[string]string
+	}{endpoint.String(), f.Environment.String(), f.Computer.String(), f.Worker.String(), hostKey.serviceID.String(), f.Session.String(), server.Certificate().DNSNames[0], hostKey.key, server.Certificate().Raw, sessions})
 	if err != nil {
 		t.Fatal(err)
 	}

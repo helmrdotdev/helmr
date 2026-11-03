@@ -31,7 +31,7 @@ func runtimeEnqueue(f sessiontest.Fixture, key string) workerapi.AgentOperationR
 func TestWorkerAgentClientAuthorityAndRetry(t *testing.T) {
 	f := sessiontest.New(t)
 	handler := newPostgresServer(t, f.Pool)
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	client := secret.client(t, server.URL)
@@ -215,7 +215,7 @@ func TestWorkerAgentAcceptedFrameDoesNotExpandBeyondHTTPBound(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	request := runtimeEnqueue(f, "large")
 	request.Payload = []byte(`{"tool":"enqueue","arguments":{"sessionId":"` + f.Session.String() + `","input":[{"type":"text","text":"` + strings.Repeat("<", 32<<10) + `"}],"idempotencyKey":"large"}}`)
 	result, err := client.AgentOperation(t.Context(), request)
@@ -238,7 +238,7 @@ func TestWorkerAgentAttachmentSurvivesClientReplacement(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	secret := seedHostSecret(t, f.Pool, f.Worker)
+	secret := seedHostKey(t, f.Pool, f.Worker)
 	for sequence := sessiontest.SeededAttachment + 1; sequence <= sessiontest.SeededAttachment+2; sequence++ {
 		client := secret.client(t, server.URL)
 		result, err := client.AcquireAgentAttachment(t.Context(), runtimeTestSession(f))

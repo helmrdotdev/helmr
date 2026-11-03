@@ -112,7 +112,7 @@ type Worker struct {
 	WorkerResourceID            string
 	WorkerPoolName              string
 	WorkerEnrollmentTokenFile   string
-	WorkerHostSecretPath        string
+	WorkerIdentityPath          string
 	WorkDir                     string
 	ImagesDir                   string
 	FirecrackerPath             string
@@ -146,10 +146,10 @@ type Worker struct {
 }
 
 type WorkerControlPlane struct {
-	ControlPlaneURL      string
-	WorkerHostSecretPath string
-	WorkDir              string
-	PollEvery            time.Duration
+	ControlPlaneURL    string
+	WorkerIdentityPath string
+	WorkDir            string
+	PollEvery          time.Duration
 }
 
 func LoadDatabase() (Database, error) {

@@ -30,7 +30,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}; cfg = *c })
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
 	caller := session.UserCaller(f.Principal(t))
 	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[]`)})
@@ -189,7 +189,7 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
 	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "many asks", Input: json.RawMessage(`[]`)})
 	if err != nil {

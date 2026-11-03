@@ -1217,6 +1217,13 @@ column webauthn_challenges.purpose text not null
 column webauthn_challenges.revoked_at timestamp with time zone
 column webauthn_challenges.session_id uuid
 column webauthn_challenges.verification_state jsonb not null
+column worker_enrollment_tokens.consumed_at timestamp with time zone
+column worker_enrollment_tokens.created_at timestamp with time zone not null default clock_timestamp()
+column worker_enrollment_tokens.expires_at timestamp with time zone not null
+column worker_enrollment_tokens.id uuid not null
+column worker_enrollment_tokens.token_hash bytea not null
+column worker_enrollment_tokens.worker_group_id uuid not null
+column worker_enrollment_tokens.worker_host_id uuid
 column worker_group_tokens.created_at timestamp with time zone not null default now()
 column worker_group_tokens.id uuid not null
 column worker_group_tokens.last_used_at timestamp with time zone
@@ -1236,16 +1243,14 @@ column worker_groups.region_id text not null
 column worker_groups.status text not null default 'active'::text
 column worker_groups.token_id uuid not null
 column worker_groups.updated_at timestamp with time zone not null default now()
-column worker_host_secrets.claim_version bigint not null default 1
-column worker_host_secrets.created_at timestamp with time zone not null default now()
-column worker_host_secrets.expires_at timestamp with time zone
-column worker_host_secrets.id uuid not null
-column worker_host_secrets.key_prefix text not null
-column worker_host_secrets.last_used_at timestamp with time zone
-column worker_host_secrets.revoked_at timestamp with time zone
-column worker_host_secrets.secret_hash bytea not null
-column worker_host_secrets.worker_group_id uuid not null
-column worker_host_secrets.worker_host_id uuid not null
+column worker_host_keys.claim_version bigint not null default 1
+column worker_host_keys.created_at timestamp with time zone not null default now()
+column worker_host_keys.id uuid not null
+column worker_host_keys.last_used_at timestamp with time zone
+column worker_host_keys.public_key bytea not null
+column worker_host_keys.revoked_at timestamp with time zone
+column worker_host_keys.worker_group_id uuid not null
+column worker_host_keys.worker_host_id uuid not null
 column worker_hosts.activated_at timestamp with time zone
 column worker_hosts.admission_paused_reason text
 column worker_hosts.claim_version bigint not null default 1
@@ -2367,6 +2372,13 @@ constraint webauthn_challenges f FOREIGN KEY (account_repair_enrollment_id) REFE
 constraint webauthn_challenges f FOREIGN KEY (operator_passkey_enrollment_id) REFERENCES operator_passkey_enrollments(id)
 constraint webauthn_challenges f FOREIGN KEY (session_id) REFERENCES login_sessions(id)
 constraint webauthn_challenges p PRIMARY KEY (id)
+constraint worker_enrollment_tokens c CHECK ((consumed_at IS NULL) = (worker_host_id IS NULL))
+constraint worker_enrollment_tokens c CHECK (expires_at > created_at)
+constraint worker_enrollment_tokens c CHECK (octet_length(token_hash) > 0)
+constraint worker_enrollment_tokens f FOREIGN KEY (worker_group_id) REFERENCES worker_groups(id)
+constraint worker_enrollment_tokens f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id)
+constraint worker_enrollment_tokens p PRIMARY KEY (id)
+constraint worker_enrollment_tokens u UNIQUE (token_hash)
 constraint worker_group_tokens c CHECK (octet_length(token_hash) = 32)
 constraint worker_group_tokens p PRIMARY KEY (id)
 constraint worker_group_tokens u UNIQUE (token_hash)
@@ -2382,13 +2394,11 @@ constraint worker_groups p PRIMARY KEY (id)
 constraint worker_groups u UNIQUE (id, owner_org_id, region_id)
 constraint worker_groups u UNIQUE (token_id)
 constraint worker_groups u UNIQUE NULLS NOT DISTINCT (owner_org_id, region_id, name)
-constraint worker_host_secrets c CHECK (btrim(key_prefix) <> ''::text)
-constraint worker_host_secrets c CHECK (claim_version > 0)
-constraint worker_host_secrets c CHECK (octet_length(secret_hash) > 0)
-constraint worker_host_secrets f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
-constraint worker_host_secrets p PRIMARY KEY (id)
-constraint worker_host_secrets u UNIQUE (key_prefix)
-constraint worker_host_secrets u UNIQUE (secret_hash)
+constraint worker_host_keys c CHECK (claim_version > 0)
+constraint worker_host_keys c CHECK (octet_length(public_key) = 32)
+constraint worker_host_keys f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
+constraint worker_host_keys p PRIMARY KEY (id)
+constraint worker_host_keys u UNIQUE (public_key)
 constraint worker_hosts c CHECK ((cpu_environment IS NULL) = (cpu_environment_digest IS NULL))
 constraint worker_hosts c CHECK ((draining_at IS NULL) = (drain_reason IS NULL))
 constraint worker_hosts c CHECK ((status <> ALL (ARRAY['active'::text, 'draining'::text, 'termination_ready'::text])) OR current_epoch IS NOT NULL)
@@ -2606,6 +2616,6 @@ index CREATE UNIQUE INDEX turn_messages_one_started ON public.turn_messages USIN
 index CREATE UNIQUE INDEX turns_one_active ON public.turns USING btree (environment_id, session_id) WHERE (status = 'running'::text)
 index CREATE UNIQUE INDEX users_primary_email_lower_idx ON public.users USING btree (lower(primary_email)) WHERE (primary_email IS NOT NULL)
 index CREATE UNIQUE INDEX worker_groups_one_active_deployment_per_region_idx ON public.worker_groups USING btree (region_id) WHERE ((owner_org_id IS NULL) AND (status = ANY (ARRAY['active'::text, 'paused'::text])))
-index CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON public.worker_host_secrets USING btree (worker_host_id) WHERE (revoked_at IS NULL)
+index CREATE UNIQUE INDEX worker_host_keys_one_active_idx ON public.worker_host_keys USING btree (worker_host_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX worker_hosts_live_resource ON public.worker_hosts USING btree (worker_group_id, resource_id) WHERE (status = ANY (ARRAY['registering'::text, 'active'::text, 'draining'::text]))
 index CREATE UNIQUE INDEX worker_scale_in_operations_one_pending ON public.worker_scale_in_operations USING btree (worker_group_id) WHERE (completed_at IS NULL)

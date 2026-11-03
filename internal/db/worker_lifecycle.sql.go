@@ -36,13 +36,13 @@ WITH transitioned AS (
        AND worker_hosts.claim_version IN ($5, $5 + 1)
        AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), host_secret_fence AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET claim_version = target.claim_version
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-       AND worker_host_secrets.claim_version < target.claim_version
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+       AND worker_host_keys.claim_version < target.claim_version
+    RETURNING worker_host_keys.id
 )
 SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.resource_observation_sequence, target.resource_policy_revision, target.resource_observed_at, target.local_optional_cpu_millis, target.local_optional_memory_bytes, target.optional_disk_bytes, target.local_optional_vm_slots, target.local_optional_tasks, target.optional_reclaim_pending, target.disk_slots_for_real_work, target.ready_leaf_keys, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
@@ -166,12 +166,12 @@ WITH target AS (
        AND worker_hosts.status IN ('active', 'draining')
     RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 )
 SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.resource_observation_sequence, target.resource_policy_revision, target.resource_observed_at, target.local_optional_cpu_millis, target.local_optional_memory_bytes, target.optional_disk_bytes, target.local_optional_vm_slots, target.local_optional_tasks, target.optional_reclaim_pending, target.disk_slots_for_real_work, target.ready_leaf_keys, target.observed_at, target.admission_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.drain_reason, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
@@ -404,12 +404,12 @@ WITH target AS (
               worker_hosts.worker_group_id, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.current_epoch
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_secrets.worker_host_id = target.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = target.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 ), completed AS (
     SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
@@ -485,11 +485,11 @@ WITH target AS (
        AND worker_hosts.status IN ('registering', 'active', 'draining')
     RETURNING worker_hosts.id
 ), revoked_host_secrets AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = now()
-     WHERE worker_host_secrets.worker_group_id = $1
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_group_id = $1
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 )
 SELECT target.id
   FROM target

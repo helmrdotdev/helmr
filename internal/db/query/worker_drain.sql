@@ -31,10 +31,10 @@ WITH target AS MATERIALIZED (
      WHERE drain_target.status = 'draining'
        AND drain_target.epoch_started_at IS NOT NULL
        AND EXISTS (
-           SELECT 1 FROM worker_host_secrets
-            WHERE worker_host_secrets.worker_host_id = drain_target.id
-              AND worker_host_secrets.claim_version = drain_target.claim_version
-              AND worker_host_secrets.revoked_at IS NULL
+           SELECT 1 FROM worker_host_keys
+            WHERE worker_host_keys.worker_host_id = drain_target.id
+              AND worker_host_keys.claim_version = drain_target.claim_version
+              AND worker_host_keys.revoked_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
@@ -64,12 +64,12 @@ WITH target AS MATERIALIZED (
               worker_hosts.current_epoch, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.termination_ready_at
 ), revoked AS (
-    UPDATE worker_host_secrets
+    UPDATE worker_host_keys
        SET revoked_at = now()
       FROM completed
-     WHERE worker_host_secrets.worker_host_id = completed.id
-       AND worker_host_secrets.revoked_at IS NULL
-    RETURNING worker_host_secrets.id
+     WHERE worker_host_keys.worker_host_id = completed.id
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
 ), result AS (
     SELECT completed.*
       FROM completed

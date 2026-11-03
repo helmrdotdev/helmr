@@ -50,7 +50,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndCurrentVersion(t *testi
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, f.Environment, executor.Identity.OwnerID, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.SecretProxy = store; cfg.SecretDelivery = store }))
 	defer server.Close()
-	auth := seedHostSecret(t, f.Pool, f.Worker)
+	auth := seedHostKey(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
 	request := workerapi.SecretProxyRequest{AllocationID: executor.Identity.AllocationID}
 	leaf, err := client.PrepareSecretProxy(t.Context(), request)

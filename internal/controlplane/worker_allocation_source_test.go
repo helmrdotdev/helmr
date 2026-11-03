@@ -82,7 +82,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 	`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, keyID, envelope.WrappingKeyID, envelope.Ciphertext, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, uuid.NewV7(), string(raw), digest, f.Deployment, string(seed))
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper }))
 	defer server.Close()
-	auth := seedHostSecret(t, f.Pool, f.Worker)
+	auth := seedHostKey(t, f.Pool, f.Worker)
 	client := auth.client(t, server.URL)
 	identity := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	source, err := client.ComputerAllocationSource(t.Context(), identity)

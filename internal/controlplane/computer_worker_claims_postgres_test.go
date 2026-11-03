@@ -40,7 +40,7 @@ type workerClaimsRace struct {
 
 func newWorkerClaimsRace(t *testing.T, f sessiontest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
 	t.Helper()
-	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
+	hostKey := seedHostKey(t, f.Pool, f.Worker)
 	server.hostAuth = testHostAuthConfig(t)
 	server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	race := &workerClaimsRace{statuses: map[string][]int{}, bodies: map[string][][]byte{}}
@@ -62,6 +62,10 @@ func newWorkerClaimsRace(t *testing.T, f sessiontest.Fixture, server *Server, ha
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		race.mu.Lock()
 		defer race.mu.Unlock()
+		if r.URL.Path == "/worker/v1/instance/challenge" {
+			server.workerHostChallenge(w, r)
+			return
+		}
 		if r.URL.Path == "/worker/v1/instance/credential" {
 			race.hostCredentials++
 			server.workerIssueHostCredential(w, r)
@@ -87,7 +91,7 @@ func newWorkerClaimsRace(t *testing.T, f sessiontest.Fixture, server *Server, ha
 		_, _ = w.Write(response.Body.Bytes())
 	}))
 	t.Cleanup(httpServer.Close)
-	race.client = hostSecret.client(t, httpServer.URL)
+	race.client = hostKey.client(t, httpServer.URL)
 	return race
 }
 

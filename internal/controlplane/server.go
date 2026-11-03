@@ -727,6 +727,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 func (s *Server) mountWorkerRoutes(r chi.Router) {
 	r.Route("/worker/v1", func(r chi.Router) {
 		r.Post("/enrollment", s.workerEnroll)
+		r.Post("/instance/challenge", s.workerHostChallenge)
 		r.Post("/instance/credential", s.workerIssueHostCredential)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
 		r.With(s.requireWorkerActivation).Post("/instance/activate", s.workerActivate)

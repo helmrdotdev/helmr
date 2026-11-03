@@ -14,6 +14,9 @@ import (
 
 func TestWatchUpdatesAuthenticatesWakesAndJoinsCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHostChallenge(w, r) {
+			return
+		}
 		if r.URL.Path == "/worker/v1/instance/credential" {
 			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 1, Credential: "secret", ExpiresInSeconds: 3600})
 			return
@@ -29,7 +32,7 @@ func TestWatchUpdatesAuthenticatesWakesAndJoinsCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", testMachineKey), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}

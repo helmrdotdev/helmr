@@ -53,7 +53,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	store := newTestUploadStore(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CAS = everyOrganization[cas.UploadStore](store) }))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
@@ -182,7 +182,7 @@ func TestWorkerSaveDiscoveryContentionIsTemporary(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	// Resolve worker credentials before holding a conflicting supply lock.
 	if _, err := client.RenewAgentAuthority(t.Context(), runtimeTestSession(f)); err != nil {
 		t.Fatal(err)

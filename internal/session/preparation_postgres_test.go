@@ -504,12 +504,8 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	if _, err := q.ActivateWorkerHost(t.Context(), activation); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("quarantined preparation activation: %v", err)
 	}
-	cfg, err := workergroup.NewHostAuthConfig(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollment := workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"}
-	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); !errors.Is(err, workergroup.ErrHostCustody) {
+	enrollment := fixtureEnrollment(t, "host")
+	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, enrollment); !errors.Is(err, workergroup.ErrHostCustody) {
 		t.Fatalf("custody credential replacement: %v", err)
 	}
 	if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
@@ -522,7 +518,7 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	if _, err := q.CompleteWorkerStartupRecovery(t.Context(), recovery); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); err != nil {
+	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, enrollment); err != nil {
 		t.Fatalf("fenced preparation blocked enrollment: %v", err)
 	}
 	if _, err := q.ActivateWorkerHost(t.Context(), activation); err != nil {
@@ -548,13 +544,10 @@ func TestPreparationAllocationCommitPrecedesEnrollmentCustodyCheck(t *testing.T)
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE worker_hosts SET status='registering' WHERE id=$1`, f.worker)
-	cfg, err := workergroup.NewHostAuthConfig(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	enrollment := fixtureEnrollment(t, "host")
 	done := make(chan error, 1)
 	go func() {
-		_, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"})
+		_, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, enrollment)
 		done <- err
 	}()
 	until := time.Now().Add(5 * time.Second)

@@ -15,7 +15,7 @@ func TestWorkerAgentMCPGetterEnforcesCeilingAndExplicitArguments(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET runtime_mcp_policy='{"kind":"allow","rules":[{"operation":"list_computers"}]}' WHERE environment_id=$1`, f.Environment)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "descriptor", AuthorityGeneration: 1, Method: workerapi.AgentMethodGetMCPConnection}
 	for _, test := range []struct{ payload, code string }{
 		{`null`, "invalid_runtime_mcp_policy"}, {`{"policy":null}`, "invalid_runtime_mcp_policy"}, {`{"policy":{}}`, "invalid_runtime_mcp_policy"}, {`{"policy":{"blockAll":false}}`, "invalid_runtime_mcp_policy"}, {`{"policy":{"allow":[{"operation":"spawn","agents":["missing"]}]}}`, "invalid_runtime_mcp_policy"}, {`{"policy":{"allow":[{"operation":"spawn","agents":["agent"]}]}}`, "runtime_mcp_denied"}, {`{}`, ""}, {`{"policy":{"allow":[]}}`, ""},

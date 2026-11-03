@@ -1,5 +1,7 @@
 package api
 
+import "time"
+
 // WorkerGroup is a worker group the organization operates. Its machines run
 // the work its environments' placements send to it.
 type WorkerGroup struct {
@@ -25,6 +27,12 @@ type CreateWorkerGroupRequest struct {
 type CreateWorkerGroupResponse struct {
 	WorkerGroup     WorkerGroup `json:"worker_group"`
 	EnrollmentToken string      `json:"enrollment_token"`
+}
+
+// IssueEnrollmentTokenResponse returns a single-use enrollment token once.
+type IssueEnrollmentTokenResponse struct {
+	EnrollmentToken string    `json:"enrollment_token"`
+	ExpiresAt       time.Time `json:"expires_at"`
 }
 
 type FenceWorkerHostRequest struct {

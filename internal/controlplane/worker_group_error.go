@@ -30,6 +30,10 @@ func workerGroupError(err error) error {
 		return unauthorized(errors.New("worker authentication is required"))
 	case errors.Is(err, workergroup.ErrInvalidEnrollmentToken):
 		return unauthorized(err)
+	case errors.Is(err, workergroup.ErrHostResourceEnrolled):
+		return conflict(codedError{code: "worker_resource_enrolled", message: workergroup.ErrHostResourceEnrolled.Error()})
+	case errors.Is(err, workergroup.ErrHostKeyRegistered):
+		return conflict(codedError{code: "worker_key_registered", message: workergroup.ErrHostKeyRegistered.Error()})
 	case errors.Is(err, workergroup.ErrHostCustody):
 		return conflict(codedError{code: "worker_resource_custody", message: workergroup.ErrHostCustody.Error()})
 	case errors.Is(err, workergroup.ErrObservationConflict):

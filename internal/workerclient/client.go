@@ -3,6 +3,7 @@ package workerclient
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -26,7 +28,7 @@ type Client struct {
 
 type authentication struct {
 	workerHostID string
-	secret       string
+	key          ed25519.PrivateKey
 	serviceID    string
 	credential   string
 	workerEpoch  int64
@@ -39,7 +41,7 @@ type options struct {
 	network      *workerapi.NetworkCapabilities
 	httpClient   *http.Client
 	workerHostID string
-	secret       string
+	key          ed25519.PrivateKey
 	serviceID    string
 }
 
@@ -55,10 +57,12 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	return func(options *options) { options.httpClient = httpClient }
 }
 
-func WithAuth(workerHostID string, secret string) Option {
+// WithAuth authenticates as the worker host with its machine key, which signs
+// each host credential challenge and never leaves the client.
+func WithAuth(workerHostID string, key ed25519.PrivateKey) Option {
 	return func(options *options) {
 		options.workerHostID = workerHostID
-		options.secret = secret
+		options.key = key
 	}
 }
 
@@ -79,7 +83,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	}
 	return &Client{transport: transport, network: config.network, auth: authentication{
 		workerHostID: config.workerHostID,
-		secret:       config.secret,
+		key:          config.key,
 		serviceID:    config.serviceID,
 	}}, nil
 }
@@ -192,9 +196,9 @@ func (c *Client) hostCredential(ctx context.Context) (string, error) {
 			c.auth.mu.Unlock()
 			return "", errors.New("worker instance id is required")
 		}
-		if strings.TrimSpace(c.auth.secret) == "" {
+		if len(c.auth.key) != ed25519.PrivateKeySize {
 			c.auth.mu.Unlock()
-			return "", errors.New("worker secret is required")
+			return "", errors.New("worker machine key is required")
 		}
 		if c.auth.credential != "" && time.Now().Add(30*time.Second).Before(c.auth.expiresAt) {
 			credential := c.auth.credential
@@ -231,7 +235,7 @@ func (c *Client) hostCredential(ctx context.Context) (string, error) {
 	}
 }
 
-// HostAuthorityRejectedError means the durable host secret or service identity
+// HostAuthorityRejectedError means the machine key or service identity
 // cannot issue a credential. A rejected ordinary request may instead have raced
 // a claim-version change and must not be classified as lost host authority.
 type HostAuthorityRejectedError struct{ Err error }
@@ -244,22 +248,22 @@ func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, 
 	if c.auth.serviceID == "" {
 		return "", time.Time{}, 0, errors.New("worker service id is required")
 	}
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(workerapi.HostCredentialRequest{
-		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
-		ServiceID: c.auth.serviceID, APIVersion: workerapi.APIVersion,
-	}); err != nil {
-		return "", time.Time{}, 0, fmt.Errorf("encode worker host credential request: %w", err)
-	}
 	credentialCtx, cancel := context.WithTimeout(ctx, hostCredentialRequestTimeout)
 	defer cancel()
-	req, err := c.transport.Request(credentialCtx, http.MethodPost, "/worker/v1/instance/credential", &body, "")
-	if err != nil {
+	var challenge workerapi.HostChallengeResponse
+	if err := c.postUnauthenticated(credentialCtx, "/worker/v1/instance/challenge", workerapi.HostChallengeRequest{
+		APIVersion: workerapi.APIVersion, WorkerHostID: c.auth.workerHostID, ServiceID: c.auth.serviceID,
+	}, &challenge); err != nil {
 		return "", time.Time{}, 0, err
 	}
-	req.Header.Set("content-type", "application/json")
+	if challenge.Challenge == "" {
+		return "", time.Time{}, 0, errors.New("worker host challenge is empty")
+	}
 	var response workerapi.HostCredentialResponse
-	if err := c.transport.DoJSON(req, &response); err != nil {
+	if err := c.postUnauthenticated(credentialCtx, "/worker/v1/instance/credential", workerapi.HostCredentialRequest{
+		APIVersion: workerapi.APIVersion, WorkerHostID: c.auth.workerHostID, ServiceID: c.auth.serviceID,
+		Challenge: challenge.Challenge, Signature: ed25519.Sign(c.auth.key, auth.HostChallengeMessage(challenge.Challenge)),
+	}, &response); err != nil {
 		if httpclient.IsStatus(err, http.StatusUnauthorized) || httpclient.IsStatus(err, http.StatusForbidden) {
 			err = HostAuthorityRejectedError{Err: err}
 		}
@@ -275,4 +279,17 @@ func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, 
 		return "", time.Time{}, 0, errors.New("worker host credential response worker_epoch must be positive")
 	}
 	return response.Credential, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), response.WorkerEpoch, nil
+}
+
+func (c *Client) postUnauthenticated(ctx context.Context, path string, request, response any) error {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(request); err != nil {
+		return fmt.Errorf("encode %s request: %w", path, err)
+	}
+	req, err := c.transport.Request(ctx, http.MethodPost, path, &body, "")
+	if err != nil {
+		return err
+	}
+	req.Header.Set("content-type", "application/json")
+	return c.transport.DoJSON(req, response)
 }

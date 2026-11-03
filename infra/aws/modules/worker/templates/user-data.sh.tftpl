@@ -158,7 +158,7 @@ termination_observed() {
 
 drain_and_complete_termination() {
   termination_observed || return 1
-  if [ ! -f '${worker_work_dir}/worker-host-secret.json' ]; then
+  if [ ! -f '${worker_work_dir}/worker-identity.json' ]; then
     complete_lifecycle_action "$termination_hook" CONTINUE
     return 0
   fi

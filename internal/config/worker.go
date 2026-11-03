@@ -20,7 +20,7 @@ func LoadWorker() (Worker, error) {
 		WorkerResourceID:          envText("WORKER_RESOURCE_ID"),
 		WorkerPoolName:            os.Getenv("WORKER_POOL_NAME"),
 		WorkerEnrollmentTokenFile: envText("WORKER_ENROLLMENT_TOKEN_FILE"),
-		WorkerHostSecretPath:      envText("WORKER_HOST_SECRET_PATH"),
+		WorkerIdentityPath:        envText("WORKER_IDENTITY_PATH"),
 		WorkDir:                   envText("WORKER_WORK_DIR"),
 		ImagesDir:                 envText("WORKER_IMAGES_DIR"),
 		FirecrackerPath:           env("FIRECRACKER_PATH", "firecracker"),
@@ -187,10 +187,10 @@ func LoadWorker() (Worker, error) {
 
 func LoadWorkerControlPlane() (WorkerControlPlane, error) {
 	cfg := WorkerControlPlane{
-		ControlPlaneURL:      envText("CONTROL_PLANE_URL"),
-		WorkerHostSecretPath: envText("WORKER_HOST_SECRET_PATH"),
-		WorkDir:              envText("WORKER_WORK_DIR"),
-		PollEvery:            2 * time.Second,
+		ControlPlaneURL:    envText("CONTROL_PLANE_URL"),
+		WorkerIdentityPath: envText("WORKER_IDENTITY_PATH"),
+		WorkDir:            envText("WORKER_WORK_DIR"),
+		PollEvery:          2 * time.Second,
 	}
 	if cfg.ControlPlaneURL == "" {
 		return cfg, errors.New("CONTROL_PLANE_URL is required")

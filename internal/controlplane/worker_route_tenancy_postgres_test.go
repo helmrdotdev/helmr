@@ -51,7 +51,8 @@ import (
 // another tenant. Each authenticates and addresses only the calling Host.
 var workerRouteTenancyExempt = map[string]string{
 	"POST /worker/v1/enrollment":              "bootstrap; names a group token, not a resource",
-	"POST /worker/v1/instance/credential":     "exchanges the caller's own host secret",
+	"POST /worker/v1/instance/challenge":      "names only the calling host and service; reads no state",
+	"POST /worker/v1/instance/credential":     "answers a challenge with the caller's own machine key",
 	"POST /worker/v1/instance/recover":        "the caller's own host incarnation",
 	"POST /worker/v1/instance/activate":       "the caller's own host incarnation",
 	"GET /worker/v1/instance":                 "the caller's own host status",
@@ -89,7 +90,7 @@ type tenancyVictim struct {
 	cas                      testUploadStore
 	secrets                  *secret.Store
 	// host is the victim host's secret; handler serves its setup requests.
-	host    seededHostSecret
+	host    seededHostKey
 	handler http.Handler
 	// attachment, turnID and messageID are the Session runtime identities the
 	// session bodies name; case setups replace them with current ones.
@@ -641,7 +642,7 @@ func newTenancyVictim(t *testing.T, claimCommand bool) *tenancyVictim {
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, published, f.Deployment, f.Computer, v.bootSeed.Identity.OwnerID, v.bootSeed.Identity.AllocationID, hexBytes(seedDigest[:]), f.Worker, writeKey)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, v.configure))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	// The protected Secret is exposed to the running preparation.
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
 	if _, err := client.PreparationSecrets(ctx, v.imageBuild); err != nil {
@@ -732,7 +733,7 @@ func otherGroupIntruder(t *testing.T, v *tenancyVictim, handler http.Handler) te
  INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT $5,vcpu_count,cpu_config_digest FROM worker_pool_cpu_shapes WHERE worker_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$6);
  INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$7::uuid,'resource_id',$7::text,'current_service_id',$7::uuid,'worker_group_id',$3::uuid,'worker_pool_id',$5::uuid))).* FROM worker_hosts h WHERE id=$6;
  `, pgx.QueryExecModeSimpleProtocol, token, tokenHash[:], in.groupID, v.f.Group, pool, v.f.Worker, in.hostID)
-	in.credential = seedHostSecret(t, v.f.Pool, in.hostID).issue(t, handler)
+	in.credential = seedHostKey(t, v.f.Pool, in.hostID).issue(t, handler)
 	return in
 }
 
@@ -741,7 +742,7 @@ func sameGroupIntruder(t *testing.T, v *tenancyVictim, handler http.Handler) ten
 	t.Helper()
 	in := tenancyIntruder{name: "same group", groupID: v.f.Group, hostID: uuid.NewV7(), sameGroup: true}
 	dbtest.MustExec(t, t.Context(), v.f.Pool, `INSERT INTO worker_hosts SELECT (jsonb_populate_record(NULL::worker_hosts,to_jsonb(h)||jsonb_build_object('id',$2::uuid,'resource_id',$2::text,'current_service_id',$2::uuid))).* FROM worker_hosts h WHERE id=$1`, v.f.Worker, in.hostID)
-	in.credential = seedHostSecret(t, v.f.Pool, in.hostID).issue(t, handler)
+	in.credential = seedHostKey(t, v.f.Pool, in.hostID).issue(t, handler)
 	return in
 }
 
@@ -1060,7 +1061,7 @@ func (v *tenancyVictim) victimHost(t *testing.T, handler http.Handler) tenancyIn
 
 func (v *tenancyVictim) victimHostFor(t *testing.T, handler http.Handler, host uuid.UUID) tenancyIntruder {
 	t.Helper()
-	v.host, v.handler = seedHostSecret(t, v.f.Pool, host), handler
+	v.host, v.handler = seedHostKey(t, v.f.Pool, host), handler
 	victim := tenancyIntruder{name: "victim host", groupID: v.f.Group, hostID: host}
 	victim.credential = v.host.issue(t, handler)
 	return victim

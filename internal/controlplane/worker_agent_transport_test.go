@@ -41,7 +41,7 @@ func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	identity := &agentv1.SessionIdentity{SessionId: f.Session.String(), ProcessEpoch: 1}
 	finished := make(chan struct{})
 	machine := &workerAgentTestMachine{handle: func(stream net.Conn) {
@@ -122,7 +122,7 @@ func TestWorkerAgentServiceRenewsCurrentGenerationWithoutSetup(t *testing.T) {
 	f := sessiontest.New(t)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE sessions SET authority_generation=2")
 	identity := &agentv1.SessionIdentity{SessionId: f.Session.String(), ProcessEpoch: 1}
 	observed := make(chan *agentv1.SessionGrant, 1)
@@ -201,7 +201,7 @@ func TestWorkerAgentHotCredentialRefreshPreservesAttachment(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
+	client := seedHostKey(t, f.Pool, f.Worker).client(t, server.URL)
 	identity := &agentv1.SessionIdentity{SessionId: f.Session.String(), ProcessEpoch: 1}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
