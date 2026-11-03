@@ -5,8 +5,8 @@ on:
 permissions:
   contents: read
 env:
-  RELEASE_SOURCE_COMMIT: 12a7fc9a905fc756eac15fc1c8b78e5f7d78f95d
-  RELEASE_SOURCE_REF: refs/heads/fix/builder-toolchain-security
+  RELEASE_SOURCE_COMMIT: 85bc83bb8a9144c705b52cc4cc17cd5e71895a40
+  RELEASE_SOURCE_REF: refs/heads/fix/debian-bundle-builder
   RELEASE_TAG: v0.2.10
   RELEASE_BUILD_ID: ${{ github.run_id }}
 jobs:
@@ -111,6 +111,23 @@ jobs:
           digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$endpoint/bundle-builder:check")
           test "$digest" = "$(jq -r '.image|split("@")[1]' "$assets/bundle-builder.json")"
           echo "builder $digest"
+          if test "$CASE" = native; then
+            skopeo --insecure-policy copy "dir:$assets/builder-image" "docker-archive:$work/image.tar:bundle-builder:0"
+            docker load -i "$work/image.tar"
+            docker run --rm --platform linux/amd64 --entrypoint /bin/sh bundle-builder:0 -ec '
+              dpkg-query -W openssh-client | grep -F "1:10.0p1-7+deb13u4+helmr1"
+              openssl version
+              /usr/bin/ssh -V
+              sha256sum /usr/bin/ssh
+              /usr/bin/ssh -G -o GSSAPIAuthentication=yes localhost 2>/dev/null | grep "^gssapiauthentication yes$"
+              grep -Fx "Include /etc/ssh/ssh_config.d/*.conf" /etc/ssh/ssh_config
+              for name in libopenexr-3-1-30 libopenexr-dev libxml2 libxml2-dev libaom3 libglib2.0-0t64; do
+                if dpkg-query -s "$name" 2>/dev/null | grep -q "^Status: install ok installed$"; then exit 1; fi
+              done
+            '
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$work/ssh-rekey" ./tests/build/testdata/ssh-rekey
+            docker run --rm --platform linux/amd64 --network none -e TMPDIR=/tmp -v "$work/ssh-rekey:/probe:ro" --entrypoint /probe bundle-builder:0
+          fi
           printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$endpoint" >"$work/registry.toml"
           docker buildx create --name "$fixture_builder" --driver docker-container --driver-opt network=host --buildkitd-config "$work/registry.toml"
           docker buildx inspect --bootstrap "$fixture_builder" >/dev/null
@@ -133,8 +150,9 @@ jobs:
             cp -R "$p/vendor/proto" "$p/node_modules/@helmr/proto"
             cp -R "$p/vendor/protobuf" "$p/node_modules/@bufbuild/protobuf"
           else
+            cp "$assets/sdk.tgz" "$assets/proto.tgz" "$p/vendor/"
             cd "$p"
-            jq '.dependencies["@helmr/sdk"]="file:vendor/sdk" | .overrides["@helmr/proto"]="file:vendor/proto"' package.json > package.tmp
+            jq '.dependencies["@helmr/sdk"]="file:vendor/sdk.tgz" | .overrides["@helmr/proto"]="file:vendor/proto.tgz"' package.json > package.tmp
             mv package.tmp package.json
             bun install
             cd "$root"
