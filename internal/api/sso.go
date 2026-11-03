@@ -83,8 +83,8 @@ type SSOStatusResponse struct {
 }
 
 // SSOConnectionCreateRequest creates a candidate: OIDC with issuer, client ID
-// and secret, or SAML with pasted metadata or its three fields. Field names
-// match SSOConnection.
+// and secret, or SAML with pasted metadata or its three fields. Fields shared
+// with SSOConnection use its names.
 type SSOConnectionCreateRequest struct {
 	Protocol         string   `json:"protocol"`
 	OIDCIssuer       string   `json:"oidc_issuer,omitempty"`

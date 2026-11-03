@@ -230,6 +230,35 @@ func newOIDCFixture(t *testing.T) (httpPostgresFixture, *ssotest.OIDCIssuer, uui
 	return f, issuer, orgID
 }
 
+func TestOwnerCreatesAndRotatesOIDCConnection(t *testing.T) {
+	issuer := ssotest.NewOIDCIssuer(t)
+	f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store, err := sso.NewStore(make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.SSO = store
+		cfg.SSOHTTPClient = issuer.Server.Client()
+	})
+	orgID, ownerToken := f.organizationOwner(t, "acme")
+	selected := map[string]string{"X-Helmr-Organization": orgID.String()}
+	owner := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: ownerToken}}}
+
+	body, _ := json.Marshal(map[string]any{"protocol": "oidc", "oidc_issuer": issuer.Server.URL, "oidc_client_id": "helmr", "oidc_client_secret": "secret"})
+	created := owner.do(t, http.MethodPost, "/api/sso/connections", string(body), f.origin, selected)
+	var connection struct {
+		ID       string `json:"id"`
+		Issuer   string `json:"oidc_issuer"`
+		ClientID string `json:"oidc_client_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &connection); created.Code != http.StatusCreated || err != nil || connection.Issuer != issuer.Server.URL || connection.ClientID != "helmr" {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/sso/connections/"+connection.ID, `{"oidc_client_secret":"rotated"}`, f.origin, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("rotate secret = %d %s", got.Code, got.Body)
+	}
+}
+
 func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
 	f, issuer, orgID := newOIDCFixture(t)
 	alice := f.user(t, "Alice")
@@ -380,6 +409,13 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", connection, err)
 	}
 	id := uuid.MustParse(connection.ID)
+	rotate, _ := json.Marshal(map[string]any{"saml_sso_url": "https://idp.example.test/sso/v2", "saml_certificates": []string{idp.CertPEM}})
+	if got := owner.do(t, http.MethodPatch, "/api/sso/connections/"+connection.ID, string(rotate), console, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("rotate = %d %s", got.Code, got.Body)
+	}
+	if got := owner.do(t, http.MethodGet, "/api/sso", "", console, selected); !strings.Contains(got.Body.String(), `"saml_sso_url":"https://idp.example.test/sso/v2"`) {
+		t.Fatalf("status after rotate = %d %s", got.Code, got.Body)
+	}
 	if got := owner.do(t, http.MethodPost, "/api/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusConflict {
 		t.Fatalf("activate untested = %d %s", got.Code, got.Body)
 	}
