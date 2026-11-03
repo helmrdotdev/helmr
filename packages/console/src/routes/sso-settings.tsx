@@ -10,7 +10,7 @@ import {
 } from "../lib/sso";
 import { CodeBlock } from "../ui/CodeBlock";
 import { DataTable, RowActions, TableCount } from "../ui/DataTable";
-import { ConfirmDialog, FormDialog } from "../ui/Dialog";
+import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { ChoiceCards, Field, SecretInput, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
@@ -45,6 +45,9 @@ export function SSOSettings() {
   const [notice, setNotice] = createSignal(tested ? "The test sign-in succeeded. You can turn the connection on." : "");
   const [error, setError] = createSignal(failed);
   const [settingUp, setSettingUp] = createSignal(false);
+  // Back from a test sign-in, an owner replacing the identity provider resumes
+  // the replacement where they left it.
+  const [replacing, setReplacing] = createSignal(tested);
   const [updating, setUpdating] = createSignal<SSOConnection>();
   const [discarding, setDiscarding] = createSignal<SSOConnection>();
   const [activating, setActivating] = createSignal<SSOConnection>();
@@ -70,38 +73,38 @@ export function SSOSettings() {
         </Show>
         <QueryState query={status} pending={<LinesSkeleton label="Loading single sign-on" />} error={cause => loadError(cause, "Could not load single sign-on.")}>
           {data => <>
-            <Panel title="Connection" actions={<Show when={!data().candidate}>
-              <button type="button" class={ui.compactButton} onClick={() => setSettingUp(true)}>{data().active ? "Replace connection" : "Set up connection"}</button>
-            </Show>}>
-              <Show when={data().active} fallback={<p class={cx(ui.muted, "m-0")}>Single sign-on is off. Set up a connection, test it, then turn it on.</p>}>
+            <Panel title="Connection" actions={data().active
+              ? <Tag>{data().required ? "required" : "optional"}</Tag>
+              : <Show when={data().candidate} fallback={<button type="button" class={ui.compactButton} onClick={() => setSettingUp(true)}>Set up connection</button>}>
+                {candidate => <Tag>{candidate().tested_at ? "tested" : "not tested"}</Tag>}
+              </Show>}>
+              <Show when={data().active} fallback={
+                <Show when={data().candidate} fallback={<p class={cx(ui.muted, "m-0")}>Single sign-on is off. Set up a connection, test it, then turn it on.</p>}>
+                  {candidate => <CandidateSetup connection={candidate()} busy={busy()} onTest={() => void test(candidate())} onActivate={() => setActivating(candidate())} onUpdate={() => setUpdating(candidate())} onDiscard={() => setDiscarding(candidate())} />}
+                </Show>
+              }>
                 {active => <>
                   <ConnectionFacts connection={active()} />
                   <p class={cx(ui.muted, "m-0")}>
                     {data().required ? "Required: members sign in only through the identity provider; owners can also sign in as before." : "Optional: members can sign in through the identity provider or as before."}
                     {" "}{data().members_linked} of {data().members_total} members are linked.
                   </p>
+                  <Show when={data().candidate}>
+                    {candidate => (
+                      <Notice tone="info">
+                        Replacing with {candidate().protocol === "oidc" ? candidate().oidc_issuer : candidate().saml_entity_id} ({candidate().tested_at ? "tested" : "not tested"}). Members keep signing in through the current connection until you turn the new one on.
+                      </Notice>
+                    )}
+                  </Show>
                   <div class={ui.buttonGroup}>
                     <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => setUpdating(active())}>Update certificates or secret</button>
+                    <Show when={data().candidate} fallback={<button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => setSettingUp(true)}>Replace identity provider…</button>}>
+                      <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => setReplacing(true)}>Continue replacement…</button>
+                    </Show>
                   </div>
                 </>}
               </Show>
             </Panel>
-
-            <Show when={data().candidate}>
-              {candidate => (
-                <Panel title={data().active ? "Replacement connection" : "New connection"} actions={<Tag>{candidate().tested_at ? "tested" : "not tested"}</Tag>}>
-                  <p class={cx(ui.muted, "m-0")}>Copy these values into your identity provider, then test the connection by signing in with your own company account.</p>
-                  <ServiceProviderValues connection={candidate()} />
-                  <ConnectionFacts connection={candidate()} />
-                  <div class={ui.buttonGroup}>
-                    <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => void test(candidate())}>Test sign-in</button>
-                    <button type="button" class={ui.button} disabled={busy() || !candidate().tested_at} onClick={() => setActivating(candidate())}>Turn on</button>
-                    <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => setUpdating(candidate())}>Update</button>
-                    <button type="button" class={ui.dangerOutlineButton} disabled={busy()} onClick={() => setDiscarding(candidate())}>Discard</button>
-                  </div>
-                </Panel>
-              )}
-            </Show>
 
             <Show when={data().active}>
               <Panel title="Policy">
@@ -139,7 +142,21 @@ export function SSOSettings() {
               </DangerZone>
             </Show>
 
-            <Show when={settingUp()}><SetupDialog onClose={() => setSettingUp(false)} onCreated={async () => { await refresh(); setNotice("Connection saved. Copy the values into your identity provider, then test it."); }} /></Show>
+            <Show when={settingUp()}><SetupDialog replacing={!!data().active} onClose={() => setSettingUp(false)} onCreated={async () => {
+              await refresh();
+              if (data().active) setReplacing(true);
+              else setNotice("Connection saved. Copy the values into your identity provider, then test it.");
+            }} /></Show>
+            <Show when={replacing() && data().active && data().candidate}>{candidate => {
+              // Read the connection before closing: the closed dialog's accessor is stale.
+              const next = (open: (connection: SSOConnection) => void) => () => { const connection = candidate(); setReplacing(false); open(connection); };
+              return (
+                <Dialog title="Replace identity provider" onClose={() => setReplacing(false)}>
+                  <CandidateSetup connection={candidate()} busy={busy()} onTest={() => void test(candidate())}
+                    onActivate={next(setActivating)} onUpdate={next(setUpdating)} onDiscard={next(setDiscarding)} />
+                </Dialog>
+              );
+            }}</Show>
             <Show when={updating()}>{connection => <UpdateDialog connection={connection()} onClose={() => setUpdating(undefined)} onUpdated={async () => { await refresh(); setNotice("Connection updated. Test it again before turning it on."); }} />}</Show>
             <Show when={discarding()}>{connection => (
               <ConfirmDialog title="Discard connection" confirmLabel="Discard" busyLabel="Discarding…" tone="danger" onClose={() => setDiscarding(undefined)} onConfirm={async () => { await deleteSSOConnection(connection().id); await refresh(); }}>
@@ -147,7 +164,7 @@ export function SSOSettings() {
               </ConfirmDialog>
             )}</Show>
             <Show when={activating()}>{connection => (
-              <ConfirmDialog title="Turn on single sign-on" confirmLabel="Turn on" busyLabel="Turning on…" onClose={() => setActivating(undefined)} onConfirm={async () => { await activateSSOConnection(connection().id); await refresh(); setNotice("Single sign-on is on. Members can sign in through the identity provider or link it from Sign-in and security."); }}>
+              <ConfirmDialog title={data().active ? "Switch identity provider" : "Turn on single sign-on"} confirmLabel={data().active ? "Switch" : "Turn on"} busyLabel={data().active ? "Switching…" : "Turning on…"} onClose={() => setActivating(undefined)} onConfirm={async () => { const switching = !!data().active; await activateSSOConnection(connection().id); await refresh(); setNotice(switching ? "Identity provider switched. Members link their company account again on their next single sign-on." : "Single sign-on is on. Members can sign in through the identity provider or link it from Sign-in and security."); }}>
                 <Show when={data().active} fallback={<>Members can sign in through the identity provider. Other sign-in methods keep working.</>}>
                   The current connection retires with every member's link. Members link again through the new connection, and browsers and CLI logins that signed in through the old one sign out.
                 </Show>
@@ -180,6 +197,24 @@ export function SSOSettings() {
       </div>
     </Show>
   </>;
+}
+
+// The steps from a saved connection to turning it on: copy Helmr's values into
+// the identity provider, test with the owner's own company account, turn on.
+function CandidateSetup(props: { connection: SSOConnection; busy: boolean; onTest: () => void; onActivate: () => void; onUpdate: () => void; onDiscard: () => void }) {
+  return (
+    <div class={ui.blockStack}>
+      <p class={cx(ui.muted, "m-0")}>Copy these values into your identity provider, then test the connection by signing in with your own company account.</p>
+      <ServiceProviderValues connection={props.connection} />
+      <ConnectionFacts connection={props.connection} />
+      <div class={ui.buttonGroup}>
+        <button type="button" class={ui.secondaryButton} disabled={props.busy} onClick={props.onTest}>Test sign-in</button>
+        <button type="button" class={ui.button} disabled={props.busy || !props.connection.tested_at} onClick={props.onActivate}>Turn on</button>
+        <button type="button" class={ui.secondaryButton} disabled={props.busy} onClick={props.onUpdate}>Update</button>
+        <button type="button" class={ui.dangerOutlineButton} disabled={props.busy} onClick={props.onDiscard}>Discard</button>
+      </div>
+    </div>
+  );
 }
 
 function ConnectionFacts(props: { connection: SSOConnection }) {
@@ -220,7 +255,7 @@ function certificates(value: string): string[] {
   return value.split(/(?=-----BEGIN CERTIFICATE-----)/).map(c => c.trim()).filter(Boolean);
 }
 
-function SetupDialog(props: { onClose: () => void; onCreated: () => Promise<void> }) {
+function SetupDialog(props: { replacing: boolean; onClose: () => void; onCreated: () => Promise<void> }) {
   const [protocol, setProtocol] = createSignal<"oidc" | "saml">("oidc");
   const [issuer, setIssuer] = createSignal(""); const [clientID, setClientID] = createSignal(""); const [secret, setSecret] = createSignal("");
   const [metadata, setMetadata] = createSignal(""); const [entityID, setEntityID] = createSignal(""); const [ssoURL, setSSOURL] = createSignal(""); const [certs, setCerts] = createSignal("");
@@ -236,7 +271,9 @@ function SetupDialog(props: { onClose: () => void; onCreated: () => Promise<void
     finally { setBusy(false); }
   };
   return (
-    <FormDialog title="Set up connection" intro="Nothing changes for members until you test the connection and turn it on." submitLabel="Save connection" busyLabel="Saving…" busy={busy()} disabled={!ready()} error={error()} onSubmit={() => void submit()} onClose={props.onClose}>
+    <FormDialog title={props.replacing ? "Replace identity provider" : "Set up connection"}
+      intro={props.replacing ? "Members keep signing in through the current connection until you test the new one and turn it on." : "Nothing changes for members until you test the connection and turn it on."}
+      submitLabel={props.replacing ? "Continue" : "Save connection"} busyLabel="Saving…" busy={busy()} disabled={!ready()} error={error()} onSubmit={() => void submit()} onClose={props.onClose}>
       <ChoiceCards label="Protocol" name="sso-protocol" value={protocol()} onChange={setProtocol} options={[
         { value: "oidc", label: "OIDC", description: "Okta, Microsoft Entra ID, Google Workspace and most identity providers." },
         { value: "saml", label: "SAML", description: "When your identity provider offers only SAML." },
@@ -271,7 +308,7 @@ function UpdateDialog(props: { connection: SSOConnection; onClose: () => void; o
     finally { setBusy(false); }
   };
   return (
-    <FormDialog title="Update connection" intro="The identity provider stays the same; to change it, set up a replacement connection." submitLabel="Update" busyLabel="Updating…" busy={busy()} disabled={!ready()} error={error()} onSubmit={() => void submit()} onClose={props.onClose}>
+    <FormDialog title="Update connection" intro="The identity provider stays the same; to change it, replace the identity provider." submitLabel="Update" busyLabel="Updating…" busy={busy()} disabled={!ready()} error={error()} onSubmit={() => void submit()} onClose={props.onClose}>
       <Show when={oidc()} fallback={<>
         <Field label="Identity provider metadata XML" hint="Paste new metadata, or leave it empty and fill in the fields below."><TextArea value={metadata()} onInput={e => setMetadata(e.currentTarget.value)} rows={5} /></Field>
         <Show when={!metadata().trim()}>
