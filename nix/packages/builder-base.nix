@@ -1,7 +1,6 @@
 {
   lib,
   dockerTools,
-  crane,
   fetchurl,
   linkFarm,
   debian,
@@ -30,16 +29,16 @@ let
     ) (lib.splitString "\n" (lib.removeSuffix "\n" (builtins.readFile ./builder-debs.lock)))
   );
 in
-dockerTools.buildLayeredImage {
+dockerTools.buildImage {
   name = "helmr-builder-base";
-  includeStorePaths = false;
-  enableFakechroot = true;
-  fakeRootCommands = ''
-    ${crane}/bin/crane export - - < ${debian} | tar -xp --numeric-owner --exclude=dev --exclude=proc --exclude=sys
+  fromImage = debian;
+  diskSize = 4096;
+  buildVMMemorySize = 2048;
+  runAsRoot = ''
+    export PATH=/usr/sbin:/usr/bin:/sbin:/bin
     export DEBIAN_FRONTEND=noninteractive
-    PATH=/usr/sbin:/usr/bin:/sbin:/bin /usr/bin/apt-get -o APT::Sandbox::User=root \
-      --no-download --no-install-recommends -y install ${archives}/*.deb
-    /usr/bin/dpkg --audit
+    apt-get --no-download --no-install-recommends -y install ${archives}/*.deb
+    dpkg --audit
     rm -f /var/log/dpkg.log /var/log/apt/* /var/log/alternatives.log
   '';
 }
