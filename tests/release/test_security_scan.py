@@ -76,7 +76,7 @@ class SecurityScanTest(unittest.TestCase):
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
                             "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=repo, check=True)
-            tree, _ = tracked_source(root, repo)
+            tree, _, _ = tracked_source(root, repo)
             with self.assertRaisesRegex(ValueError, "inline suppression"):
                 check_terraform_inputs(tree)
 

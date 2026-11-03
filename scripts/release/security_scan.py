@@ -38,7 +38,7 @@ def trivy(work, command, target, scanners):
     return report["Results"]
 
 
-def collect(rows, scope, identity):
+def collect(rows, scope, identity, aws_templates=None):
     items = []
     for row in rows:
         for secret in row.get("Secrets") or []:
@@ -71,6 +71,10 @@ def collect(rows, scope, identity):
                                   package=entry.get("PkgName", ""), version=entry.get("InstalledVersion", ""),
                                   severity=entry["Severity"], title=entry.get("Title", ""),
                                   key=fingerprint([scope, identity, row["Type"], row["Target"], evidence])))
+                if (aws_templates and kind == "Misconfigurations" and advisory == "AWS-0104"
+                        and scope == "source" and row["Type"] == "terraform"
+                        and row["Target"].startswith("infra/aws/") and location.get("Occurrences")):
+                    items[-1]["template_key"] = fingerprint([aws_templates, row["Target"], evidence])
     return items
 
 
@@ -95,7 +99,7 @@ def trivy_version():
     return json.loads(run("trivy", "version", "--format", "json", capture_output=True).stdout)
 
 
-def scan_source(work, source, context):
+def scan_source(work, source, context, aws_templates):
     check_terraform_inputs(source)
     flags = ["--misconfig-scanners", "terraform", str(source)]
     if fresh((trivy_version().get("CheckBundle") or {}).get("DownloadedAt"), 24):
@@ -116,7 +120,7 @@ def scan_source(work, source, context):
         identity = context
         if row["Target"] == ".github/security-assessments.json":
             identity = digest(source / row["Target"])
-        items.extend(collect([row], "source", identity))
+        items.extend(collect([row], "source", identity, aws_templates))
     return items
 
 
@@ -297,7 +301,8 @@ def tracked_source(work, source):
     run("git", "-c", "core.hooksPath=/dev/null", "clone", "--quiet", "--shared", "--no-checkout", source, tree)
     run("git", "-C", tree, "-c", "core.hooksPath=/dev/null", "checkout", "--quiet", "--detach", commit)
     shutil.rmtree(tree / ".git")
-    return tree, hashlib.sha256(tracked).hexdigest()
+    aws_files = b"\0".join(e for e in entries if e.split(b"\t", 1)[-1].startswith(b"infra/aws/"))
+    return tree, hashlib.sha256(tracked).hexdigest(), hashlib.sha256(aws_files).hexdigest()
 
 
 def main():
@@ -310,7 +315,7 @@ def main():
     source = args.source.resolve()
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        tree, source_digest = tracked_source(work, source)
+        tree, source_digest, aws_templates = tracked_source(work, source)
         # Pin one database snapshot for every surface in this scan. A transient
         # registry failure can be retried before any findings are evaluated.
         update = ["trivy", "image", "--quiet", "--download-db-only", "--disable-telemetry"]
@@ -318,7 +323,7 @@ def main():
             time.sleep(4)
             subprocess.run(update, cwd=work)
         require(fresh((trivy_version().get("VulnerabilityDB") or {}).get("UpdatedAt"), 48), "no fresh Trivy database")
-        items = scan_source(work, tree, source_digest)
+        items = scan_source(work, tree, source_digest, aws_templates)
         database = trivy_version()
         now = dt.datetime.now(dt.timezone.utc)
         require(fresh(database["VulnerabilityDB"]["UpdatedAt"], 48), "stale Trivy database")

@@ -255,7 +255,7 @@ the scan. Publication requires a successful build and an explicit `clear` verdic
   protected `release` environment. Inspect the findings and record evidence
   before approving the waiting review job.
 - **affected** — fix the product and submit a new candidate. Publication jobs
-  are skipped. There is no risk-acceptance status.
+  are skipped.
 - **Scan error** — resolve the missing evidence or technical failure. A scan
   error cannot produce permission to publish.
 
@@ -276,6 +276,16 @@ For evidence contained entirely in the scanned component, set `basis` to
 `basis: product` and copy the report's `source` fingerprint. A changed component
 or advisory reopens a finding. Product-scoped evidence also expires when the
 source changes.
+A designated release reviewer may approve an intentional public-egress default in
+an AWS reference template as `accepted_default`. Keep the reason, evidence and
+the exact AWS-0104 observation's `template_key` in the attested policy. The key
+covers the tracked `infra/aws/` tree, finding details and resource occurrences.
+Changing that tree or the reported rule reopens review. Changes elsewhere do not
+invalidate the template decision. The report retains the accepted observation;
+it does not block publication or request a new daily review. The policy PR
+attestation identifies who authorized it. This disposition is limited to these
+Terraform egress findings.
+
 Editing only the assessments does not invalidate all findings.
 
 For a kernel path known to require a loadable module, a reviewed rule may

@@ -4,6 +4,13 @@ This example is a cost-conscious production baseline for deploying Helmr into a 
 account with OpenTofu or Terraform. It composes the shared AWS modules in `../modules` and keeps
 secret values out of state.
 
+The default Control Plane task security group allows every outbound protocol to
+every IPv4 destination through NAT. This supports operator-selected integrations,
+including ClickHouse and SMTP. For a restricted installation, set
+`restrict_platform_egress = true` on the Control Plane module and provide rules
+for the required services and integrations before applying. The Private example
+shows how to connect tasks to endpoints and a proxy.
+
 ## Baseline
 
 - Two availability zone VPC with public subnets for the ALB and private subnets for Control Plane,
