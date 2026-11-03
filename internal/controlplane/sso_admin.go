@@ -3,10 +3,10 @@ package controlplane
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"uuid"
@@ -220,27 +220,16 @@ func (s *Server) updateSSOPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Required *bool `json:"required"`
-		// SessionSeconds is absent to keep the lifetime, null for the default,
-		// or a number of seconds.
-		SessionSeconds json.RawMessage `json:"session_seconds"`
+		Required       *bool           `json:"required"`
+		SessionSeconds optionalSeconds `json:"session_seconds"`
 	}
 	if err := decodeRequestJSON(r, &request); err != nil {
 		s.writeOperationError(w, r, badRequest(fmt.Errorf("invalid SSO policy JSON: %w", err)))
 		return
 	}
 	change := identity.SSOPolicyChange{Required: request.Required}
-	switch raw := strings.TrimSpace(string(request.SessionSeconds)); raw {
-	case "":
-	case "null":
-		change.ResetSessionSeconds = true
-	default:
-		var seconds int32
-		if err := json.Unmarshal(request.SessionSeconds, &seconds); err != nil {
-			s.writeOperationError(w, r, badRequest(identity.ErrSSOSessionLifetime))
-			return
-		}
-		change.SessionSeconds = &seconds
+	if request.SessionSeconds.set {
+		change.SessionSeconds, change.ResetSessionSeconds = request.SessionSeconds.value, request.SessionSeconds.value == nil
 	}
 	result, err := identity.UpdateSSOPolicy(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), change)
 	if err != nil {
@@ -313,4 +302,25 @@ func (s *Server) accountSSORecover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// optionalSeconds tells an absent session lifetime (keep it) from null (the
+// default) and a number of seconds.
+type optionalSeconds struct {
+	set   bool
+	value *int32
+}
+
+func (o *optionalSeconds) UnmarshalJSON(b []byte) error {
+	o.set = true
+	if string(b) == "null" {
+		return nil
+	}
+	v, err := strconv.ParseInt(string(b), 10, 32)
+	if err != nil {
+		return identity.ErrSSOSessionLifetime
+	}
+	seconds := int32(v)
+	o.value = &seconds
+	return nil
 }

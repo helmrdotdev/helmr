@@ -299,11 +299,12 @@ func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 		fail("sso_not_available")
 		return
 	}
-	if err := r.ParseForm(); err != nil {
+	response, err := requestFormValue(r, "SAMLResponse")
+	if err != nil {
 		fail("authentication_invalid")
 		return
 	}
-	assertion, err := sp.Validate(r.PostForm.Get("SAMLResponse"), flow.SSORequestID)
+	assertion, err := sp.Validate(response, flow.SSORequestID)
 	if err == nil {
 		err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
 			if flow.Kind != browserAuthSSOTest {
