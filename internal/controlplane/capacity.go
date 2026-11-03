@@ -130,6 +130,9 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(errors.New("name must be non-empty and canonical")))
 		return
 	}
+	if !s.capacityDeploymentGroup(w, r, workerGroupID) {
+		return
+	}
 	pool, err := workergroup.ResolvePool(r.Context(), s.db, workerGroupID, name)
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
@@ -155,6 +158,9 @@ func (s *Server) capacitySelectWorkerGroupPrimaryPool(w http.ResponseWriter, r *
 	poolID, err := capacityOptionalPoolID(request.PoolID)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
+		return
+	}
+	if !s.capacityDeploymentGroup(w, r, workerGroupID) {
 		return
 	}
 	response, err := workergroup.SelectPrimary(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
@@ -186,6 +192,9 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 	var request workergroup.PlanRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid capacity plan JSON: %w", err))
+		return
+	}
+	if !s.capacityDeploymentGroup(w, r, workerGroupID) {
 		return
 	}
 	response, err := workergroup.ObserveCapacityPlan(r.Context(), s.tx, s.environmentExecutionLimits, workerGroupID, request, time.Now())
@@ -285,6 +294,17 @@ func capacityWorkerGroupID(w http.ResponseWriter, r *http.Request) (uuid.UUID, b
 		return uuid.Nil(), false
 	}
 	return id, true
+}
+
+// capacityDeploymentGroup admits a group-scoped capacity request only for a
+// deployment group. An organization group answers exactly like a missing one,
+// so the protocol neither sees nor changes it.
+func (s *Server) capacityDeploymentGroup(w http.ResponseWriter, r *http.Request, id uuid.UUID) bool {
+	if _, err := workergroup.GetDeploymentGroup(r.Context(), s.db, id); err != nil {
+		s.writeWorkerGroupError(w, r, err)
+		return false
+	}
+	return true
 }
 
 func capacityWorkerHostID(r *http.Request) (uuid.UUID, error) {
@@ -388,6 +408,9 @@ func (s *Server) capacityCreateWorkerPool(w http.ResponseWriter, r *http.Request
 		writeError(w, fmt.Errorf("invalid worker pool request JSON: %w", err))
 		return
 	}
+	if !s.capacityDeploymentGroup(w, r, groupID) {
+		return
+	}
 	_, created, err := workergroup.CreatePool(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), groupID, request.Name, request.ExpectedGroupClaimVersion)
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
@@ -416,6 +439,9 @@ func (s *Server) capacityDisableWorkerPool(w http.ResponseWriter, r *http.Reques
 	}
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker pool lifecycle JSON: %w", err))
+		return
+	}
+	if !s.capacityDeploymentGroup(w, r, groupID) {
 		return
 	}
 	_, disabled, err := workergroup.DisablePool(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), groupID, poolID, request.ExpectedPoolClaimVersion)

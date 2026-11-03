@@ -52,6 +52,20 @@ func ResolveGroup(ctx context.Context, q db.Querier, regionID string, name strin
 	return result, err
 }
 
+// GetDeploymentGroup returns the deployment worker group with the ID. An
+// organization group is fixed capacity its organization operates, so the
+// capacity protocol reads it exactly like a missing group.
+func GetDeploymentGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerGroup, error) {
+	group, err := GetGroup(ctx, q, groupID)
+	if err != nil {
+		return db.WorkerGroup{}, err
+	}
+	if group.OwnerOrgID.Valid {
+		return db.WorkerGroup{}, ErrGroupNotFound
+	}
+	return group, nil
+}
+
 // ResolvePool returns the capacity projection of the worker group's pool with
 // the name.
 func ResolvePool(ctx context.Context, q db.Querier, groupID uuid.UUID, name string) (WorkerPool, error) {
@@ -98,7 +112,7 @@ func SelectPrimary(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Po
 	return PrimarySelectionResponse{WorkerGroup: group, Applied: selection.Applied}, nil
 }
 
-// ListHosts returns the worker hosts that match filter.
+// ListHosts returns the deployment worker hosts that match filter.
 func ListHosts(ctx context.Context, q db.Querier, filter HostFilter) (ListWorkerHostsResponse, error) {
 	params := db.ListCapacityWorkerHostsParams{
 		ResourceIds:            append([]string{}, filter.ResourceIDs...),
@@ -127,7 +141,8 @@ func ListHosts(ctx context.Context, q db.Querier, filter HostFilter) (ListWorker
 	return response, nil
 }
 
-// GetHost returns one worker host.
+// GetHost returns one deployment worker host; an organization host reads as
+// missing.
 func GetHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (WorkerHost, error) {
 	row, err := getCapacityHost(ctx, q, hostID)
 	if err != nil {
@@ -213,12 +228,13 @@ type ConfirmedProviderAbsence struct {
 func (a ConfirmedProviderAbsence) Transaction() pgx.Tx { return a.tx }
 func (a ConfirmedProviderAbsence) HostID() uuid.UUID   { return a.hostID }
 
-// ConfirmHostProviderAbsent records verified provider absence under supply locks.
+// ConfirmHostProviderAbsent records verified provider absence of a deployment
+// host under supply locks; an organization host reads as missing.
 // The caller owns the transaction and must reconcile physical Computer ownership
 // before committing. Ordinary host expiry or credential revocation is not this proof.
 func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
 	var group uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT worker_group_id FROM worker_hosts WHERE id=$1`, hostID).Scan(&group); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT h.worker_group_id FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id AND g.owner_org_id IS NULL WHERE h.id=$1`, hostID).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ConfirmedProviderAbsence{}, ErrHostNotFound
 		}
