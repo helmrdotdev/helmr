@@ -71,10 +71,12 @@ disk as the prepared image. If `prepare` throws or a command fails, no image is
 produced and Computers waiting for it report an `unavailable` residency with the
 error code `computer_preparation_failed`.
 
-Helmr prepares an image when a Computer needs one and no usable image exists.
-Computers created at the same time share one preparation. A prepared image
-belongs to one Template definition in one deployed build; deploying changed code
-or definitions produces a new image the next time a Computer needs one.
+When you promote a Deployment, Helmr waits for a usable image for every Template
+with a `prepare` callback and every Template referenced by an Agent in that
+Deployment. A changed image specification needs a new image. Templates with
+the same image specification share one preparation.
+A Template with no callback and no Agent reference can prepare its image when
+the first Computer needs it. Concurrent requests share that preparation.
 
 ## Refresh
 

@@ -141,6 +141,15 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
+	if r.URL.Query().Get("view") == "promotion-preparation" {
+		state, err := deployment.PromotionPreparation(r.Context(), s.tx, principal, scope, deploymentID)
+		if err != nil {
+			s.writeDeploymentError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"preparation_state": state})
+		return
+	}
 	record, err := deployment.Get(r.Context(), s.tx, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, r, err)

@@ -59,15 +59,17 @@ export async function promoteDeployment(id: string, scope: DeploymentScope, sign
   const options = signal ? { signal } : {};
   for (;;) {
     signal?.throwIfAborted();
-    let result = await postJson<Record<string, never>, Deployment>(`${path}/promote`, {}, options);
+    const result = await postJson<Record<string, never>, Deployment>(`${path}/promote`, {}, options);
     if (result.preparation_state !== "preparing") return result;
-    while (result.preparation_state === "preparing") {
+    let state: Deployment["preparation_state"] = result.preparation_state;
+    while (state === "preparing") {
       await new Promise(resolve => setTimeout(resolve, 1000));
       signal?.throwIfAborted();
-      result = await request<Deployment>(path, options);
+      const observation = await request<Pick<Deployment, "preparation_state">>(`${path}?view=promotion-preparation`, options);
+      state = observation.preparation_state;
     }
-    if (result.preparation_state !== "ready" && result.preparation_state !== "unprepared") {
-      throw new Error(`Environment preparation ${result.preparation_state}. The current deployment has not changed.`);
+    if (state !== "ready" && state !== "unprepared") {
+      throw new Error(`Environment preparation ${state}. The current deployment has not changed.`);
     }
   }
 }

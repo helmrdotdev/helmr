@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -141,6 +142,15 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 	if response := fixture.request(t, http.MethodPost, promote, deployer, ""); response.Code != http.StatusOK {
 		t.Fatalf("deploy key promotion = %d %s", response.Code, response.Body.String())
 	}
+	record := "/v1/deployments/" + deploymentID.String()
+	if response := fixture.request(t, http.MethodGet, record+"?view=promotion-preparation", deployer, ""); response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"preparation_state":"ready"}` {
+		t.Fatalf("deploy key preparation = %d %s", response.Code, response.Body.String())
+	}
+	for _, tc := range []struct{ path, key string }{{record, deployer}, {record + "?view=promotion-preparation", unrelated}} {
+		if response := fixture.request(t, http.MethodGet, tc.path, tc.key, ""); response.Code != http.StatusForbidden {
+			t.Fatalf("unexpected access = %d %s", response.Code, response.Body.String())
+		}
+	}
 	current := fixture.request(t, http.MethodGet, "/v1/deployments/current", reader, "")
 	var body api.DeploymentResponse
 	if err := json.Unmarshal(current.Body.Bytes(), &body); err != nil {
@@ -190,5 +200,6 @@ func deploymentHTTPDeployment(t *testing.T, fixture httpPostgresFixture, orgID, 
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($1,$2,$3,$3,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}')`, pgx.QueryExecModeSimpleProtocol, environmentID, deploymentID, specID)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'daily-report')`, environmentID, agentID)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($1,$2,$3,(SELECT id FROM templates WHERE environment_id=$1 AND key='report-computer'),false,'{"kind":"unrestricted"}')`, environmentID, agentID, deploymentID)
+	sessiontest.PublishFixtureImage(t, fixture.pool, environmentID, specID)
 	return deploymentID
 }

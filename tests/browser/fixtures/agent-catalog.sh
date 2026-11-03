@@ -7,9 +7,9 @@ if [[ -n "${HELMR_E2E_BASE_URL:-}" || -n "${DATABASE_URL:-}" ]]; then
   echo "Agent catalog fixture requires the managed browser stack" >&2
   exit 1
 fi
-[[ $# = 3 ]] || exit 1
+[[ $# = 4 && "$4" =~ ^(true|false)$ ]] || exit 1
 [[ "$1" =~ ^browser-agent-[a-z0-9-]+$ ]] || exit 1
-for id in "${@:2}"; do
+for id in "${@:2:2}"; do
   [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 1
 done
 export HELMR_DEV_DIR="${ROOT}/.helmr-dev-e2e"
@@ -21,7 +21,7 @@ pg_ctl -D "${HELMR_DEV_PGDATA}" status >/dev/null
 actual_data_dir="$(psql -X -At -h "${HELMR_DEV_PGSOCKET}" -p "${HELMR_DEV_POSTGRES_PORT}" -d postgres -c 'SHOW data_directory')"
 [[ "$actual_data_dir" = "${HELMR_DEV_PGDATA}" ]] || exit 1
 psql -X -q -At -v ON_ERROR_STOP=1 -h "${HELMR_DEV_PGSOCKET}" -p "${HELMR_DEV_POSTGRES_PORT}" -d postgres \
-  -v environment="$1" -v deployment_id="$2" -v agent_id="$3" <<'SQL'
+  -v environment="$1" -v deployment_id="$2" -v agent_id="$3" -v prepared_image="$4" <<'SQL'
 BEGIN;
 SELECT e.id AS environment_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE p.slug='console-demo' AND e.slug=:'environment' \gset
 INSERT INTO deployments(environment_id,id,bundle_digest)
@@ -35,6 +35,27 @@ VALUES(:'environment_id',:'deployment_id',:'deployment_id',:'deployment_id',1000
 INSERT INTO agents(environment_id,id,key) VALUES(:'environment_id',:'agent_id','browser-agent');
 INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy)
 VALUES(:'environment_id',:'agent_id',:'deployment_id',:'deployment_id',false,'{"kind":"unrestricted"}');
+\if :prepared_image
+-- The current Agent's Template already has a published synthetic image.
+SELECT 'sha256:' || encode(sha256(:'deployment_id'::bytea),'hex') AS digest, uuidv7() AS image_key \gset
+-- Session admission checks the compact VersionRoot descriptor identity.
+SELECT format('{"format_version":1,"logical_bytes":4096,"pack":{"digest":"%s","size_bytes":64,"rank":2},"page":{"digest":"%s","salt":"%s","key_id":"%s","kind":3,"count":1,"size_bytes":56},"offset":8}',
+  :'digest', :'digest', repeat('0',64), :'image_key') AS descriptor \gset
+INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)
+VALUES(:'environment_id',:'deployment_id',:'deployment_id','fixture',now()+interval '1 minute');
+INSERT INTO disk_encryption_keys(id,environment_id,writer_image_build_id,wrapping_key_id,wrapped_key)
+VALUES(:'image_key',:'environment_id',:'deployment_id','fixture',decode('01','hex'));
+INSERT INTO cas_blobs(org_id,digest,size_bytes) SELECT org_id,:'digest',64 FROM environments WHERE id=:'environment_id';
+INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,:'digest',64,'application/octet-stream' FROM environments WHERE id=:'environment_id';
+INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
+SELECT id,:'digest',org_id,project_id,64,'application/octet-stream','root',2,'{}',now() FROM environments WHERE id=:'environment_id';
+INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES(:'environment_id',:'digest',:'image_key',true);
+INSERT INTO disk_roots(environment_id,id,format_version,logical_bytes,pack_digest,pack_size_bytes,pack_rank,page_digest,page_salt,page_key_id,page_kind,page_count,page_size_bytes,page_offset)
+VALUES(:'environment_id',:'deployment_id',1,4096,:'digest',64,2,:'digest',repeat('0',64),:'image_key',3,1,56,8);
+UPDATE image_builds SET status='succeeded',logical_bytes=4096,capture_root='sha256:'||encode(sha256(convert_to(:'descriptor','UTF8')),'hex'),capture_evidence='fixture',write_key_id=:'image_key' WHERE environment_id=:'environment_id' AND id=:'deployment_id';
+INSERT INTO images(environment_id,id,image_spec_id,image_build_id,seq,root_id,publication_evidence)
+VALUES(:'environment_id',:'deployment_id',:'deployment_id',:'deployment_id',1,:'deployment_id','fixture');
+\endif
 UPDATE environments SET current_deployment_id=:'deployment_id' WHERE id=:'environment_id';
 -- Admission checks physical placement even though browser tests do not run a
 -- Worker. One shared synthetic host supplies bounded capacity for these fixtures.
