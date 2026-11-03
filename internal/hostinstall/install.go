@@ -13,6 +13,10 @@ import (
 // ServiceName is the worker's systemd unit.
 const ServiceName = "helmr-worker.service"
 
+// InstalledMarker exists once every install step finished; Install removes it
+// first, so an interrupted install is never taken for a complete one.
+const InstalledMarker = "/usr/share/helmr/installed"
+
 // Installer installs verified bundles under Root, running system commands
 // through Run. The zero Root is the machine's own root.
 type Installer struct {
@@ -55,6 +59,9 @@ func (i Installer) Install(v Verified) error {
 	}
 	if !stopped {
 		return errors.New("stop and quiesce the worker before replacing its installed files")
+	}
+	if err := os.Remove(i.path(InstalledMarker)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	for _, dir := range []string{"/usr/local/bin", "/usr/local/libexec/helmr", "/usr/share/helmr", "/var/lib/helmr/images/guest/out", "/run/helmr", "/etc/helmr", "/var/lib/helmr/jailer"} {
 		if err := os.MkdirAll(i.path(dir), 0o755); err != nil {
@@ -108,8 +115,10 @@ func (i Installer) Install(v Verified) error {
 	if _, err := i.Run("sysctl", "-p", "/etc/sysctl.d/99-helmr-firecracker.conf"); err != nil {
 		return err
 	}
-	_, err = i.Run("systemctl", "daemon-reload")
-	return err
+	if _, err := i.Run("systemctl", "daemon-reload"); err != nil {
+		return err
+	}
+	return writeFile(i.path(InstalledMarker), nil, 0o644)
 }
 
 // accounts creates the VMM account with its fixed ids and the verifier

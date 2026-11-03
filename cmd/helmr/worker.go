@@ -29,6 +29,10 @@ const (
 // workerHost is the machine the worker commands act on; tests replace it.
 var workerHost = hostinstall.System()
 
+// workerEnvFile is the environment file the commands read the installed
+// worker's settings from.
+var workerEnvFile = workerEnvPath
+
 func workerCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "worker",
@@ -36,6 +40,7 @@ func workerCommand() *cobra.Command {
 		Long: "Run this Linux machine as a worker for a worker group. The commands act on the worker " +
 			"installed on this machine and need root.",
 	}
+	root.PersistentFlags().StringVar(&workerEnvFile, "env", workerEnvPath, "the installed worker's environment file, for status, drain, fence and remove")
 	root.AddCommand(workerUpCommand(), workerStatusCommand(), workerDrainCommand(), workerFenceCommand(),
 		workerDownCommand(), workerRemoveCommand(), workerLogsCommand(), workerInstallCommand())
 	return root
@@ -44,7 +49,7 @@ func workerCommand() *cobra.Command {
 // workerControlPlane reads how the installed worker reaches its Control
 // Plane from the worker's environment file.
 func workerControlPlane() (config.WorkerControlPlane, error) {
-	env, err := readEnvFile(hostPath(workerEnvPath))
+	env, err := readEnvFile(hostPath(workerEnvFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return config.WorkerControlPlane{}, errors.New("no worker is installed on this machine; run helmr worker up")
 	}
@@ -58,7 +63,7 @@ func workerControlPlane() (config.WorkerControlPlane, error) {
 		PollEvery:          2 * time.Second,
 	}
 	if cfg.ControlPlaneURL == "" {
-		return cfg, fmt.Errorf("%s names no CONTROL_PLANE_URL", workerEnvPath)
+		return cfg, fmt.Errorf("%s names no CONTROL_PLANE_URL", workerEnvFile)
 	}
 	return cfg, nil
 }
@@ -190,6 +195,9 @@ func workerRemoveCommand() *cobra.Command {
 			if err := requireRoot(); err != nil {
 				return err
 			}
+			if wait <= 0 {
+				return errors.New("--wait-timeout must be positive: remove waits for the drain to finish")
+			}
 			out := cmd.OutOrStdout()
 			identity, identityErr := workerhost.ReadIdentity(hostPath(workerIdentityPath))
 			drained := false
@@ -221,6 +229,8 @@ func workerRemoveCommand() *cobra.Command {
 				"/etc/systemd/system/" + hostinstall.ServiceName, workerEnvPath, workerWorkDir,
 				"/usr/local/bin/worker", "/usr/local/bin/firecracker", "/usr/local/bin/jailer",
 				"/usr/local/bin/cpu-template-helper", "/usr/local/libexec/helmr", "/usr/share/helmr",
+				"/etc/modules-load.d/helmr-computer.conf", "/etc/modprobe.d/helmr-computer.conf",
+				"/etc/udev/rules.d/99-helmr-kvm.rules", "/etc/sysctl.d/99-helmr-firecracker.conf",
 			} {
 				if err := os.RemoveAll(hostPath(path)); err != nil {
 					return err
@@ -276,7 +286,7 @@ func workerInstallCommand() *cobra.Command {
 			if bundles.HostPath == "" || bundles.RuntimePath == "" {
 				return errors.New("--host-bundle and --runtime-bundle are required")
 			}
-			if err := installBundles(bundles); err != nil {
+			if err := installBundles(bundles, os.TempDir()); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "installed worker host and runtime artifacts")
@@ -293,8 +303,10 @@ func workerInstallCommand() *cobra.Command {
 	return cmd
 }
 
-func installBundles(bundles hostinstall.Bundles) error {
-	verified, err := hostinstall.Verify(bundles, os.TempDir())
+// installBundles verifies bundles into a private directory under staging and
+// installs them.
+func installBundles(bundles hostinstall.Bundles, staging string) error {
+	verified, err := hostinstall.Verify(bundles, staging)
 	if err != nil {
 		return err
 	}
@@ -327,7 +339,27 @@ func readEnvFile(path string) (map[string]string, error) {
 		if !ok || key == "" {
 			return nil, fmt.Errorf("%s:%d is not KEY=VALUE", path, line)
 		}
-		env[key] = value
+		env[key] = unquoteEnv(value)
 	}
 	return env, scanner.Err()
+}
+
+// unquoteEnv reads a value the way systemd's EnvironmentFile does: a value in
+// double quotes takes backslash escapes, one in single quotes is literal.
+func unquoteEnv(value string) string {
+	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
+		return value[1 : len(value)-1]
+	}
+	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+		return value
+	}
+	var b strings.Builder
+	inner := value[1 : len(value)-1]
+	for i := 0; i < len(inner); i++ {
+		if inner[i] == '\\' && i+1 < len(inner) {
+			i++
+		}
+		b.WriteByte(inner[i])
+	}
+	return b.String()
 }

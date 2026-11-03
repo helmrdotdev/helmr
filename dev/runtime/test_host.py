@@ -188,7 +188,7 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 host.stop(host.compile_config(config()))
             self.assertEqual(run.call_count, 1)
-            self.assertEqual(run.call_args.args[:4], ('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m'))
+            self.assertEqual(run.call_args.args[:4], ('/usr/local/bin/helmr', 'worker', 'drain', '--env'))
 
     def test_failed_worker_requires_inspection_not_dependency_stop(self):
         with patch.object(host, 'state', return_value='failed'), patch.object(host, 'run') as run:
@@ -200,7 +200,7 @@ class ProfileTests(unittest.TestCase):
         with patch.object(host, 'state', return_value='active'), patch.object(host, 'run') as run:
             host.stop(host.compile_config(config()))
             calls = [call.args for call in run.call_args_list]
-            self.assertEqual(calls[0][:4], ('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m'))
+            self.assertEqual(calls[0][:4], ('/usr/local/bin/helmr', 'worker', 'drain', '--env'))
             self.assertEqual(calls[1], ('systemctl', 'stop', 'helmr-worker.service'))
             for call in run.call_args_list[1:]:
                 self.assertGreater(call.kwargs['timeout'], 120)

@@ -64,6 +64,7 @@ locals {
             inputs = {
               commands = [
                 "test -x /usr/local/bin/worker",
+                "test -f /usr/share/helmr/installed",
                 "test \"$(stat -c %U:%G:%a /usr/local/bin/helmr)\" = root:root:755",
                 "/usr/local/bin/helmr worker --help >/dev/null",
                 "test -f /usr/local/sbin/helmr-prepare-root && test ! -L /usr/local/sbin/helmr-prepare-root && test -x /usr/local/sbin/helmr-prepare-root",

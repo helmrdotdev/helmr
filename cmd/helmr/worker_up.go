@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -86,23 +87,29 @@ func enrollMachine(cmd *cobra.Command, opts workerUpOptions) (map[string]string,
 		return nil, workerhost.Identity{}, errors.New("give --group (after helmr login) or --token-file")
 	}
 	tokenFile := opts.tokenFile
+	// A minted token is kept until the identity is stored, so a rerun after a
+	// lost enrollment response repeats that enrollment with the same token.
+	minted := hostPath(mintedTokenPath)
 	if opts.groupID != "" {
+		tokenFile = minted
 		cp, err := sessionControlPlaneClient(cmd)
 		if err != nil {
 			return nil, workerhost.Identity{}, err
 		}
-		issued, err := cp.IssueWorkerEnrollmentToken(cmd.Context(), opts.groupID)
-		if err != nil {
-			return nil, workerhost.Identity{}, fmt.Errorf("issue an enrollment token: %w", err)
-		}
 		if opts.controlPlaneURL == "" {
 			opts.controlPlaneURL = cp.BaseURL()
 		}
-		tokenFile = hostPath("/run/helmr/worker-enrollment-token")
-		if err := writePrivate(tokenFile, []byte(issued.EnrollmentToken), 0o400); err != nil {
+		if _, err := os.Stat(minted); errors.Is(err, os.ErrNotExist) {
+			issued, err := cp.IssueWorkerEnrollmentToken(cmd.Context(), opts.groupID)
+			if err != nil {
+				return nil, workerhost.Identity{}, fmt.Errorf("issue an enrollment token: %w", err)
+			}
+			if err := writePrivate(minted, []byte(issued.EnrollmentToken), 0o400); err != nil {
+				return nil, workerhost.Identity{}, err
+			}
+		} else if err != nil {
 			return nil, workerhost.Identity{}, err
 		}
-		defer os.Remove(tokenFile)
 	}
 	if opts.controlPlaneURL == "" {
 		opts.controlPlaneURL = cliControlPlaneURL(cmd)
@@ -128,16 +135,21 @@ func enrollMachine(cmd *cobra.Command, opts workerUpOptions) (map[string]string,
 		WorkerIdentityPath:        hostPath(workerIdentityPath),
 		JailerChrootDir:           hostPath(env["JAILER_CHROOT_DIR"]),
 	}, hostPath(workerWorkDir))
-	return env, identity, err
+	if err != nil {
+		if tokenFile == minted {
+			return nil, workerhost.Identity{}, fmt.Errorf("%w; rerun helmr worker up to retry with the same token, or delete %s to mint a new one", err, mintedTokenPath)
+		}
+		return nil, workerhost.Identity{}, err
+	}
+	if err := os.Remove(minted); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, workerhost.Identity{}, err
+	}
+	return env, identity, nil
 }
 
 func workerInstalled() bool {
-	for _, path := range []string{"/usr/local/bin/worker", "/etc/systemd/system/" + hostinstall.ServiceName} {
-		if _, err := os.Stat(hostPath(path)); err != nil {
-			return false
-		}
-	}
-	return true
+	_, err := os.Stat(hostPath(hostinstall.InstalledMarker))
+	return err == nil
 }
 
 // installRelease fetches the Control Plane's release as this host, verifies it
@@ -160,11 +172,31 @@ func installRelease(cmd *cobra.Command, env map[string]string, identity workerho
 	if err != nil {
 		return "", fmt.Errorf("fetch the Control Plane's release: %w", err)
 	}
-	if err := installBundles(hostinstall.FromRelease(fetched.Index, fetched.Dir)); err != nil {
+	// A unit left by an interrupted install may be restarting a missing
+	// worker; the installer replaces files only while it is stopped.
+	if _, err := workerHost.Run("systemctl", "stop", hostinstall.ServiceName); err != nil {
+		return "", err
+	}
+	if err := installBundles(hostinstall.FromRelease(fetched.Index, fetched.Dir), download); err != nil {
 		return "", err
 	}
 	return fetched.Index.Version, nil
 }
+
+// mintedTokenPath keeps a token minted by up until enrollment is stored.
+const mintedTokenPath = "/var/lib/helmr/worker-enrollment-token"
+
+// managedEnv are the settings up derives itself; their flags or the fixed
+// install layout set them, never --env-file.
+var managedEnv = []string{
+	"CONTROL_PLANE_URL", "WORKER_RESOURCE_ID", "WORKER_POOL_NAME", "WORKER_COMPUTER_DEVICES",
+	"WORKER_NETWORK_RESOLVER_IPV4", "WORKER_ENROLLMENT_TOKEN_FILE", "WORKER_WORK_DIR", "WORKER_IDENTITY_PATH",
+	"WORKER_IMAGES_DIR", "JAILER_CHROOT_DIR", "JAILER_UID", "JAILER_GID", "FIRECRACKER_PATH",
+	"CPU_TEMPLATE_HELPER_PATH", "JAILER_PATH", "MKFS_EXT4_PATH", "MKE2FS_CONFIG_PATH",
+}
+
+// workerPlatform is this machine's OS and architecture; tests replace it.
+var workerPlatform = runtime.GOOS + "/" + runtime.GOARCH
 
 // lookPath finds a command the worker needs; tests replace it.
 var lookPath = exec.LookPath
@@ -185,6 +217,7 @@ func preflight() error {
 		return func() bool { _, err := lookPath(name); return err == nil }
 	}
 	requirements := []requirement{
+		{func() bool { return workerPlatform == "linux/amd64" }, "Linux x86_64: workers run only on Linux x86_64 machines"},
 		{exists("/dev/kvm"), "/dev/kvm: enable hardware virtualization (or nested virtualization) and load the kvm module"},
 		{exists("/sys/fs/cgroup/cgroup.controllers"), "cgroup v2: boot with the unified cgroup hierarchy"},
 		{exists("/run/systemd/system"), "systemd: the worker runs as a systemd service"},
@@ -251,6 +284,9 @@ func machineEnv(opts workerUpOptions) (map[string]string, error) {
 		"WORKER_IDENTITY_PATH":                  workerIdentityPath,
 		"WORKER_IMAGES_DIR":                     "/var/lib/helmr/images",
 		"JAILER_CHROOT_DIR":                     "/var/lib/helmr/jailer",
+		"WORKER_LOG_CHUNK_BYTES":                "65536",
+		"WORKER_LOG_BUFFER_BYTES":               "1048576",
+		"WORKER_LOG_BUFFER_RECORDS":             "256",
 	}
 	if opts.envFile != "" {
 		overrides, err := readEnvFile(opts.envFile)
@@ -258,6 +294,9 @@ func machineEnv(opts workerUpOptions) (map[string]string, error) {
 			return nil, err
 		}
 		for key, value := range overrides {
+			if slices.Contains(managedEnv, key) {
+				return nil, fmt.Errorf("--env-file cannot set %s; helmr worker up sets it from its flags and install layout", key)
+			}
 			env[key] = value
 		}
 	}

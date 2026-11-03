@@ -181,16 +181,3 @@ func LoadWorker() (Worker, error) {
 	}
 	return cfg, nil
 }
-
-func LoadWorkerControlPlane() (WorkerControlPlane, error) {
-	cfg := WorkerControlPlane{
-		ControlPlaneURL:    envText("CONTROL_PLANE_URL"),
-		WorkerIdentityPath: envText("WORKER_IDENTITY_PATH"),
-		WorkDir:            envText("WORKER_WORK_DIR"),
-		PollEvery:          2 * time.Second,
-	}
-	if cfg.ControlPlaneURL == "" {
-		return cfg, errors.New("CONTROL_PLANE_URL is required")
-	}
-	return cfg, nil
-}

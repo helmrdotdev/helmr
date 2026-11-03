@@ -215,7 +215,13 @@ writes the worker's environment to `/etc/helmr/worker.env` (mode `0600`):
 - the rest are the same defaults as the AWS reference stacks. `--env-file`
   applies `KEY=VALUE` lines over them, for example
   `WORKER_NETWORK_BLOCKED_IPV4_CIDRS` for the machine's own networks or VM
-  sizing.
+  sizing. It cannot change what `up` sets from its flags or the install layout:
+  the Control Plane URL, resource ID, pool, devices, resolver, paths and jailer
+  account.
+
+A token `up` mints is kept in `/var/lib/helmr/worker-enrollment-token` until
+the enrollment is stored, so rerunning `up` after an interrupted enrollment
+repeats it with the same token.
 
 `up` then enrolls the machine with a new machine key, downloads the Control
 Plane's release, verifies it against its signed index, installs it and starts
@@ -235,6 +241,9 @@ On the machine:
 | `helmr worker remove` | Drains, stops and uninstalls the worker and deletes the machine's identity. When it cannot drain, `--group` with a login revokes the machine's key. |
 | `helmr worker logs` | Shows the worker's journal; `-f` follows it. |
 | `helmr worker install` | Installs a release's bundles from local files, pinned by digest, without enrolling. Machine image builds use it. |
+
+The commands read the installed worker's settings from `/etc/helmr/worker.env`;
+`--env` names another file in the same format for a worker installed elsewhere.
 
 ## Machine keys, token rotation and revocation
 

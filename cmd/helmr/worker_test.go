@@ -17,13 +17,14 @@ func fakeWorkerHost(t *testing.T) (string, *[]string) {
 	t.Helper()
 	root := t.TempDir()
 	var calls []string
-	previousHost, previousLookPath := workerHost, lookPath
+	previousHost, previousLookPath, previousPlatform := workerHost, lookPath, workerPlatform
+	workerPlatform = "linux/amd64"
 	workerHost = hostinstall.Installer{Root: root, Run: func(name string, args ...string) (string, error) {
 		calls = append(calls, strings.Join(append([]string{name}, args...), " "))
 		return "", nil
 	}}
 	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
-	t.Cleanup(func() { workerHost, lookPath = previousHost, previousLookPath })
+	t.Cleanup(func() { workerHost, lookPath, workerPlatform = previousHost, previousLookPath, previousPlatform })
 	for _, path := range []string{"/dev/kvm", "/sys/fs/cgroup/cgroup.controllers", "/run/systemd/system"} {
 		writeHostFile(t, root, path, "")
 	}
@@ -63,8 +64,9 @@ func TestWorkerPreflightNamesWhatIsMissing(t *testing.T) {
 		}
 		return "/usr/bin/" + name, nil
 	}
+	workerPlatform = "linux/arm64"
 	err := preflight()
-	if err == nil || !strings.Contains(err.Error(), "/dev/kvm: enable hardware virtualization") || !strings.Contains(err.Error(), "nft: install it") {
+	if err == nil || !strings.Contains(err.Error(), "Linux x86_64") || !strings.Contains(err.Error(), "/dev/kvm: enable hardware virtualization") || !strings.Contains(err.Error(), "nft: install it") {
 		t.Fatalf("preflight = %v", err)
 	}
 }
@@ -82,8 +84,7 @@ func TestWorkerUpStartsAnEnrolledInstalledMachine(t *testing.T) {
 	root, calls := fakeWorkerHost(t)
 	writeHostFile(t, root, workerIdentityPath, `{"worker_host_id":"019a0000-0000-7000-8000-000000000001","machine_key":"`+strings.Repeat("A", 43)+`="}`)
 	writeHostFile(t, root, workerEnvPath, "CONTROL_PLANE_URL=https://cp.test\n")
-	writeHostFile(t, root, "/usr/local/bin/worker", "")
-	writeHostFile(t, root, "/etc/systemd/system/"+hostinstall.ServiceName, "")
+	writeHostFile(t, root, hostinstall.InstalledMarker, "")
 	if _, err := runWorkerCLI(t, "up"); err != nil {
 		t.Fatal(err)
 	}
@@ -166,4 +167,34 @@ func writeTemp(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestWorkerMachineEnvKeepsManagedSettings(t *testing.T) {
+	root, _ := fakeWorkerHost(t)
+	writeHostFile(t, root, "/etc/resolv.conf", "nameserver 10.0.0.2\n")
+	for _, key := range []string{"WORKER_WORK_DIR", "WORKER_IDENTITY_PATH", "CONTROL_PLANE_URL"} {
+		overrides := writeTemp(t, key+"=/elsewhere\n")
+		if _, err := machineEnv(workerUpOptions{pool: "default", devices: 1, envFile: overrides}); err == nil || !strings.Contains(err.Error(), "cannot set "+key) {
+			t.Fatalf("override of %s = %v", key, err)
+		}
+	}
+}
+
+func TestWorkerRemoveWaitsForTheDrain(t *testing.T) {
+	fakeWorkerHost(t)
+	if _, err := runWorkerCLI(t, "remove", "--wait-timeout", "0"); err == nil || !strings.Contains(err.Error(), "must be positive") {
+		t.Fatalf("remove without waiting = %v", err)
+	}
+}
+
+func TestWorkerReadsQuotedEnvironmentFiles(t *testing.T) {
+	env, err := readEnvFile(writeTemp(t, "A=\"http://cp.test\"\nB=\"a \\\"q\\\" \\\\ z\"\nC='lit\\eral'\nD=plain\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{"A": "http://cp.test", "B": `a "q" \ z`, "C": `lit\eral`, "D": "plain"} {
+		if env[key] != want {
+			t.Fatalf("%s = %q, want %q", key, env[key], want)
+		}
+	}
 }

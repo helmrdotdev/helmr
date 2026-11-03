@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -224,9 +225,32 @@ func TestInstallPlacesVerifiedFiles(t *testing.T) {
 	if calls[len(calls)-1] != "systemctl daemon-reload" {
 		t.Fatalf("calls = %v", calls)
 	}
+	if _, err := os.Stat(filepath.Join(root, InstalledMarker)); err != nil {
+		t.Fatal("a finished install left no marker")
+	}
 
 	state = "active"
 	if err := installer.Install(v); err == nil || !strings.Contains(err.Error(), "stop and quiesce") {
 		t.Fatalf("install over a running worker = %v", err)
+	}
+
+	// An install interrupted before its last step leaves no marker.
+	state = "inactive"
+	installer.Run = func(name string, args ...string) (string, error) {
+		switch call := strings.Join(append([]string{name}, args...), " "); {
+		case strings.HasPrefix(call, "systemctl show"):
+			return "inactive\n", nil
+		case strings.HasPrefix(call, "id -"):
+			return "1001\n", nil
+		case strings.HasPrefix(call, "sysctl"):
+			return "", errors.New("interrupted")
+		}
+		return "", nil
+	}
+	if err := installer.Install(v); err == nil {
+		t.Fatal("interrupted install succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(root, InstalledMarker)); err == nil {
+		t.Fatal("an interrupted install kept the marker")
 	}
 }
