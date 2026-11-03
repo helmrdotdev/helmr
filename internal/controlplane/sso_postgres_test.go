@@ -57,8 +57,15 @@ func (b *ssoBrowser) do(t *testing.T, method, path, body string, origin string, 
 // cross-site to the ACS, returning the ACS response.
 func (b *ssoBrowser) samlSignIn(t *testing.T, idp ssotest.IdP, connection uuid.UUID, subject string, start string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
+	return b.samlAnswer(t, idp, connection, subject, start, `{"organization":"acme"}`, nil)
+}
+
+// samlAnswer posts start with body, has the IdP answer the SAML request and
+// posts the answer cross-site to the ACS.
+func (b *ssoBrowser) samlAnswer(t *testing.T, idp ssotest.IdP, connection uuid.UUID, subject, start, body string, headers map[string]string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
 	console := b.f.origin
-	started := b.do(t, http.MethodPost, start, `{"organization":"acme"}`, console, nil)
+	started := b.do(t, http.MethodPost, start, body, console, headers)
 	if started.Code != http.StatusOK {
 		t.Fatalf("start = %d %s", started.Code, started.Body)
 	}
@@ -326,5 +333,82 @@ func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
 		if got := browser.do(t, http.MethodPost, path, `{"name":"Other","slug":"other","token":"x"}`, console, nil); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "ordinary_sign_in_required") {
 			t.Fatalf("%s from an SSO-only session = %d %s", path, got.Code, got.Body)
 		}
+	}
+}
+
+func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
+	f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store, err := sso.NewStore(make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.SSO = store
+	})
+	orgID, ownerToken := f.organizationOwner(t, "acme")
+	console := f.origin
+	selected := map[string]string{"X-Helmr-Organization": orgID.String()}
+	owner := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: ownerToken}}}
+	idp := ssotest.NewIdP(t)
+
+	body, _ := json.Marshal(map[string]any{"protocol": "saml", "entity_id": idp.EntityID, "sso_url": "https://idp.example.test/sso", "certificates": []string{idp.CertPEM}})
+	created := owner.do(t, http.MethodPost, "/api/organization/sso/connections", string(body), console, selected)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	var connection struct {
+		ID    string `json:"id"`
+		ACS   string `json:"service_provider_acs_url"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &connection); err != nil || connection.State != "candidate" || !strings.HasSuffix(connection.ACS, "/acs") {
+		t.Fatalf("connection = %+v, %v", connection, err)
+	}
+	id := uuid.MustParse(connection.ID)
+	if got := owner.do(t, http.MethodPost, "/api/organization/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusConflict {
+		t.Fatalf("activate untested = %d %s", got.Code, got.Body)
+	}
+	acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/organization/sso/connections/"+connection.ID+"/test", "", selected)
+	if acs.Header().Get("Location") != "/sso/callback" {
+		t.Fatalf("test ACS = %s", acs.Header().Get("Location"))
+	}
+	if tested := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); tested.Code != http.StatusOK || !strings.Contains(tested.Body.String(), "tested=") {
+		t.Fatalf("test finish = %d %s", tested.Code, tested.Body)
+	}
+	if got := owner.do(t, http.MethodPost, "/api/organization/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("activate = %d %s", got.Code, got.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
+		t.Fatalf("require without recovery codes = %d %s", got.Code, got.Body)
+	}
+	codes := owner.do(t, http.MethodPost, "/api/organization/sso/recovery-codes", "", console, selected)
+	if codes.Code != http.StatusOK || strings.Count(codes.Body.String(), "-") != 40 {
+		t.Fatalf("recovery codes = %d %s", codes.Code, codes.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
+		t.Fatalf("require = %d %s", got.Code, got.Body)
+	}
+	// The owner's browser holds no SSO proof yet, so the organization now asks for SSO.
+	if got := owner.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
+		t.Fatalf("organization under required SSO = %d %s", got.Code, got.Body)
+	}
+	var recovery struct {
+		Codes []string `json:"codes"`
+	}
+	if err := json.Unmarshal(codes.Body.Bytes(), &recovery); err != nil {
+		t.Fatal(err)
+	}
+	recover := owner.do(t, http.MethodPost, "/api/account/sso/recover", `{"organization_id":"`+orgID.String()+`","code":"`+recovery.Codes[0]+`"}`, console, nil)
+	if recover.Code != http.StatusNoContent {
+		t.Fatalf("recover = %d %s", recover.Code, recover.Body)
+	}
+	status := owner.do(t, http.MethodGet, "/api/organization/sso", "", console, selected)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"required":true`) || !strings.Contains(status.Body.String(), `"remaining":9`) {
+		t.Fatalf("status = %d %s", status.Code, status.Body)
+	}
+	member := f.user(t, "Member")
+	f.member(t, orgID, member, "member")
+	memberBrowser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, member, uuid.Nil())}}}
+	if got := memberBrowser.do(t, http.MethodGet, "/api/organization/sso", "", console, selected); got.Code != http.StatusForbidden {
+		t.Fatalf("member reads SSO settings = %d %s", got.Code, got.Body)
 	}
 }
