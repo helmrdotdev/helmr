@@ -160,29 +160,25 @@
   },
   {
     "id": "AWS-0104",
-    "status": "affected",
-    "basis": "product",
-    "key": "c65031407d13c86e981fb3052f68e4eb0eb3ea07d3bca0f8d9e227045e869f27",
-    "source": "43d14da5b7765c5de55c8cca0f9af52b0acb5321f5b98b2d1de78d1843b33aef",
-    "reason": "The Standard tasks can initiate connections on any IP protocol to any IPv4 destination through their NAT gateway. The grant also permits traffic beyond the database, AWS services and configured integrations.",
-    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/modules/controlplane/main.tf#L555-L562 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/standard/README.md#L9-L17"
+    "status": "accepted_default",
+    "reason": "Standard intentionally provides outbound IPv4 connectivity from its platform tasks for operator-selected external endpoints and ports, including ClickHouse and SMTP. Operators with a restricted network must replace this default with service-specific egress rules.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/modules/controlplane/main.tf#L555-L562 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/standard/README.md#L9-L17",
+    "template_key": "491e476fe0c73e18e5ee94c971b8cc237f1da02e2c71bb94bfbb16206639b624"
   },
   {
     "id": "AWS-0104",
     "status": "affected",
     "basis": "product",
-    "key": "e44f6f8629a851389240c03571477b5288e7bd0feecb654fb24fb371ac0779a1",
-    "source": "43d14da5b7765c5de55c8cca0f9af52b0acb5321f5b98b2d1de78d1843b33aef",
+    "key": "61810065a49702c6fbb59fa622c9e99cc6661f73144c48721fed3061691137fc",
+    "source": "708b8e85e4578a03e8daff8f5bee83bb1aeb32727104671ecdba5b0f4fff0e63",
     "reason": "The proxy task can open TCP 443 connections to arbitrary IPv4 destinations. The pinned Squid configuration restricts client CONNECT requests, but the task security group grants a process on the proxy direct internet egress.",
     "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/private/proxy.tf#L24-L30 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/private/README.md#L53-L76"
   },
   {
     "id": "AWS-0104",
-    "status": "affected",
-    "basis": "product",
-    "key": "2cdb7c17a8c98a3b3b1d2f2694b2a291dc7cb4dd2b7c633392c6c98de5f360f0",
-    "source": "43d14da5b7765c5de55c8cca0f9af52b0acb5321f5b98b2d1de78d1843b33aef",
-    "reason": "The public control host has a default route to the internet gateway and allows outbound connections to any IPv4 destination on every protocol. Bootstrap downloads and public HTTPS integrations require only part of this access.",
-    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L23-L28 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L68-L74 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/host.tf#L22-L28"
+    "status": "accepted_default",
+    "reason": "Quickstart intentionally allows public IPv4 egress from the control host for operating-system bootstrap, image pulls and enabled integrations. Operators can replace the host's egress block to match their deployment.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L23-L28 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L68-L74 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/host.tf#L22-L28",
+    "template_key": "359b0d42228b0c70cf07a15f5605c53c3fd33a90deea7a0cde790ea9ff6db123"
   }
 ]
