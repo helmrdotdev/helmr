@@ -1,28 +1,150 @@
-name: verify builder toolchain
+name: verify the Debian release candidate
 on:
   push:
     branches: [verify/builder-toolchain-security]
 permissions:
   contents: read
+env:
+  RELEASE_SOURCE_COMMIT: eba8c0767fe4df9b13867d5e0278065c2711cbaa
+  RELEASE_SOURCE_REF: refs/heads/fix/builder-toolchain-security
+  RELEASE_TAG: v0.2.10
+  RELEASE_BUILD_ID: ${{ github.run_id }}
 jobs:
-  builder:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [sdk, builder, guest, controlplane, host, platform]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.RELEASE_SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+          extra_nix_config: |
+            max-jobs = 1
+            cores = 2
+      - name: Build frozen release component
+        run: nix develop .#release-build -c bash scripts/release/build.sh "${{ matrix.part }}" "$RUNNER_TEMP/part"
+      - run: tar -C "$RUNNER_TEMP/part" -cf "$RUNNER_TEMP/${{ matrix.part }}.tar" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: part-${{ matrix.part }}
+          path: ${{ runner.temp }}/${{ matrix.part }}.tar
+          compression-level: 0
+          retention-days: 3
+  security:
+    needs: build
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.RELEASE_SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: part-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/parts
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
       - run: |
-          if ! nix build -L .#bundleBuilderImage > "$RUNNER_TEMP/build.log" 2>&1; then
-            drv=$(grep -oE "/nix/store/[a-z0-9]+-docker-layer-helmr-builder-base.drv" "$RUNNER_TEMP/build.log" | tail -1)
-            if test -n "$drv"; then nix log "$drv" 2>&1 | tr '\r' '\n' | sed '/^$/d' | tail -180; fi
-            tail -30 "$RUNNER_TEMP/build.log"
-            exit 1
-          fi
-      - run: cp -L result "$RUNNER_TEMP/builder.tar.gz"
+          mkdir "$RUNNER_TEMP/assets"
+          for part in "$RUNNER_TEMP"/parts/*.tar; do tar -C "$RUNNER_TEMP/assets" -xf "$part"; done
+          export BUNDLE_BUILDER_IMAGE=$(jq -r .image "$RUNNER_TEMP/assets/bundle-builder.json")
+          nix develop .#release-build -c bash scripts/release/build.sh cli "$RUNNER_TEMP/assets"
+          nix run .#security-scan -- --source . --assets "$RUNNER_TEMP/assets" --report "$RUNNER_TEMP/findings.json"
+          python3 scripts/release/security_decision.py "$RUNNER_TEMP/findings.json" .github/security-assessments.json "$RUNNER_TEMP/decision.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: builder-image
-          path: ${{ runner.temp }}/builder.tar.gz
-          compression-level: 0
-          retention-days: 3
+          name: security-assessment
+          path: |
+            ${{ runner.temp }}/findings.json
+            ${{ runner.temp }}/decision.json
+      - run: jq -e '.state=="clear"' "$RUNNER_TEMP/decision.json"
+  accept:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [native, pi, claude-code, codex, opencode]
+    env:
+      CASE: ${{ matrix.fixture }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.RELEASE_SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: part-builder
+          path: ${{ runner.temp }}/parts
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: part-sdk
+          path: ${{ runner.temp }}/parts
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          github_access_token: ''
+      - run: |
+          mkdir "$RUNNER_TEMP/assets"
+          for part in "$RUNNER_TEMP"/parts/*.tar; do tar -C "$RUNNER_TEMP/assets" -xf "$part"; done
+          nix develop .#release-build -c bash <<'VERIFY'
+          set -euo pipefail
+          root=$PWD
+          work=$RUNNER_TEMP/accept
+          assets=$RUNNER_TEMP/assets
+          mkdir -p "$work"
+          source tests/build/buildx-fixture.sh
+          start_buildx_fixture "$work"
+          registry="helmr-toolchain-$$"
+          trap 'docker rm -f "$registry" >/dev/null; cleanup_buildx_fixture' EXIT
+          docker run --detach --rm --name "$registry" --publish 127.0.0.1::5000 registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373 >/dev/null
+          port=$(docker port "$registry" 5000/tcp | sed -n 's/^127\.0\.0\.1://p'); endpoint=127.0.0.1:$port
+          for i in $(seq 1 60); do curl -fsS "$endpoint/v2/" >/dev/null && break; sleep 1; done
+          skopeo --insecure-policy copy --preserve-digests --dest-tls-verify=false "dir:$assets/builder-image" "docker://$endpoint/bundle-builder:check"
+          digest=$(skopeo inspect --tls-verify=false --format '{{.Digest}}' "docker://$endpoint/bundle-builder:check")
+          test "$digest" = "$(jq -r '.image|split("@")[1]' "$assets/bundle-builder.json")"
+          echo "builder $digest"
+          printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$endpoint" >"$work/registry.toml"
+          docker buildx create --name "$fixture_builder" --driver docker-container --driver-opt network=host --buildkitd-config "$work/registry.toml"
+          docker buildx inspect --bootstrap "$fixture_builder" >/dev/null
+          bun install --frozen-lockfile --ignore-scripts
+          make platform-entries
+          go build -trimpath -ldflags="-X main.deploymentBundleBuilderImage=$endpoint/bundle-builder@$digest -X github.com/helmrdotdev/helmr/internal/version.Version=v0.2.10" -o "$work/helmr" ./cmd/helmr
+          p=$work/project
+          mkdir -p "$p"
+          if test "$CASE" = native; then
+            cp -R tests/fixtures/native-environment/. "$p/"
+          else
+            "$work/helmr" init --template "$CASE" --dir "$p" --name proof
+          fi
+          mkdir -p "$p/vendor/sdk" "$p/vendor/proto"
+          for pkg in sdk proto; do tar xf "$assets/$pkg.tgz" -C "$p/vendor/$pkg" --strip-components=1; done
+          cp -RL sdk/typescript/node_modules/@bufbuild/protobuf "$p/vendor/protobuf"
+          if test "$CASE" = native; then
+            mkdir -p "$p/node_modules/@helmr" "$p/node_modules/@bufbuild"
+            cp -R "$p/vendor/sdk" "$p/node_modules/@helmr/sdk"
+            cp -R "$p/vendor/proto" "$p/node_modules/@helmr/proto"
+            cp -R "$p/vendor/protobuf" "$p/node_modules/@bufbuild/protobuf"
+          else
+            cd "$p"
+            jq '.dependencies["@helmr/sdk"]="file:vendor/sdk" | .overrides["@helmr/proto"]="file:vendor/proto"' package.json > package.tmp
+            mv package.tmp package.json
+            bun install
+            cd "$root"
+          fi
+          "$work/helmr" build "$p" --output "$work/bundle" > "$work/build.log" 2>&1 || { tail -140 "$work/build.log"; exit 1; }
+          jq -e '.contract=="helmr.deployment-bundle.v0" and (.computerSeeds|length)>0' "$work/bundle/bundle.json"
+          if test "$CASE" = native; then
+            program=$(jq -r '.program.artifact.digest|split(":")[1]' "$work/bundle/bundle.json")
+            unsquashfs -cat "$work/bundle/objects/sha256/$program" build/Release/distro_addon.node >/dev/null
+            unsquashfs -cat "$work/bundle/objects/sha256/$program" generated/lifecycle.json
+          fi
+          echo "PASS $CASE $(sha256sum "$work/bundle/bundle.json")"
+          VERIFY
