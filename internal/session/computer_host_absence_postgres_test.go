@@ -302,7 +302,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 
 func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *testing.T) {
 	f := newFixture(t)
-	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.group, "host", 1); err != nil {
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.group, "host", uuid.Nil(), 1); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

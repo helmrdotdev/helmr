@@ -194,14 +194,14 @@ func TestHostStatusPostgres(t *testing.T) {
 	if _, err := ReadHostStatus(t.Context(), f.q, f.groupID(), " "); !errors.As(err, &input) {
 		t.Fatalf("empty resource ID error = %v, want InputError", err)
 	}
-	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", 0); !errors.As(err, &input) {
+	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", uuid.Nil(), 0); !errors.As(err, &input) {
 		t.Fatalf("zero claim version error = %v, want InputError", err)
 	}
 	var conflicting ConflictError
-	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", status.ClaimVersion+1); !errors.As(err, &conflicting) {
+	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", uuid.Nil(), status.ClaimVersion+1); !errors.As(err, &conflicting) {
 		t.Fatalf("stale loss error = %v, want ConflictError", err)
 	}
-	lost, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", status.ClaimVersion)
+	lost, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", uuid.Nil(), status.ClaimVersion)
 	if err != nil || lost.Status != "lost" || lost.ClaimVersion != status.ClaimVersion+1 || !lost.TransitionApplied {
 		t.Fatalf("MarkHostLost = %+v, %v", lost, err)
 	}

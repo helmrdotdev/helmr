@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"os"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -116,7 +117,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 		case "status":
 			result, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
 		case "lose":
-			result, err = workergroup.MarkHostLost(ctx, pool, policy, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlaneCLI)), parsedGroupID, resourceID, expectedClaimVersion)
+			result, err = workergroup.MarkHostLost(ctx, pool, policy, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlaneCLI)), parsedGroupID, resourceID, uuid.Nil(), expectedClaimVersion)
 		}
 		if err != nil {
 			return err

@@ -96,6 +96,25 @@ func TestOrganizationWorkerGroupHTTPOperatesOwnGroups(t *testing.T) {
 	if fenced.Status != "lost" || !fenced.TransitionApplied {
 		t.Fatalf("fenced = %+v", fenced)
 	}
+	// A replacement enrolled under the same machine resource starts at the same
+	// claim version; retrying the first host's fence must not reach it.
+	replacement := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_hosts (
+        id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,vm_platform_id,
+        epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,
+        per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,max_vm_starts,
+        cpu_environment,cpu_environment_digest,observed_at,epoch_started_at,activated_at,claim_version)
+    SELECT $1,resource_id,worker_group_id,worker_pool_id,'active',1,$2,vm_platform_id,
+        epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,
+        per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,max_vm_starts,
+        cpu_environment,cpu_environment_digest,now(),now(),now(),$3
+      FROM worker_hosts WHERE id=$4`, replacement, uuid.NewV7(), host.ClaimVersion, host.ID)
+	retried := f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/hosts/"+host.ID+"/fence", token, lifecycleBody(host.ClaimVersion))
+	var replacementStatus string
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM worker_hosts WHERE id=$1`, replacement).Scan(&replacementStatus); err != nil || replacementStatus != "active" {
+		t.Fatalf("retried fence (%d %s) reached the replacement: %q %v", retried.Code, retried.Body.String(), replacementStatus, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM worker_hosts WHERE id=$1`, replacement)
 	decodeAdmin[api.RevokeWorkerGroupHostCredentialsResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/host-credentials/revoke", token, ""), http.StatusOK)
 	current := decodeAdmin[api.WorkerGroup](t, f.request(t, http.MethodGet, "/api/worker-groups/"+group.ID, token, ""), http.StatusOK)
 	drained := decodeAdmin[workergroup.GroupStatus](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/drain", token, lifecycleBody(current.ClaimVersion)), http.StatusOK)
@@ -297,6 +316,11 @@ func TestAdminHTTPTreatsOrganizationGroupsAsInventory(t *testing.T) {
 		assertAdminError(t, f.request(t, call.method, call.path, admin, call.body), http.StatusNotFound, "not_found")
 	}
 	host := f.organizationGroupHost(t, group)
+	poolID := host.WorkerPoolID
+	for _, path := range []string{"/primary", "/drain", "/disable"} {
+		assertAdminError(t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+group.ID+"/pools/"+poolID+path, admin,
+			fmt.Sprintf(`{"pool_id":%q,"expected_group_claim_version":1,"expected_pool_claim_version":1,"minimum_ready_hosts":0}`, poolID)), http.StatusNotFound, "not_found")
+	}
 	paused := decodeAdmin[workergroup.GroupStatus](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+group.ID+"/pause", admin, lifecycleBody(group.ClaimVersion)), http.StatusOK)
 	revoked := decodeAdmin[api.RevokeWorkerGroupHostCredentialsResponse](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+group.ID+"/host-credentials/revoke", admin, ""), http.StatusOK)
 	if paused.Status != "paused" || len(revoked.FencedWorkerHostIDs) != 1 || revoked.FencedWorkerHostIDs[0] != host.ID {

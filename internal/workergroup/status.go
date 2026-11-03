@@ -109,22 +109,8 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 			if _, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID)); err != nil {
 				return fmt.Errorf("lock worker group drain: %w", err)
 			}
-			var retained bool
-			if err := tx.QueryRow(ctx, `SELECT
- EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=$1)
- OR EXISTS(SELECT 1 FROM checkpoints c
- JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
- JOIN worker_hosts h ON h.id=l.worker_host_id
- WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))
- OR EXISTS(SELECT 1 FROM computers c WHERE c.worker_group_id=$1 AND c.deleted_at IS NULL)
- OR EXISTS(SELECT 1 FROM image_builds prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
- WHERE prep.status='queued' AND target.worker_group_id=$1)
- OR EXISTS(SELECT 1 FROM boot_seed_builds prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
- WHERE prep.status IN ('waiting','queued') AND target.worker_group_id=$1)`, groupID).Scan(&retained); err != nil {
-				return fmt.Errorf("read worker group dependencies: %w", err)
-			}
-			if retained {
-				return conflict("worker group retains physical custody, Computer checkpoints, Computers pinned to it or queued preparation")
+			if err := requireNoGroupCustody(ctx, tx, groupID); err != nil {
+				return err
 			}
 		}
 		if target == db.WorkerGroupStatusDisabled {
@@ -165,13 +151,43 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 	return status, nil
 }
 
+// requireNoGroupCustody refuses retiring a group that still holds physical
+// custody, Computer checkpoints, pinned Computers or queued preparation. The
+// caller holds the group's row lock and reads in a new statement, so changes
+// committed while it waited are visible.
+func requireNoGroupCustody(ctx context.Context, tx pgx.Tx, groupID uuid.UUID) error {
+	var retained bool
+	if err := tx.QueryRow(ctx, `SELECT
+ EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=$1)
+ OR EXISTS(SELECT 1 FROM checkpoints c
+ JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
+ JOIN worker_hosts h ON h.id=l.worker_host_id
+ WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))
+ OR EXISTS(SELECT 1 FROM computers c WHERE c.worker_group_id=$1 AND c.deleted_at IS NULL)
+ OR EXISTS(SELECT 1 FROM image_builds prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
+ WHERE prep.status='queued' AND target.worker_group_id=$1)
+ OR EXISTS(SELECT 1 FROM boot_seed_builds prep JOIN LATERAL `+db.PreparationTargetSQL+` target ON true
+ WHERE prep.status IN ('waiting','queued') AND target.worker_group_id=$1)`, groupID).Scan(&retained); err != nil {
+		return fmt.Errorf("read worker group dependencies: %w", err)
+	}
+	if retained {
+		return conflict("worker group retains physical custody, Computer checkpoints, Computers pinned to it or queued preparation")
+	}
+	return nil
+}
+
 // disableRemainingPools disables a draining group's remaining pools as part of
-// disabling the group, so an organization never manages pools itself. The
-// group transition then checks that no host or custody remains; when it
-// refuses, the transaction undoes these pool changes too.
+// disabling the group, so an organization never manages pools itself. It
+// first refuses while the group retains custody a pool could still be needed
+// for, such as a checkpoint whose lease was fenced; the group transition then
+// checks that no live host remains, and when it refuses, the transaction
+// undoes these pool changes too.
 func disableRemainingPools(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, groupID uuid.UUID) error {
 	if _, err := db.New(tx).LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID)); err != nil {
 		return fmt.Errorf("lock worker group pools: %w", err)
+	}
+	if err := requireNoGroupCustody(ctx, tx, groupID); err != nil {
+		return err
 	}
 	rows, err := tx.Query(ctx, `UPDATE worker_pools p SET status='disabled',claim_version=p.claim_version+1,updated_at=now()
  FROM worker_groups g WHERE g.id=p.worker_group_id AND g.id=$1 AND g.status='draining' AND p.status IN ('pending','active','draining')
@@ -218,9 +234,11 @@ func ReadHostStatus(ctx context.Context, q db.Querier, groupID uuid.UUID, resour
 }
 
 // MarkHostLost fences the worker group's host with the provider resource ID as
-// lost, under the group's status mutation lock. It is the operator's record
-// that the machine stopped holding work; it does not stop the machine.
-func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, resourceID string, expectedClaimVersion int64) (HostStatus, error) {
+// lost, under the group's status mutation lock. A non-Nil hostID binds the
+// request to that host, so a replay never fences a later host enrolled under
+// the same resource ID. It is the operator's record that the machine stopped
+// holding work; it does not stop the machine.
+func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID, resourceID string, hostID uuid.UUID, expectedClaimVersion int64) (HostStatus, error) {
 	resourceID, err := hostResourceID(resourceID)
 	if err != nil {
 		return HostStatus{}, err
@@ -241,9 +259,13 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
 			return fmt.Errorf("lock worker group lifecycle: %w", err)
 		}
-		row, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
+		params := db.MarkWorkerHostLostParams{
 			WorkerGroupID: pgvalue.UUID(groupID), ResourceID: resourceID, ExpectedClaimVersion: expectedClaimVersion,
-		})
+		}
+		if hostID != uuid.Nil() {
+			params.WorkerHostID = pgvalue.UUID(hostID)
+		}
+		row, err := q.MarkWorkerHostLost(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return conflict(fmt.Sprintf("worker host %q/%q state or claim version changed", groupID.String(), resourceID))
 		}

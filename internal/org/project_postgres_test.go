@@ -625,6 +625,61 @@ func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
 	}
 }
 
+// Reauthorization takes the organization before the member, as member removal
+// does, so the two cannot deadlock.
+func TestReauthorizeWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
+	f := newProjectFixture(t, 0, 0)
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, f.orgID); err != nil {
+		t.Fatal(err)
+	}
+	var blocker int
+	if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		m := f.manager
+		done <- db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
+			return m.Reauthorize(ctx, tx, ScopedPermission{Permission: auth.PermissionProjectsCreate, Scope: auth.Scope{OrgID: f.orgID}})
+		})
+	}()
+	for {
+		var waiting bool
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("reauthorization did not wait: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM org_members WHERE id=$1 FOR UPDATE NOWAIT`, f.manager.MemberID); err != nil {
+		t.Fatalf("reauthorization inverted organization/member locks: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, f.manager.MemberID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrMemberManagementRequired) {
+		t.Fatalf("removed member result after waiting: %v", err)
+	}
+}
+
 func TestProjectEnvironmentAuditAtomicity(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
 	input := ProjectInput{Slug: "audit", Name: "Audit", ExecutionLimits: testExecutionLimits()}

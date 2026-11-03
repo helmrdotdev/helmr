@@ -190,7 +190,7 @@ func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
 func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 	f := newRetirementFixture(t)
 	cloneRestorePool(t, f)
-	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, "host", 1)
+	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, "host", uuid.Nil(), 1)
 	if err != nil || lost.Status != "lost" {
 		t.Fatalf("mark lost=%+v %v", lost, err)
 	}
@@ -286,5 +286,35 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	var retained bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_leases l JOIN session_processes p ON (p.environment_id,p.computer_id,p.computer_lease_epoch)=(l.environment_id,l.computer_id,l.epoch) WHERE l.worker_host_id=$1 AND l.fenced_at IS NULL AND p.fenced_at IS NULL)`, f.Worker).Scan(&retained); err != nil || !retained {
 		t.Fatalf("drain selection released physical custody: %v %v", retained, err)
+	}
+}
+
+// Disabling a group, which also disables its pools, waits for a checkpoint
+// whose lease was fenced: restoring it still needs one of those pools.
+func TestGroupDisableWaitsForRetainedCheckpoint(t *testing.T) {
+	f := newRetirementFixture(t)
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+		t.Fatal(err)
+	}
+	cloneRestorePool(t, f)
+	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); err != nil {
+		t.Fatal(err)
+	}
+	// The group drained earlier, and the host and its lease have since been
+	// fenced; only the checkpoint they captured remains.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1;
+ UPDATE worker_hosts SET status='lost',lost_at=now(),claim_version=claim_version+1 WHERE worker_group_id=$1;
+ UPDATE computer_leases SET status='lost',fenced_at=now(),fence_evidence='test' WHERE worker_host_id IN (SELECT id FROM worker_hosts WHERE worker_group_id=$1)`, pgx.QueryExecModeSimpleProtocol, f.Group)
+	var version int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT claim_version FROM worker_groups WHERE id=$1`, f.Group).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	var conflict workergroup.ConflictError
+	if _, err := workergroup.DisableGroup(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, version); !errors.As(err, &conflict) {
+		t.Fatalf("disabled a group retaining a checkpoint: %v", err)
+	}
+	var pools int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_pools WHERE worker_group_id=$1 AND status='disabled'`, f.Group).Scan(&pools); err != nil || pools != 0 {
+		t.Fatalf("refused disable left %d disabled pools: %v", pools, err)
 	}
 }

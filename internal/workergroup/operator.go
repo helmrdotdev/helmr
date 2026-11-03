@@ -21,7 +21,8 @@ type Operator struct {
 	// the operation's transaction, before any worker group lock.
 	authorize func(context.Context, pgx.Tx) (audit.Evidence, error)
 	// safety lets the deployment operator pause, revoke and disable any group
-	// for platform safety, and nothing else.
+	// for platform safety. Every other operation refuses it, so the operator
+	// type itself, not only the routes that build it, bounds that access.
 	safety bool
 }
 

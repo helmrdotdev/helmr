@@ -56,7 +56,7 @@ func TestOperatorsReachOnlyTheirOwnGroups(t *testing.T) {
 			if _, err := RevokeGroupHostCredentials(t.Context(), f.pool, operatorTestPolicy, test.operator, test.group); !errors.Is(err, ErrGroupNotFound) {
 				t.Fatalf("revoke error = %v", err)
 			}
-			if _, err := MarkHostLost(t.Context(), f.pool, operatorTestPolicy, test.operator, test.group, "host", 1); !errors.Is(err, ErrGroupNotFound) {
+			if _, err := MarkHostLost(t.Context(), f.pool, operatorTestPolicy, test.operator, test.group, "host", uuid.Nil(), 1); !errors.Is(err, ErrGroupNotFound) {
 				t.Fatalf("mark lost error = %v", err)
 			}
 		})
@@ -88,7 +88,7 @@ func TestOperatorsReachOnlyTheirOwnGroups(t *testing.T) {
 			return err
 		}(),
 		func() error {
-			_, err := MarkHostLost(t.Context(), f.pool, operatorTestPolicy, safety, organizationGroup, "host", 1)
+			_, err := MarkHostLost(t.Context(), f.pool, operatorTestPolicy, safety, organizationGroup, "host", uuid.Nil(), 1)
 			return err
 		}(),
 	} {

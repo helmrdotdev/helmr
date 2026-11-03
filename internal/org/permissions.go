@@ -131,8 +131,12 @@ type ScopedPermission struct {
 
 // Reauthorize locks the acting member and confirms, in the operation's
 // transaction, that it still holds every permission at its scope. The actor
-// then records all of the checks.
+// then records all of the checks. Like member removal, it takes the
+// organization before the member, so neither waits on the other in reverse.
 func (m *ManagingMember) Reauthorize(ctx context.Context, tx pgx.Tx, required ...ScopedPermission) error {
+	if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR KEY SHARE`, m.OrgID); err != nil {
+		return err
+	}
 	if err := lockActiveMembers(ctx, tx, *m); err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/pglock"
@@ -26,7 +27,7 @@ func TestStatusMutationsWaitForLifecycleAdvisoryLockPostgres(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			_, err = MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", status.ClaimVersion)
+			_, err = MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.groupID(), "host-1", uuid.Nil(), status.ClaimVersion)
 			return err
 		},
 	} {

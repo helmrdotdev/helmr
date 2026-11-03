@@ -91,7 +91,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 			var err error
 			switch path {
 			case "provider drift":
-				_, err = MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, "host", 1)
+				_, err = MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, DeploymentOperator(audit.Internal(audit.ControlPlane)), f.Group, "host", uuid.Nil(), 1)
 			case "worker fence":
 				err = FenceHost(t.Context(), f.Pool, HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1}, "provider_termination")
 			case "stale observation":

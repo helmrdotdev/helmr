@@ -6,7 +6,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -163,7 +162,7 @@ func TestPlacementDrainWaitsForPinnedComputersPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	drain := func() error {
-		_, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), group, version)
+		_, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, groupOwnerOperator(t, f.pool, group), group, version)
 		return err
 	}
 	if err := drain(); err == nil {
@@ -235,7 +234,7 @@ func TestPlacementRetiredGroupRejectsNewWorkAtOncePostgres(t *testing.T) {
 	assignDefault(t)(f, group)
 	// Retiring a group the current deployment's placement uses stays possible
 	// for platform safety; only placement edits and promotion keep the binding.
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), group, 1); err != nil {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, groupOwnerOperator(t, f.pool, group), group, 1); err != nil {
 		t.Fatalf("drain a group in use: %v", err)
 	}
 	count := func(table string) int {
@@ -329,7 +328,7 @@ func TestPlacementDrainWaitsForQueuedPreparationPostgres(t *testing.T) {
 	f, _, _ := preparationAllocationFixture(t)
 	group, _ := organizationCapacity(t, f.fixture)
 	assignDefault(t)(f.fixture, group)
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane)), group, 1); err == nil {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, groupOwnerOperator(t, f.pool, group), group, 1); err == nil {
 		t.Fatal("drained a group with queued preparation")
 	}
 }

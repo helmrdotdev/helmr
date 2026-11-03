@@ -219,7 +219,7 @@ func (s *Server) fenceWorkerHost(w http.ResponseWriter, r *http.Request) {
 		s.writeOrganizationWorkerError(w, r, err)
 		return
 	}
-	status, err := workergroup.MarkHostLost(r.Context(), s.tx, s.auditPolicy, s.workerGroupOperator(r, auth.PermissionWorkerGroupsManage), groupID, host.ResourceID, request.ExpectedClaimVersion)
+	status, err := workergroup.MarkHostLost(r.Context(), s.tx, s.auditPolicy, s.workerGroupOperator(r, auth.PermissionWorkerGroupsManage), groupID, host.ResourceID, hostID, request.ExpectedClaimVersion)
 	if err != nil {
 		s.writeOrganizationWorkerError(w, r, err)
 		return
@@ -228,7 +228,7 @@ func (s *Server) fenceWorkerHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPlacements(w http.ResponseWriter, r *http.Request) {
-	environmentID, ok := s.placementEnvironment(w, r)
+	_, environmentID, ok := s.placementEnvironment(w, r)
 	if !ok {
 		return
 	}
@@ -245,7 +245,7 @@ func (s *Server) listPlacements(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setPlacement(w http.ResponseWriter, r *http.Request) {
-	environmentID, ok := s.placementEnvironment(w, r)
+	scope, environmentID, ok := s.placementEnvironment(w, r)
 	if !ok {
 		return
 	}
@@ -263,7 +263,7 @@ func (s *Server) setPlacement(w http.ResponseWriter, r *http.Request) {
 		}
 		placement.WorkerGroupID = &groupID
 	}
-	if err := workergroup.SetPlacement(r.Context(), s.tx, s.placementEditor(r, environmentID), environmentID, placement); err != nil {
+	if err := workergroup.SetPlacement(r.Context(), s.tx, s.placementEditor(r, scope), environmentID, placement); err != nil {
 		s.writeOrganizationWorkerError(w, r, err)
 		return
 	}
@@ -271,27 +271,23 @@ func (s *Server) setPlacement(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removePlacement(w http.ResponseWriter, r *http.Request) {
-	environmentID, ok := s.placementEnvironment(w, r)
+	scope, environmentID, ok := s.placementEnvironment(w, r)
 	if !ok {
 		return
 	}
-	if _, err := workergroup.RemovePlacement(r.Context(), s.tx, s.placementEditor(r, environmentID), environmentID, chi.URLParam(r, "placement")); err != nil {
+	if _, err := workergroup.RemovePlacement(r.Context(), s.tx, s.placementEditor(r, scope), environmentID, chi.URLParam(r, "placement")); err != nil {
 		s.writeOrganizationWorkerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// placementEditor rechecks placements.update in the environment, and
+// placementEditor rechecks placements.update in the environment scope, and
 // worker_groups.use when the edit names an organization group, in the edit's
 // transaction.
-func (s *Server) placementEditor(r *http.Request, environmentID uuid.UUID) workergroup.PlacementEditor {
+func (s *Server) placementEditor(r *http.Request, scope auth.Scope) workergroup.PlacementEditor {
 	m := s.managingMember(principalFromContext(r.Context()))
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principalFromContext(r.Context()))
 	return workergroup.PlacementEditor{Policy: s.auditPolicy, Authorize: func(ctx context.Context, tx pgx.Tx, group bool) (audit.Evidence, error) {
-		if err != nil {
-			return audit.Evidence{}, err
-		}
 		required := []org.ScopedPermission{{Permission: auth.PermissionPlacementsUpdate, Scope: scope}}
 		if group {
 			required = append(required, org.ScopedPermission{Permission: auth.PermissionWorkerGroupsUse, Scope: auth.Scope{OrgID: m.OrgID}})
@@ -303,13 +299,13 @@ func (s *Server) placementEditor(r *http.Request, environmentID uuid.UUID) worke
 	}}
 }
 
-func (s *Server) placementEnvironment(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	_, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principalFromContext(r.Context()))
+func (s *Server) placementEnvironment(w http.ResponseWriter, r *http.Request) (auth.Scope, uuid.UUID, bool) {
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principalFromContext(r.Context()))
 	if err != nil {
 		s.writeOperationError(w, r, err)
-		return uuid.Nil(), false
+		return auth.Scope{}, uuid.Nil(), false
 	}
-	return pgvalue.MustUUIDValue(environmentID), true
+	return scope, pgvalue.MustUUIDValue(environmentID), true
 }
 
 // writeOrganizationWorkerError writes the errors of the organization worker
