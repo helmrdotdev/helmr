@@ -288,3 +288,56 @@ func TestWorkerIdentityRemovesALeftoverPendingKey(t *testing.T) {
 		t.Fatalf("leftover pending key kept: %v", err)
 	}
 }
+
+// A rejected machine key stops the worker: it keeps its identity and does not
+// enroll itself again, even with an enrollment token at hand.
+func TestWorkerStopsWhenItsKeyIsRejected(t *testing.T) {
+	requests := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.URL.Path]++
+		w.Header().Set("content-type", "application/json")
+		if r.URL.Path == "/worker/v1/instance/challenge" {
+			_, _ = w.Write([]byte(`{"challenge":"c","expires_in_seconds":60}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"worker authentication is required"}}`))
+	}))
+	defer server.Close()
+	token, err := auth.GenerateEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte(token.Raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workDir, jailerDir, err := resolveWorkerRecoveryRoots(filepath.Join(dir, "work"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := workerIdentityFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", MachineKey: testMachineKey(), CreatedAt: time.Now().UTC()}
+	path := workerIdentityPath(workDir, "")
+	if err := writeWorkerIdentity(path, stored); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "machine", WorkerPoolName: "run"}
+	_, err = resolveAuthenticatedWorkerIdentity(t.Context(), cfg, workDir, func(identity workerIdentityFile) error {
+		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
+			workerclient.WithAuth(identity.WorkerHostID, identity.key()), workerclient.WithService("service"))
+		if err != nil {
+			return err
+		}
+		return client.AuthenticateWorker(t.Context())
+	})
+	if !errors.Is(err, errWorkerKeyRejected) {
+		t.Fatalf("error = %v, want the rejected-key stop", err)
+	}
+	if requests["/worker/v1/enrollment"] != 0 {
+		t.Fatalf("requests = %v, want no enrollment", requests)
+	}
+	if kept, err := readWorkerIdentity(path); err != nil || !bytes.Equal(kept.MachineKey, stored.MachineKey) {
+		t.Fatalf("identity = %+v, %v; want it kept", kept, err)
+	}
+}

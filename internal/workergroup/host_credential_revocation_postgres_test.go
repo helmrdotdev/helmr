@@ -55,7 +55,7 @@ func TestRevokeGroupHostCredentialsFencesEveryLiveHost(t *testing.T) {
 		t.Fatalf("revoked registering host credential authorization error = %v", err)
 	}
 	for _, enrolled := range []EnrolledHost{active.enrolled, registering} {
-		if _, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, enrolled, uuid.NewV7().String()), time.Now); !errors.Is(err, ErrUnauthenticated) {
+		if _, err := IssueHostCredential(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, signedExchange(t, cfg, enrolled, uuid.NewV7().String()), time.Now); !errors.Is(err, ErrUnauthenticated) {
 			t.Fatalf("revoked host key exchange error = %v", err)
 		}
 	}

@@ -657,3 +657,94 @@ func (q *Queries) GetActiveWorkerHostKey(ctx context.Context, workerHostID pgtyp
 	err := row.Scan(&i.ID, &i.PublicKey)
 	return i, err
 }
+
+const returnLostWorkerHost = `-- name: ReturnLostWorkerHost :one
+WITH locked_group AS MATERIALIZED (
+    SELECT worker_groups.id, worker_groups.owner_org_id
+      FROM worker_host_keys
+      JOIN worker_hosts ON worker_hosts.id = worker_host_keys.worker_host_id
+                           AND worker_hosts.worker_group_id = worker_host_keys.worker_group_id
+      JOIN worker_groups ON worker_groups.id = worker_host_keys.worker_group_id
+     WHERE worker_host_keys.id = $1
+       AND worker_host_keys.worker_host_id = $2
+       AND worker_host_keys.revoked_at IS NULL
+       AND worker_hosts.status = 'lost'
+       AND worker_groups.status IN ('active','paused','draining')
+     FOR UPDATE OF worker_groups
+), locked_pool AS MATERIALIZED (
+    SELECT worker_pools.id
+      FROM worker_pools
+      JOIN locked_group ON locked_group.id = worker_pools.worker_group_id
+      JOIN worker_hosts ON worker_hosts.worker_pool_id = worker_pools.id
+     WHERE worker_hosts.id = $2
+       AND worker_pools.status IN ('pending','active','draining')
+     FOR UPDATE OF worker_pools
+), returned AS (
+    UPDATE worker_hosts
+       SET status = 'registering',
+           claim_version = worker_hosts.claim_version + 1,
+           current_service_id = $3,
+           lost_at = NULL,
+           updated_at = now()
+      FROM locked_pool
+     WHERE worker_hosts.id = $2
+       AND worker_hosts.worker_pool_id = locked_pool.id
+       AND worker_hosts.status = 'lost'
+       AND NOT EXISTS (
+           SELECT 1 FROM worker_hosts AS current_worker
+            WHERE current_worker.worker_group_id = worker_hosts.worker_group_id
+              AND current_worker.resource_id = worker_hosts.resource_id
+              AND current_worker.status IN ('registering', 'active', 'draining'))
+    RETURNING worker_hosts.id, worker_hosts.claim_version
+), rekeyed AS (
+    UPDATE worker_host_keys
+       SET claim_version = returned.claim_version
+      FROM returned
+     WHERE worker_host_keys.id = $1
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
+)
+SELECT returned.id, locked_group.id AS worker_group_id, locked_group.owner_org_id
+  FROM returned JOIN rekeyed ON true JOIN locked_group ON true
+`
+
+type ReturnLostWorkerHostParams struct {
+	HostKeyID        pgtype.UUID `json:"host_key_id"`
+	WorkerHostID     pgtype.UUID `json:"worker_host_id"`
+	RetiredServiceID pgtype.UUID `json:"retired_service_id"`
+}
+
+type ReturnLostWorkerHostRow struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	OwnerOrgID    pgtype.UUID `json:"owner_org_id"`
+}
+
+// A lost host whose machine proved its unrevoked key returns as registering.
+// A service identity no worker holds makes the following credential exchange
+// start a new epoch even for a worker process that was only asleep. Locks
+// follow the credential exchange: group, then pool, then host, then key.
+func (q *Queries) ReturnLostWorkerHost(ctx context.Context, arg ReturnLostWorkerHostParams) (ReturnLostWorkerHostRow, error) {
+	row := q.db.QueryRow(ctx, returnLostWorkerHost, arg.HostKeyID, arg.WorkerHostID, arg.RetiredServiceID)
+	var i ReturnLostWorkerHostRow
+	err := row.Scan(&i.ID, &i.WorkerGroupID, &i.OwnerOrgID)
+	return i, err
+}
+
+const revokeWorkerHostKeys = `-- name: RevokeWorkerHostKeys :execrows
+UPDATE worker_host_keys
+   SET revoked_at = now()
+ WHERE worker_host_id = $1
+   AND revoked_at IS NULL
+`
+
+// Revokes the host's machine key, so the machine can neither return nor
+// authenticate. The caller holds the group's status mutation lock and has
+// marked a live host lost.
+func (q *Queries) RevokeWorkerHostKeys(ctx context.Context, workerHostID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeWorkerHostKeys, workerHostID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

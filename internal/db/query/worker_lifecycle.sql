@@ -142,6 +142,8 @@ SELECT worker_groups.id, worker_groups.status, worker_groups.claim_version,
    AND NOT EXISTS (SELECT 1 FROM transitioned)
 LIMIT 1;
 
+-- Marking a host lost fences its claims and keeps its key, so the machine can
+-- return under a new epoch; revoking the key is a separate operation.
 -- name: MarkWorkerHostLost :one
 WITH target AS (
     UPDATE worker_hosts
@@ -155,18 +157,10 @@ WITH target AS (
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.current_epoch
-), revoked_host_secrets AS (
-    UPDATE worker_host_keys
-       SET revoked_at = COALESCE(revoked_at, now())
-      FROM target
-     WHERE worker_host_keys.worker_host_id = target.id
-       AND worker_host_keys.revoked_at IS NULL
-    RETURNING worker_host_keys.id
 ), completed AS (
     SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
-     WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
 )
 SELECT * FROM completed
 UNION ALL

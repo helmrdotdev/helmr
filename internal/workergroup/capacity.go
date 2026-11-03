@@ -238,8 +238,38 @@ func (a ConfirmedProviderAbsence) HostID() uuid.UUID   { return a.hostID }
 // The caller owns the transaction and must reconcile physical Computer ownership
 // before committing. Ordinary host expiry or credential revocation is not this proof.
 func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
+	return confirmHostAbsent(ctx, tx, policy, actor, uuid.Nil(), hostID, "worker_host.provider_absence_confirmed", false)
+}
+
+// DeclareHostPermanentlyLost records an organization member's attestation
+// that a host of the group the organization owns is gone for good, in place
+// of the provider confirmation an organization's machine has none of. It
+// fences the host, revokes its key and, once the caller reconciles physical
+// Computer ownership in the same transaction, releases its custody. The
+// attestation is the member's: nothing confirms the machine stopped.
+func DeclareHostPermanentlyLost(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, operator Operator, groupID, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
+	if operator.safety || operator.orgID == uuid.Nil() {
+		return ConfirmedProviderAbsence{}, errors.New("only an organization declares its host permanently lost")
+	}
+	actor, owner, err := operator.admit(ctx, tx, groupID)
+	if err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
+	var inGroup bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE id=$1 AND worker_group_id=$2)`, hostID, groupID).Scan(&inGroup); err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
+	if !inGroup {
+		return ConfirmedProviderAbsence{}, ErrHostNotFound
+	}
+	// Every attestation is the member's own record, even one repeating an
+	// earlier declaration.
+	return confirmHostAbsent(ctx, tx, policy, actor, owner, hostID, "worker_host.declared_permanently_lost", true)
+}
+
+func confirmHostAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, owner, hostID uuid.UUID, action string, recordAlways bool) (ConfirmedProviderAbsence, error) {
 	var group uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT h.worker_group_id FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id AND g.owner_org_id IS NULL WHERE h.id=$1`, hostID).Scan(&group); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT h.worker_group_id FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id AND g.owner_org_id IS NOT DISTINCT FROM $2 WHERE h.id=$1`, hostID, optionalOwner(owner)).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ConfirmedProviderAbsence{}, ErrHostNotFound
 		}
@@ -278,8 +308,8 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolic
 			return ConfirmedProviderAbsence{}, err
 		}
 	}
-	if changed {
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+	if changed || recordAlways {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: action, TargetKind: "worker_host", TargetID: hostID}); err != nil {
 			return ConfirmedProviderAbsence{}, err
 		}
 	}

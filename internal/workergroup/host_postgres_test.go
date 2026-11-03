@@ -85,7 +85,7 @@ func (f supplyFixture) enroll(t *testing.T, _ HostAuthConfig, poolName string, r
 
 func (f supplyFixture) exchange(t *testing.T, cfg HostAuthConfig, enrolled EnrolledHost, serviceID string) HostCredential {
 	t.Helper()
-	credential, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, enrolled, serviceID), time.Now)
+	credential, err := IssueHostCredential(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, signedExchange(t, cfg, enrolled, serviceID), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestIssueHostCredentialAdvancesEpochPerService(t *testing.T) {
 		"unknown host":      signedHostCredentialRequest(t, cfg, unknownHost, service, machineKey(t, enrolled.HostID), time.Now()),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := IssueHostCredential(t.Context(), f.pool, cfg, exchange, time.Now); !errors.Is(err, ErrUnauthenticated) {
+			if _, err := IssueHostCredential(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, exchange, time.Now); !errors.Is(err, ErrUnauthenticated) {
 				t.Fatalf("error = %v, want ErrUnauthenticated", err)
 			}
 		})
@@ -341,7 +341,7 @@ func TestFenceHostReplaysAfterFence(t *testing.T) {
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("fenced host authenticated for ordinary routes: %v", err)
 	}
-	if _, err := IssueHostCredential(t.Context(), f.pool, cfg, signedExchange(t, cfg, host.enrolled, host.serviceID), time.Now); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := IssueHostCredential(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, signedExchange(t, cfg, host.enrolled, host.serviceID), time.Now); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("fenced host exchanged its revoked host key: %v", err)
 	}
 }

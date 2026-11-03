@@ -153,17 +153,9 @@ WITH target AS (
                     - $5::bigint * interval '1 second')
        )
     RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.resource_observation_sequence, workers.resource_policy_revision, workers.resource_observed_at, workers.local_optional_cpu_millis, workers.local_optional_memory_bytes, workers.optional_disk_bytes, workers.local_optional_vm_slots, workers.local_optional_tasks, workers.optional_reclaim_pending, workers.disk_slots_for_real_work, workers.ready_leaf_keys, workers.observed_at, workers.admission_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.drain_reason, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
-), revoked_host_secrets AS (
-    UPDATE worker_host_keys AS host_secrets
-       SET revoked_at = COALESCE(host_secrets.revoked_at, now())
-      FROM target
-     WHERE host_secrets.worker_host_id = target.id
-       AND host_secrets.revoked_at IS NULL
-    RETURNING host_secrets.id
 )
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
- WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
 `
 
 type RecheckAndFenceStaleWorkerHostParams struct {
@@ -181,8 +173,10 @@ type RecheckAndFenceStaleWorkerHostRow struct {
 	Status        string      `json:"status"`
 }
 
-// Host loss revokes credentials without confirming physical absence.
-// Allocation owners reconcile logical state; only confirmed stop releases custody.
+// Host loss fences the host's claims without confirming physical absence. The
+// machine keeps its key: proving it later returns the host under a new epoch,
+// whose startup recovery confirms the stop. Allocation owners reconcile
+// logical state; only confirmed stop releases custody.
 func (q *Queries) RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error) {
 	row := q.db.QueryRow(ctx, recheckAndFenceStaleWorkerHost,
 		arg.ID,

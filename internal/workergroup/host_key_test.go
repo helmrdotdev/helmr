@@ -202,6 +202,10 @@ func (q machineKeyQuerier) GetActiveWorkerHostKey(_ context.Context, hostID pgty
 	return db.GetActiveWorkerHostKeyRow{ID: pgvalue.UUID(uuid.NewV7()), PublicKey: q.publicKey}, nil
 }
 
+func (machineKeyQuerier) ReturnLostWorkerHost(context.Context, db.ReturnLostWorkerHostParams) (db.ReturnLostWorkerHostRow, error) {
+	return db.ReturnLostWorkerHostRow{}, pgx.ErrNoRows
+}
+
 func (machineKeyQuerier) AuthenticateWorkerHostKey(context.Context, db.AuthenticateWorkerHostKeyParams) (db.AuthenticateWorkerHostKeyRow, error) {
 	return db.AuthenticateWorkerHostKeyRow{}, errReachedHostKeyAuthentication
 }
