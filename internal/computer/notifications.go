@@ -9,13 +9,14 @@ import (
 )
 
 func notifyComputerChanged(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	if err := notifyComputerReaders(ctx, tx, env, id); err != nil {
+	if err := NotifyReaders(ctx, tx, env, id); err != nil {
 		return err
 	}
 	return dbnotify.Notify(ctx, tx, "capacity")
 }
 
-func notifyComputerReaders(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+// NotifyReaders wakes dispatch and any unfenced Worker holding the Computer.
+func NotifyReaders(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT worker_host_id FROM computer_leases
  WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL`, env, id)
 	if err != nil {
@@ -49,5 +50,5 @@ func notifySaveChanged(ctx context.Context, tx pgx.Tx, env, save uuid.UUID) erro
 	if err := tx.QueryRow(ctx, `SELECT computer_id FROM computer_saves WHERE environment_id=$1 AND id=$2`, env, save).Scan(&computer); err != nil {
 		return err
 	}
-	return notifyComputerReaders(ctx, tx, env, computer)
+	return NotifyReaders(ctx, tx, env, computer)
 }

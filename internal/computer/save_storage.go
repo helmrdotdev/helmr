@@ -252,7 +252,7 @@ func (p *SavePublisher) Publish(ctx context.Context, ref SavePublication, root d
 		if err = scope.requireWriter(ctx, tx, ref.Host); err != nil {
 			return err
 		}
-		return notifyComputerReaders(ctx, tx, pgvalue.MustUUIDValue(scope.environmentID), pgvalue.MustUUIDValue(scope.computerID))
+		return NotifyReaders(ctx, tx, pgvalue.MustUUIDValue(scope.environmentID), pgvalue.MustUUIDValue(scope.computerID))
 	}))
 }
 
@@ -399,7 +399,7 @@ func RecordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 	if err != nil {
 		return err
 	}
-	return notifyComputerReaders(ctx, tx, c.EnvironmentID, computer)
+	return NotifyReaders(ctx, tx, c.EnvironmentID, computer)
 }
 
 // The caller holds the supply and Computer locks and has irrevocably ended this
@@ -412,5 +412,5 @@ func SettleLostSaves(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, ep
 	if err != nil {
 		return err
 	}
-	return notifyComputerReaders(ctx, tx, env, computer)
+	return NotifyReaders(ctx, tx, env, computer)
 }

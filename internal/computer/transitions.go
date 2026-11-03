@@ -350,7 +350,7 @@ func RequestSave(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch 
 	if err != nil {
 		return save, err
 	}
-	return save, notifyComputerReaders(ctx, tx, env, computer)
+	return save, NotifyReaders(ctx, tx, env, computer)
 }
 
 // MarkPreparationFailed records that a Computer's image never became ready

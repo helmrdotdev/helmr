@@ -136,6 +136,54 @@ func TestCommandCreateConcurrentRetryAndConflict(t *testing.T) {
 		t.Fatalf("scope: %v", err)
 	}
 }
+func TestCommandAdmissionNotifications(t *testing.T) {
+	f := commandFixture(t)
+	ctx := t.Context()
+	topics := dbtest.ListenChanges(t, f.Pool)
+
+	created := f.create(t, "resident")
+	if got := topics(); len(got) != 2 || !got["dispatch"] || !got["worker:"+f.Worker.String()] {
+		t.Fatalf("resident command notified %v", got)
+	}
+	if f.create(t, "resident").ID != created.ID {
+		t.Fatal("replay returned a different command")
+	}
+	if got := topics(); len(got) != 0 {
+		t.Fatalf("replayed command notified %v", got)
+	}
+
+	tx, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	_, err = Create(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), tx, f.request("abort"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := topics(); len(got) != 0 {
+		t.Fatalf("rolled-back command notified %v", got)
+	}
+
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='test physical VM stopped' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
+	_, err = Create(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, f.request("no-capacity"))
+	if !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+		t.Fatalf("unavailable execution capacity: %v", err)
+	}
+	if got := topics(); len(got) != 0 {
+		t.Fatalf("rejected command notified %v", got)
+	}
+	// Execution demand already waiting for placement can accept more input.
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()+interval '1 minute' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer)
+	f.create(t, "after-fence")
+	if got := topics(); len(got) != 1 || !got["dispatch"] {
+		t.Fatalf("command with fenced lease notified %v", got)
+	}
+}
+
 func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 	f := commandFixture(t)
 	c := f.create(t, "replay")
