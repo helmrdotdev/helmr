@@ -138,10 +138,13 @@ complete_launch() {
   # Completing warm-entry initialization must not enroll a logical Worker.
   case "$(target_lifecycle_state)" in
     Warmed:Stopped) complete_lifecycle_action "$launch_hook" CONTINUE; return ;;
-    InService) systemctl start --no-block '${worker_service_name}.service' || return 1 ;;
+    InService) ;;
     *) return 1 ;;
   esac
-  systemctl is-active --quiet '${worker_service_name}' || return 1
+  if ! systemctl is-active --quiet '${worker_service_name}'; then
+    systemctl start --no-block '${worker_service_name}.service' || return 1
+    systemctl is-active --quiet '${worker_service_name}' || return 1
+  fi
   "$worker_binary" status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
