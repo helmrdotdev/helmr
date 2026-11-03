@@ -169,8 +169,9 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 }
 
 // RotateGroupToken replaces a worker group's enrollment token and returns the
-// new raw token. The previous token stops enrolling hosts at once. Hosts that
-// already enrolled keep their machine keys and keep running; revoke them with
+// new raw token. The previous token and every unused single-use token stop
+// enrolling hosts at once. Hosts that already enrolled keep their machine keys
+// and keep running; revoke them with
 // RevokeGroupHostCredentials.
 func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID uuid.UUID) (string, error) {
 	if operator.safety {
@@ -194,6 +195,11 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditp
 		}
 		if err != nil {
 			return fmt.Errorf("rotate worker group token: %w", err)
+		}
+		// Rotation stops every outstanding way to enroll into the group,
+		// including single-use tokens not yet used.
+		if _, err := tx.Exec(ctx, `UPDATE worker_enrollment_tokens SET expires_at=clock_timestamp() WHERE worker_group_id=$1 AND consumed_at IS NULL AND expires_at > clock_timestamp()`, groupID); err != nil {
+			return fmt.Errorf("expire single-use enrollment tokens: %w", err)
 		}
 		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
 	})

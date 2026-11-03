@@ -1245,7 +1245,6 @@ column worker_groups.token_id uuid not null
 column worker_groups.updated_at timestamp with time zone not null default now()
 column worker_host_keys.claim_version bigint not null default 1
 column worker_host_keys.created_at timestamp with time zone not null default now()
-column worker_host_keys.expires_at timestamp with time zone
 column worker_host_keys.id uuid not null
 column worker_host_keys.last_used_at timestamp with time zone
 column worker_host_keys.public_key bytea not null

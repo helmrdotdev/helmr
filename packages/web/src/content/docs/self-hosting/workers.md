@@ -171,7 +171,8 @@ machine and expires after an hour.
 Two Admin API operations change worker group credentials, with different effects:
 
 - **Rotate token** (`POST /admin/api/v1/worker-groups/{id}/token/rotate`) replaces
-  the group's enrollment token. The old token stops enrolling hosts immediately.
+  the group's enrollment token. The old token, and every single-use token not
+  yet used, stop enrolling hosts immediately.
   Enrolled hosts keep their machine keys and keep running. Propagate the new token
   to the group's provisioning before hosts are replaced.
 - **Revoke host credentials** (`POST /admin/api/v1/worker-groups/{id}/host-credentials/revoke`)

@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 // machineEnrollment enrolls a machine's public key with enrollmentToken.
@@ -144,8 +145,24 @@ func TestSingleUseEnrollmentTokenAdmitsOneMachine(t *testing.T) {
 	second, _ := newMachineKey(t)
 	assertAdminError(t, f.machineEnrollment(t, issued.EnrollmentToken, "desktop", second), http.StatusUnauthorized, "unauthorized")
 
+	// A single-use token cannot re-register, and so re-key, a host already
+	// enrolled under that resource ID; the token stays unused.
+	takeover := decodeAdmin[api.IssueEnrollmentTokenResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", manager, ""), http.StatusCreated)
+	assertAdminError(t, f.machineEnrollment(t, takeover.EnrollmentToken, "laptop", second), http.StatusConflict, "worker_resource_enrolled")
+	var keys int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_host_keys WHERE worker_host_id=$1 AND revoked_at IS NULL AND public_key=$2`, enrolled.WorkerHostID, []byte(first)).Scan(&keys); err != nil || keys != 1 {
+		t.Fatalf("enrolled host key replaced: %d %v", keys, err)
+	}
+	var unused bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT consumed_at IS NULL FROM worker_enrollment_tokens WHERE token_hash=$1`, auth.HashCredential(takeover.EnrollmentToken)).Scan(&unused); err != nil || !unused {
+		t.Fatalf("refused enrollment consumed its token: %t %v", unused, err)
+	}
+	// Rotating the group's token also stops the unused single-use token.
+	decodeAdmin[api.RotateWorkerGroupTokenResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/token/rotate", manager, ""), http.StatusOK)
+	assertAdminError(t, f.machineEnrollment(t, takeover.EnrollmentToken, "desktop", second), http.StatusUnauthorized, "unauthorized")
+
 	expired := decodeAdmin[api.IssueEnrollmentTokenResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", manager, ""), http.StatusCreated)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_enrollment_tokens SET created_at=created_at-interval '2 hours', expires_at=clock_timestamp()-interval '1 second' WHERE consumed_at IS NULL`)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_enrollment_tokens SET created_at=created_at-interval '2 hours', expires_at=clock_timestamp()-interval '1 second' WHERE consumed_at IS NULL AND token_hash=$1`, auth.HashCredential(expired.EnrollmentToken))
 	assertAdminError(t, f.machineEnrollment(t, expired.EnrollmentToken, "desktop", second), http.StatusUnauthorized, "unauthorized")
 
 	var consumedBy uuid.UUID
@@ -153,11 +170,102 @@ func TestSingleUseEnrollmentTokenAdmitsOneMachine(t *testing.T) {
 		t.Fatalf("consumed by %s, %v; want %s", consumedBy, err, enrolled.WorkerHostID)
 	}
 	var audited int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_group.enrollment_token_issued' AND org_id=$1 AND target_id=$2`, organization, group.ID).Scan(&audited); err != nil || audited != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_group.enrollment_token_issued' AND org_id=$1 AND target_id=$2`, organization, group.ID).Scan(&audited); err != nil || audited != 3 {
 		t.Fatalf("issuance audit count = %d, %v", audited, err)
 	}
 	// Another organization cannot issue tokens for this group.
 	other, _ := f.organizationOwner(t, "single-use-other")
 	_, otherManager := f.workerMember(t, other, "worker_groups.manage")
 	assertAdminError(t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", otherManager, ""), http.StatusNotFound, "not_found")
+}
+
+// Repeating an enrollment whose response was lost returns the same host for
+// the same token, resource and key, and nothing else.
+func TestEnrollmentReplayReturnsTheSameHost(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	organization, _ := f.organizationOwner(t, "replay")
+	deploymentHTTPEnvironment(t, f, organization)
+	_, manager := f.workerMember(t, organization, "worker_groups.manage")
+	created := decodeAdmin[api.CreateWorkerGroupResponse](t, f.request(t, http.MethodPost, "/api/worker-groups", manager,
+		`{"region_id":"deployment-test","name":"lab"}`), http.StatusCreated)
+	enroll := func(token, resource string, key ed25519.PublicKey) workerapi.EnrollmentResponse {
+		t.Helper()
+		return decodeAdmin[workerapi.EnrollmentResponse](t, f.machineEnrollment(t, token, resource, key), http.StatusCreated)
+	}
+	issued := decodeAdmin[api.IssueEnrollmentTokenResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+created.WorkerGroup.ID+"/enrollment-tokens", manager, ""), http.StatusCreated)
+	key, _ := newMachineKey(t)
+	first := enroll(issued.EnrollmentToken, "laptop", key)
+	if replay := enroll(issued.EnrollmentToken, "laptop", key); replay != first {
+		t.Fatalf("single-use replay = %+v, want %+v", replay, first)
+	}
+	other, _ := newMachineKey(t)
+	assertAdminError(t, f.machineEnrollment(t, issued.EnrollmentToken, "laptop", other), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.machineEnrollment(t, issued.EnrollmentToken, "desktop", key), http.StatusUnauthorized, "unauthorized")
+
+	fleet, _ := newMachineKey(t)
+	host := enroll(created.EnrollmentToken, "instance", fleet)
+	if replay := enroll(created.EnrollmentToken, "instance", fleet); replay != host {
+		t.Fatalf("group token replay = %+v, want %+v", replay, host)
+	}
+	var hosts, keys int
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM worker_hosts WHERE worker_group_id=$1), (SELECT count(*) FROM worker_host_keys WHERE worker_group_id=$1)`, created.WorkerGroup.ID).Scan(&hosts, &keys); err != nil || hosts != 2 || keys != 2 {
+		t.Fatalf("hosts = %d, keys = %d, %v; want one of each per machine", hosts, keys, err)
+	}
+}
+
+// A single-use token that expires while its enrollment waits for the group
+// lock is not consumed.
+func TestSingleUseEnrollmentTokenExpiresDuringLockWait(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	organization, _ := f.organizationOwner(t, "expiry-wait")
+	deploymentHTTPEnvironment(t, f, organization)
+	_, manager := f.workerMember(t, organization, "worker_groups.manage")
+	group := decodeAdmin[api.CreateWorkerGroupResponse](t, f.request(t, http.MethodPost, "/api/worker-groups", manager,
+		`{"region_id":"deployment-test","name":"lab"}`), http.StatusCreated).WorkerGroup
+	issued := decodeAdmin[api.IssueEnrollmentTokenResponse](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", manager, ""), http.StatusCreated)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_enrollment_tokens SET expires_at=clock_timestamp()+interval '1 second'`)
+	hold, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold.Rollback(t.Context())
+	if _, err := hold.Exec(t.Context(), `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, group.ID); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := newMachineKey(t)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- f.machineEnrollment(t, issued.EnrollmentToken, "laptop", key) }()
+	time.Sleep(1500 * time.Millisecond)
+	if err := hold.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	assertAdminError(t, <-done, http.StatusUnauthorized, "unauthorized")
+	var consumed bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT consumed_at IS NOT NULL OR EXISTS(SELECT 1 FROM worker_hosts WHERE worker_group_id=$1) FROM worker_enrollment_tokens`, group.ID).Scan(&consumed); err != nil || consumed {
+		t.Fatalf("expired token consumed or host created: %t %v", consumed, err)
+	}
+}
+
+// Issuing a single-use token needs recent sign-in proof and a group that can
+// still admit hosts.
+func TestSingleUseEnrollmentTokenIssuanceGuards(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	organization, _ := f.organizationOwner(t, "issuance-guards")
+	deploymentHTTPEnvironment(t, f, organization)
+	user, manager := f.workerMember(t, organization, "worker_groups.manage")
+	group := decodeAdmin[api.CreateWorkerGroupResponse](t, f.request(t, http.MethodPost, "/api/worker-groups", manager,
+		`{"region_id":"deployment-test","name":"lab"}`), http.StatusCreated).WorkerGroup
+	drained := decodeAdmin[workergroup.GroupStatus](t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/drain", manager, lifecycleBody(group.ClaimVersion)), http.StatusOK)
+	if drained.Status != "draining" {
+		t.Fatalf("drained = %+v", drained)
+	}
+	assertAdminError(t, f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", manager, ""), http.StatusConflict, "conflict")
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=authenticated_at-interval '1 day' WHERE user_id=$1`, user)
+	if response := f.request(t, http.MethodPost, "/api/worker-groups/"+group.ID+"/enrollment-tokens", manager, ""); response.Code != http.StatusForbidden {
+		t.Fatalf("stale session issued a token: %d %s", response.Code, response.Body.String())
+	}
+	var tokens int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_enrollment_tokens`).Scan(&tokens); err != nil || tokens != 0 {
+		t.Fatalf("tokens = %d, %v", tokens, err)
+	}
 }

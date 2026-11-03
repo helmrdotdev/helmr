@@ -12,7 +12,6 @@ CREATE TABLE worker_host_keys (
     -- revoked key can neither authenticate nor enroll.
     public_key bytea NOT NULL UNIQUE CHECK (octet_length(public_key) = 32),
     claim_version bigint NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     last_used_at timestamptz,
     revoked_at timestamptz,

@@ -44,7 +44,10 @@ type EnrolledHost struct {
 // EnrollHost creates a registering worker host with its machine key in the
 // named pool of the worker group that the enrollment token admits, creating
 // the pool when it does not exist. A single-use token is consumed by this
-// host. Authority is locked before checking existing allocations so a lock
+// host and must name a resource ID no enrolled host holds. Repeating an
+// enrollment with the same token, resource and key returns the same host.
+// Authority is locked
+// before checking existing allocations so a lock
 // wait cannot hide a newly committed writer. This uses the database's READ
 // COMMITTED isolation; allocation transactions must retain at least a shared
 // group lock through their commit.
@@ -64,16 +67,35 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 	var hostKey db.EnrollWorkerHostRow
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var group, token uuid.UUID
+		var consumedBy *uuid.UUID
 		var lookup pgx.Row
 		if enrollment.Token.SingleUse {
-			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id FROM worker_enrollment_tokens t JOIN worker_groups g ON g.id=t.worker_group_id
- WHERE t.token_hash=$1 AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp() AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, t.worker_host_id FROM worker_enrollment_tokens t JOIN worker_groups g ON g.id=t.worker_group_id
+ WHERE t.token_hash=$1 AND t.expires_at > clock_timestamp() AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
 		} else {
-			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
+			lookup = tx.QueryRow(ctx, `SELECT g.id, t.id, NULL::uuid FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
  WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.Token.Hash)
 		}
-		if err := lookup.Scan(&group, &token); err != nil {
+		if err := lookup.Scan(&group, &token, &consumedBy); err != nil {
 			return err
+		}
+		// Repeating an enrollment whose response was lost returns the same
+		// host: the machine still holds the token and the key it enrolled.
+		// A single-use token replays only for the host that consumed it.
+		var replayHost, replayPool, replayKey uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT h.id, h.worker_pool_id, k.id FROM worker_hosts h
+ JOIN worker_host_keys k ON k.worker_host_id=h.id AND k.revoked_at IS NULL
+ WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND h.status IN ('registering','active','draining') AND k.public_key=$3`,
+			group, enrollment.ResourceID, enrollment.PublicKey).Scan(&replayHost, &replayPool, &replayKey)
+		switch {
+		case err == nil && (!enrollment.Token.SingleUse || consumedBy != nil && *consumedBy == replayHost):
+			hostKey = db.EnrollWorkerHostRow{ID: pgvalue.UUID(replayKey), WorkerHostID: pgvalue.UUID(replayHost), WorkerGroupID: pgvalue.UUID(group), WorkerPoolID: pgvalue.UUID(replayPool)}
+			return nil
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("read enrollment replay: %w", err)
+		}
+		if consumedBy != nil {
+			return ErrInvalidEnrollmentToken
 		}
 		// Use a fresh statement snapshot after the group lock. An allocation
 		// committed while enrollment waited must remain visible across every
@@ -86,7 +108,18 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		if custody {
 			return ErrHostCustody
 		}
-		var err error
+		// A single-use token admits one new machine. Re-registering a host
+		// that is already enrolled, which replaces its key, takes the group's
+		// token.
+		if enrollment.Token.SingleUse {
+			var enrolled bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE worker_group_id=$1 AND resource_id=$2 AND status IN ('registering','active','draining'))`, group, enrollment.ResourceID).Scan(&enrolled); err != nil {
+				return err
+			}
+			if enrolled {
+				return ErrHostResourceEnrolled
+			}
+		}
 		proposedPool := uuid.NewV7()
 		hostKey, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
 			WorkerGroupID:    pgvalue.UUID(group),
@@ -106,14 +139,20 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 			return err
 		}
 		if enrollment.Token.SingleUse {
-			_, err = tx.Exec(ctx, `UPDATE worker_enrollment_tokens SET consumed_at=clock_timestamp(),worker_host_id=$2 WHERE id=$1`, token, hostKey.WorkerHostID)
-		} else {
-			_, err = tx.Exec(ctx, `UPDATE worker_group_tokens SET last_used_at=now() WHERE id=$1`, token)
-		}
-		if err != nil {
+			// Expiry is rechecked at consumption: the lookup's predicate is not
+			// re-evaluated after a lock wait.
+			consumed, err := tx.Exec(ctx, `UPDATE worker_enrollment_tokens SET consumed_at=clock_timestamp(),worker_host_id=$2
+ WHERE id=$1 AND consumed_at IS NULL AND expires_at > clock_timestamp()`, token, hostKey.WorkerHostID)
+			if err != nil {
+				return fmt.Errorf("consume enrollment token: %w", err)
+			}
+			if consumed.RowsAffected() != 1 {
+				return ErrInvalidEnrollmentToken
+			}
+		} else if _, err := tx.Exec(ctx, `UPDATE worker_group_tokens SET last_used_at=now() WHERE id=$1`, token); err != nil {
 			return fmt.Errorf("record enrollment token use: %w", err)
 		}
-		if err = dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
+		if err := dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {
 			return err
 		}
 		if pgvalue.MustUUIDValue(hostKey.WorkerPoolID) == proposedPool {
@@ -124,7 +163,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
 	}
-	if errors.Is(err, ErrHostCustody) || errors.Is(err, ErrHostKeyRegistered) {
+	if errors.Is(err, ErrHostCustody) || errors.Is(err, ErrHostKeyRegistered) || errors.Is(err, ErrHostResourceEnrolled) || errors.Is(err, ErrInvalidEnrollmentToken) {
 		return EnrolledHost{}, err
 	}
 	if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -176,5 +178,51 @@ func TestWorkerIdentityBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
 				t.Fatal("binding rejection modified stored credential")
 			}
 		})
+	}
+}
+
+// A lost enrollment response leaves the machine key on disk, so the next
+// attempt enrolls the same key and the Control Plane returns the same host.
+func TestWorkerEnrollmentRetriesWithTheStoredKey(t *testing.T) {
+	var keys [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request workerapi.EnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		keys = append(keys, request.PublicKey)
+		w.Header().Set("content-type", "application/json")
+		if len(keys) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"error":{"code":"unavailable","message":"lost"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"worker_host_id":"host","worker_group_id":%q,"worker_pool_id":%q}`, uuid.NewV7(), uuid.NewV7())
+	}))
+	defer server.Close()
+	token, err := auth.GenerateSingleUseEnrollmentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte(token.Raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workDir := filepath.Join(dir, "work")
+	cfg := config.Worker{ControlPlaneURL: server.URL, WorkerEnrollmentTokenFile: tokenFile, WorkerResourceID: "laptop", WorkerPoolName: "run"}
+	if _, err := resolveWorkerIdentity(t.Context(), cfg, workDir); err == nil {
+		t.Fatal("enrollment succeeded on a lost response")
+	}
+	identity, err := resolveWorkerIdentity(t.Context(), cfg, workDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || !bytes.Equal(keys[0], keys[1]) || !bytes.Equal(keys[1], identity.key().Public().(ed25519.PublicKey)) {
+		t.Fatalf("enrolled keys = %x, stored key = %x", keys, identity.key().Public())
+	}
+	if _, err := os.Stat(pendingMachineKeyPath(workerIdentityPath(identity.WorkDir, ""))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending key left behind: %v", err)
 	}
 }

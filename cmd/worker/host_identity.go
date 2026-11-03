@@ -75,13 +75,15 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}
 		// Each enrollment gets a new machine key: a key registered once is
-		// never accepted again.
-		public, private, err := ed25519.GenerateKey(rand.Reader)
+		// never accepted again. The key is stored before enrolling, so a
+		// lost response or a crash repeats the same enrollment, which the
+		// Control Plane answers with the same host.
+		private, err := pendingMachineKey(path)
 		if err != nil {
-			return fmt.Errorf("generate worker machine key: %w", err)
+			return err
 		}
 		registered, err := controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
-			ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName, PublicKey: public,
+			ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName, PublicKey: private.Public().(ed25519.PublicKey),
 		})
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
@@ -104,7 +106,10 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 		if err := writeWorkerIdentity(path, identity); err != nil {
 			return err
 		}
-		return nil
+		if err := os.Remove(pendingMachineKeyPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove pending worker machine key: %w", err)
+		}
+		return syncDirectory(filepath.Dir(path))
 	}); err != nil {
 		return workerIdentityFile{}, err
 	}
@@ -217,7 +222,44 @@ func readWorkerEnrollmentToken(path string) (string, error) {
 	return secret, nil
 }
 
+func pendingMachineKeyPath(identityPath string) string {
+	return identityPath + ".pending"
+}
+
+// pendingMachineKey returns the machine key an unfinished enrollment used, or
+// generates and stores a new one. The caller holds the identity lock.
+func pendingMachineKey(identityPath string) (ed25519.PrivateKey, error) {
+	path := pendingMachineKeyPath(identityPath)
+	pending, err := readWorkerIdentityFile(path)
+	if err == nil && len(pending.MachineKey) == ed25519.SeedSize {
+		return pending.key(), nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate worker machine key: %w", err)
+	}
+	if err := writeWorkerIdentity(path, workerIdentityFile{MachineKey: private.Seed(), CreatedAt: time.Now().UTC()}); err != nil {
+		return nil, err
+	}
+	return private, nil
+}
+
 func readWorkerIdentity(path string) (workerIdentityFile, error) {
+	identity, err := readWorkerIdentityFile(path)
+	if err != nil {
+		return workerIdentityFile{}, err
+	}
+	identity.WorkerHostID = strings.TrimSpace(identity.WorkerHostID)
+	if identity.WorkerHostID == "" || len(identity.MachineKey) != ed25519.SeedSize {
+		return workerIdentityFile{}, fmt.Errorf("worker identity %s is incomplete", path)
+	}
+	return identity, nil
+}
+
+func readWorkerIdentityFile(path string) (workerIdentityFile, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return workerIdentityFile{}, err
@@ -248,10 +290,6 @@ func readWorkerIdentity(path string) (workerIdentityFile, error) {
 	var identity workerIdentityFile
 	if err := json.Unmarshal(bytes, &identity); err != nil {
 		return workerIdentityFile{}, fmt.Errorf("read worker identity %s: %w", path, err)
-	}
-	identity.WorkerHostID = strings.TrimSpace(identity.WorkerHostID)
-	if identity.WorkerHostID == "" || len(identity.MachineKey) != ed25519.SeedSize {
-		return workerIdentityFile{}, fmt.Errorf("worker identity %s is incomplete", path)
 	}
 	return identity, nil
 }

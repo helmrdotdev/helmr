@@ -51,6 +51,16 @@ func NewHostAuthConfig(challengeKey []byte, signingKey []byte, ttl time.Duration
 	}, nil
 }
 
+// unheldPublicKey is a valid Ed25519 public key whose private key was
+// discarded at startup.
+var unheldPublicKey = func() []byte {
+	public, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	return public
+}()
+
 // HostChallengeTTL bounds how long a host may take to sign a challenge.
 const HostChallengeTTL = time.Minute
 
@@ -182,13 +192,16 @@ func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, 
 		return HostCredential{}, ErrUnauthenticated
 	}
 	key, err := q.GetActiveWorkerHostKey(ctx, pgvalue.UUID(hostID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return HostCredential{}, ErrUnauthenticated
-	}
-	if err != nil {
+	missing := errors.Is(err, pgx.ErrNoRows)
+	if err != nil && !missing {
 		return HostCredential{}, fmt.Errorf("read worker host %s key: %w", hostID, err)
 	}
-	if !ed25519.Verify(ed25519.PublicKey(key.PublicKey), auth.HostChallengeMessage(exchange.Challenge), exchange.Signature) {
+	if missing {
+		// Verify against a key nobody holds, so a host without a key costs
+		// the same as a wrong signature.
+		key.PublicKey = unheldPublicKey
+	}
+	if !ed25519.Verify(ed25519.PublicKey(key.PublicKey), auth.HostChallengeMessage(exchange.Challenge), exchange.Signature) || missing {
 		return HostCredential{}, ErrUnauthenticated
 	}
 	hostKey, err := q.AuthenticateWorkerHostKey(ctx, db.AuthenticateWorkerHostKeyParams{

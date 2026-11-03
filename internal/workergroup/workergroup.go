@@ -27,8 +27,11 @@ var (
 	// ErrHostCustody prevents registration from hiding an unfenced physical owner.
 	// ErrHostKeyRegistered refuses a machine key that was registered before,
 	// including one that was revoked. The machine enrolls with a new key.
-	ErrHostKeyRegistered = errors.New("worker machine key is already registered; enroll with a new key")
-	ErrHostCustody       = errors.New("worker resource has retained VM allocations; confirm physical cleanup before enrollment")
+	// ErrHostResourceEnrolled refuses a single-use enrollment for a resource ID
+	// that an enrolled host already holds in the group.
+	ErrHostResourceEnrolled = errors.New("a worker host with this resource ID is already enrolled in the group")
+	ErrHostKeyRegistered    = errors.New("worker machine key is already registered; enroll with a new key")
+	ErrHostCustody          = errors.New("worker resource has retained VM allocations; confirm physical cleanup before enrollment")
 	// ErrObservationConflict rejects a worker host observation that does not
 	// match the host's current epoch.
 	ErrObservationConflict = errors.New("worker observation conflicts with this worker epoch")

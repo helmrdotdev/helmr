@@ -12,7 +12,6 @@ WITH locked_group AS MATERIALIZED (
      WHERE worker_host_keys.worker_host_id = sqlc.arg(worker_host_id)
        AND worker_host_keys.id = sqlc.arg(host_key_id)
        AND worker_host_keys.revoked_at IS NULL
-       AND (worker_host_keys.expires_at IS NULL OR worker_host_keys.expires_at > now())
        AND worker_host_keys.claim_version = worker_hosts.claim_version
        AND worker_hosts.status IN ('registering','active','draining')
        AND worker_groups.status IN ('active','paused','draining')
@@ -44,7 +43,6 @@ WITH locked_group AS MATERIALIZED (
       JOIN locked_group ON locked_group.id = worker_host_keys.worker_group_id
      WHERE worker_host_keys.id = sqlc.arg(host_key_id)
        AND worker_host_keys.revoked_at IS NULL
-       AND (worker_host_keys.expires_at IS NULL OR worker_host_keys.expires_at > now())
        AND worker_host_keys.claim_version = locked_host.claim_version
      FOR UPDATE OF worker_host_keys
 ), advanced AS (
@@ -292,11 +290,10 @@ WITH pool AS (
 ), host_key AS (
     INSERT INTO worker_host_keys (
 	    id, worker_group_id, worker_host_id, public_key,
-	    claim_version, expires_at
+	    claim_version
 	)
     SELECT sqlc.arg(host_key_id), worker.worker_group_id, worker.id,
-	       sqlc.arg(public_key), worker.claim_version,
-	       sqlc.narg(host_key_expires_at)
+	       sqlc.arg(public_key), worker.claim_version
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING *
 )
@@ -309,5 +306,4 @@ SELECT host_key.*, pool.id AS worker_pool_id
 SELECT id, public_key
   FROM worker_host_keys
  WHERE worker_host_id = sqlc.arg(worker_host_id)
-   AND revoked_at IS NULL
-   AND (expires_at IS NULL OR expires_at > now());
+   AND revoked_at IS NULL;

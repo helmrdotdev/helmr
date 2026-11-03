@@ -23,7 +23,6 @@ WITH locked_group AS MATERIALIZED (
      WHERE worker_host_keys.worker_host_id = $1
        AND worker_host_keys.id = $2
        AND worker_host_keys.revoked_at IS NULL
-       AND (worker_host_keys.expires_at IS NULL OR worker_host_keys.expires_at > now())
        AND worker_host_keys.claim_version = worker_hosts.claim_version
        AND worker_hosts.status IN ('registering','active','draining')
        AND worker_groups.status IN ('active','paused','draining')
@@ -47,7 +46,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_hosts.status IN ('registering','active','draining')
      FOR UPDATE OF worker_hosts
 ), host_key AS (
-    SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key,
+    SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at,
            locked_group.claim_version AS group_claim_version
       FROM worker_host_keys
       JOIN locked_host ON locked_host.id = worker_host_keys.worker_host_id
@@ -55,7 +54,6 @@ WITH locked_group AS MATERIALIZED (
       JOIN locked_group ON locked_group.id = worker_host_keys.worker_group_id
      WHERE worker_host_keys.id = $2
        AND worker_host_keys.revoked_at IS NULL
-       AND (worker_host_keys.expires_at IS NULL OR worker_host_keys.expires_at > now())
        AND worker_host_keys.claim_version = locked_host.claim_version
      FOR UPDATE OF worker_host_keys
 ), advanced AS (
@@ -201,7 +199,7 @@ UPDATE worker_host_keys
    AND worker_hosts.status IN ('registering', 'active', 'draining')
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('pending','active','draining')
-RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key, worker_hosts.resource_id,
+RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at,
           worker_groups.owner_org_id AS worker_group_owner_org_id
@@ -218,12 +216,11 @@ type AuthorizeActivatingWorkerHostKeyRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID          pgtype.UUID        `json:"worker_host_id"`
+	PublicKey             []byte             `json:"public_key"`
 	ClaimVersion          int64              `json:"claim_version"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey             []byte             `json:"public_key"`
 	ResourceID            string             `json:"resource_id"`
 	CurrentEpoch          pgtype.Int8        `json:"current_epoch"`
 	WorkerStatus          string             `json:"worker_status"`
@@ -243,12 +240,11 @@ func (q *Queries) AuthorizeActivatingWorkerHostKey(ctx context.Context, arg Auth
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerStatus,
@@ -282,7 +278,7 @@ UPDATE worker_host_keys
    )
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('pending','active','draining')
-RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key, worker_hosts.resource_id,
+RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at,
           worker_groups.owner_org_id AS worker_group_owner_org_id
@@ -299,12 +295,11 @@ type AuthorizeRecoveringWorkerHostKeyRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID          pgtype.UUID        `json:"worker_host_id"`
+	PublicKey             []byte             `json:"public_key"`
 	ClaimVersion          int64              `json:"claim_version"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey             []byte             `json:"public_key"`
 	ResourceID            string             `json:"resource_id"`
 	CurrentEpoch          pgtype.Int8        `json:"current_epoch"`
 	WorkerStatus          string             `json:"worker_status"`
@@ -324,12 +319,11 @@ func (q *Queries) AuthorizeRecoveringWorkerHostKey(ctx context.Context, arg Auth
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerStatus,
@@ -340,7 +334,7 @@ func (q *Queries) AuthorizeRecoveringWorkerHostKey(ctx context.Context, arg Auth
 }
 
 const authorizeWorkerDrainReplay = `-- name: AuthorizeWorkerDrainReplay :one
-SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key, worker_hosts.resource_id,
+SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
        worker_hosts.epoch_started_at,
        worker_groups.owner_org_id AS worker_group_owner_org_id
@@ -367,12 +361,11 @@ type AuthorizeWorkerDrainReplayRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID          pgtype.UUID        `json:"worker_host_id"`
+	PublicKey             []byte             `json:"public_key"`
 	ClaimVersion          int64              `json:"claim_version"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey             []byte             `json:"public_key"`
 	ResourceID            string             `json:"resource_id"`
 	CurrentEpoch          pgtype.Int8        `json:"current_epoch"`
 	WorkerStatus          string             `json:"worker_status"`
@@ -387,12 +380,11 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerStatus,
@@ -403,7 +395,7 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 }
 
 const authorizeWorkerFenceReplay = `-- name: AuthorizeWorkerFenceReplay :one
-SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key, worker_hosts.resource_id,
+SELECT worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
        worker_hosts.epoch_started_at,
        worker_groups.owner_org_id AS worker_group_owner_org_id
@@ -430,12 +422,11 @@ type AuthorizeWorkerFenceReplayRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID          pgtype.UUID        `json:"worker_host_id"`
+	PublicKey             []byte             `json:"public_key"`
 	ClaimVersion          int64              `json:"claim_version"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey             []byte             `json:"public_key"`
 	ResourceID            string             `json:"resource_id"`
 	CurrentEpoch          pgtype.Int8        `json:"current_epoch"`
 	WorkerStatus          string             `json:"worker_status"`
@@ -450,12 +441,11 @@ func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeW
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerStatus,
@@ -483,7 +473,7 @@ UPDATE worker_host_keys
 	AND worker_hosts.status IN ('active','draining')
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('active','draining')
-RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.claim_version, worker_host_keys.expires_at, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_host_keys.public_key, worker_hosts.resource_id,
+RETURNING worker_host_keys.id, worker_host_keys.worker_group_id, worker_host_keys.worker_host_id, worker_host_keys.public_key, worker_host_keys.claim_version, worker_host_keys.created_at, worker_host_keys.last_used_at, worker_host_keys.revoked_at, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at,
           worker_groups.owner_org_id AS worker_group_owner_org_id
@@ -500,12 +490,11 @@ type AuthorizeWorkerHostKeyRow struct {
 	ID                    pgtype.UUID        `json:"id"`
 	WorkerGroupID         pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID          pgtype.UUID        `json:"worker_host_id"`
+	PublicKey             []byte             `json:"public_key"`
 	ClaimVersion          int64              `json:"claim_version"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt            pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey             []byte             `json:"public_key"`
 	ResourceID            string             `json:"resource_id"`
 	CurrentEpoch          pgtype.Int8        `json:"current_epoch"`
 	WorkerStatus          string             `json:"worker_status"`
@@ -525,12 +514,11 @@ func (q *Queries) AuthorizeWorkerHostKey(ctx context.Context, arg AuthorizeWorke
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerStatus,
@@ -587,40 +575,37 @@ WITH pool AS (
 ), host_key AS (
     INSERT INTO worker_host_keys (
 	    id, worker_group_id, worker_host_id, public_key,
-	    claim_version, expires_at
+	    claim_version
 	)
     SELECT $7, worker.worker_group_id, worker.id,
-	       $8, worker.claim_version,
-	       $9
+	       $8, worker.claim_version
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
-    RETURNING id, worker_group_id, worker_host_id, claim_version, expires_at, created_at, last_used_at, revoked_at, public_key
+    RETURNING id, worker_group_id, worker_host_id, public_key, claim_version, created_at, last_used_at, revoked_at
 )
-SELECT host_key.id, host_key.worker_group_id, host_key.worker_host_id, host_key.claim_version, host_key.expires_at, host_key.created_at, host_key.last_used_at, host_key.revoked_at, host_key.public_key, pool.id AS worker_pool_id
+SELECT host_key.id, host_key.worker_group_id, host_key.worker_host_id, host_key.public_key, host_key.claim_version, host_key.created_at, host_key.last_used_at, host_key.revoked_at, pool.id AS worker_pool_id
   FROM host_key JOIN pool ON pool.worker_group_id = host_key.worker_group_id
 `
 
 type EnrollWorkerHostParams struct {
-	WorkerPoolID     pgtype.UUID        `json:"worker_pool_id"`
-	WorkerGroupID    pgtype.UUID        `json:"worker_group_id"`
-	PoolName         string             `json:"pool_name"`
-	WorkerHostID     pgtype.UUID        `json:"worker_host_id"`
-	ResourceID       string             `json:"resource_id"`
-	CurrentServiceID pgtype.UUID        `json:"current_service_id"`
-	HostKeyID        pgtype.UUID        `json:"host_key_id"`
-	PublicKey        []byte             `json:"public_key"`
-	HostKeyExpiresAt pgtype.Timestamptz `json:"host_key_expires_at"`
+	WorkerPoolID     pgtype.UUID `json:"worker_pool_id"`
+	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
+	PoolName         string      `json:"pool_name"`
+	WorkerHostID     pgtype.UUID `json:"worker_host_id"`
+	ResourceID       string      `json:"resource_id"`
+	CurrentServiceID pgtype.UUID `json:"current_service_id"`
+	HostKeyID        pgtype.UUID `json:"host_key_id"`
+	PublicKey        []byte      `json:"public_key"`
 }
 
 type EnrollWorkerHostRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID  pgtype.UUID        `json:"worker_host_id"`
+	PublicKey     []byte             `json:"public_key"`
 	ClaimVersion  int64              `json:"claim_version"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
-	PublicKey     []byte             `json:"public_key"`
 	WorkerPoolID  pgtype.UUID        `json:"worker_pool_id"`
 }
 
@@ -636,19 +621,17 @@ func (q *Queries) EnrollWorkerHost(ctx context.Context, arg EnrollWorkerHostPara
 		arg.CurrentServiceID,
 		arg.HostKeyID,
 		arg.PublicKey,
-		arg.HostKeyExpiresAt,
 	)
 	var i EnrollWorkerHostRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerHostID,
+		&i.PublicKey,
 		&i.ClaimVersion,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-		&i.PublicKey,
 		&i.WorkerPoolID,
 	)
 	return i, err
@@ -659,7 +642,6 @@ SELECT id, public_key
   FROM worker_host_keys
  WHERE worker_host_id = $1
    AND revoked_at IS NULL
-   AND (expires_at IS NULL OR expires_at > now())
 `
 
 type GetActiveWorkerHostKeyRow struct {
