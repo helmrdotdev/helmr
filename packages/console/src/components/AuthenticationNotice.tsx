@@ -29,7 +29,7 @@ export function AuthenticationNotice() {
 }
 
 // ordinary marks an account request that only an ordinary sign-in satisfies,
-// so company SSO is not offered for it.
+// so single sign-on is not offered for it.
 function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined; ordinary?: boolean }) {
   const queries = useQueryClient();
   const knownAccount = queries.getQueryData<Me>(["me"]);
@@ -83,7 +83,7 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
   const methods = () => (config()?.methods ?? []).filter(method => method !== "sso");
   const hasButtons = () => methods().includes("passkey") || methods().includes("github") || !!organization();
   const sso = () => void run(async () => {
-    window.location.assign((await startSSO({ organization: organization()!.org_slug!, next: window.location.pathname + window.location.search, reauthenticate: true })).redirect_url);
+    window.location.assign((await startSSO({ organization_slug: organization()!.org_slug!, next: window.location.pathname + window.location.search, reauthenticate: true })).redirect_url);
   });
   return (
     <ConfirmationDialog
@@ -100,7 +100,7 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
           <div class={ui.buttonGroup}>
             <Show when={methods().includes("passkey")}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await confirmed(); })}>Confirm with a passkey</button></Show>
             <Show when={methods().includes("github")}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={github}>Confirm with GitHub</button></Show>
-            <Show when={organization()}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={sso}>Confirm with company SSO</button></Show>
+            <Show when={organization()}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={sso}>Confirm with single sign-on</button></Show>
           </div>
         </Show>
         <Show when={methods().includes("email")}>

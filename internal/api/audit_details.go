@@ -229,15 +229,15 @@ type AuditMessageRejectedDetails struct {
 
 func (AuditMessageRejectedDetails) auditDetails() {}
 
-// AuditSSOBindingDetails names the company SSO identity a membership was
+// AuditSSOLinkDetails names the company SSO identity a membership was
 // linked to or unlinked from.
-type AuditSSOBindingDetails struct {
+type AuditSSOLinkDetails struct {
 	ConnectionID string `json:"connection_id"`
 	IdentityID   string `json:"identity_id"`
 	Subject      string `json:"subject"`
 }
 
-func (AuditSSOBindingDetails) auditDetails() {}
+func (AuditSSOLinkDetails) auditDetails() {}
 
 // AuditSSOConnectionDetails names a connection's protocol.
 type AuditSSOConnectionDetails struct {

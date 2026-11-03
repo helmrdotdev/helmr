@@ -24,7 +24,7 @@ ALTER TABLE login_sessions ALTER COLUMN authenticated_at SET NOT NULL;
 ALTER TABLE login_sessions DROP COLUMN sso_proof_id;
 DROP TABLE sso_proofs;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_id_user_id_key;
-DROP TABLE sso_member_bindings;
+DROP TABLE sso_member_links;
 DROP TABLE sso_identities;
 ALTER TABLE organizations DROP COLUMN sso_session_seconds, DROP COLUMN sso_required;
 DROP TABLE sso_consumed_assertions;

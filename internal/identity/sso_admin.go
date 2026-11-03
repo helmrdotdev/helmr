@@ -235,11 +235,11 @@ func ActivateSSOConnection(ctx context.Context, database db.TxBeginner, store *s
 		if c.TestedAt == nil {
 			return sso.ErrUntested
 		}
-		previous, bindings, err := sso.RetireActive(ctx, tx, m.OrgID)
+		previous, links, err := sso.RetireActive(ctx, tx, m.OrgID)
 		if err != nil {
 			return err
 		}
-		if err := retireSSOBindings(ctx, tx, bindings); err != nil {
+		if err := retireSSOLinks(ctx, tx, links); err != nil {
 			return err
 		}
 		if previous.ID != uuid.Nil() {
@@ -268,11 +268,11 @@ func DeleteSSOConnection(ctx context.Context, database db.TxBeginner, store *sso
 				return err
 			}
 		case "active":
-			_, bindings, err := sso.RetireActive(ctx, tx, m.OrgID)
+			_, links, err := sso.RetireActive(ctx, tx, m.OrgID)
 			if err != nil {
 				return err
 			}
-			if err := retireSSOBindings(ctx, tx, bindings); err != nil {
+			if err := retireSSOLinks(ctx, tx, links); err != nil {
 				return err
 			}
 			if policy.Required {
@@ -329,7 +329,7 @@ func UpdateSSOPolicy(ctx context.Context, database db.TxBeginner, m org.Managing
 				return invalidInput("activate a connection before requiring single sign-on")
 			}
 			// The enforcing owner proves the connection works for them.
-			signedIn, err := sso.BindingProof(ctx, tx, current.SSOProofID)
+			signedIn, err := sso.LinkProof(ctx, tx, current.SSOProofID)
 			if err != nil {
 				return err
 			}
@@ -369,43 +369,43 @@ func requireSSORevocations(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) (int
 	return int(sessions.RowsAffected()), links, nil
 }
 
-// retireSSOBindings revokes what retired bindings issued: their browser SSO
+// retireSSOLinks revokes what retired links issued: their browser SSO
 // proofs, CLI sessions approved with those proofs, and their members' approved
 // device codes not yet exchanged.
-func retireSSOBindings(ctx context.Context, tx pgx.Tx, bindings []uuid.UUID) error {
-	if len(bindings) == 0 {
+func retireSSOLinks(ctx context.Context, tx pgx.Tx, links []uuid.UUID) error {
+	if len(links) == 0 {
 		return nil
 	}
-	if err := sso.RevokeBindingProofs(ctx, tx, bindings); err != nil {
+	if err := sso.RevokeLinkProofs(ctx, tx, links); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE channel='cli' AND revoked_at IS NULL
- AND sso_proof_id IN (SELECT id FROM sso_proofs WHERE binding_id=ANY($1))`, bindings); err != nil {
+ AND sso_proof_id IN (SELECT id FROM sso_proofs WHERE link_id=ANY($1))`, links); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE device_codes d SET status='denied' FROM sso_member_bindings b
- WHERE b.id=ANY($1) AND d.org_id=b.org_id AND d.decided_by_member_id=b.member_id AND d.status='approved'`, bindings)
+	_, err := tx.Exec(ctx, `UPDATE device_codes d SET status='denied' FROM sso_member_links b
+ WHERE b.id=ANY($1) AND d.org_id=b.org_id AND d.decided_by_member_id=b.member_id AND d.status='approved'`, links)
 	return err
 }
 
-// UnlinkSSOMember retires a member's binding with its revocation set.
+// UnlinkSSOMember retires a member's link with its revocation set.
 func UnlinkSSOMember(ctx context.Context, database db.TxBeginner, m org.ManagingMember, member uuid.UUID) error {
 	return ssoOwnerTx(ctx, database, m, true, func(tx pgx.Tx, current auth.Principal, _ org.SSOPolicy) error {
 		if _, err := tx.Exec(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND id=$2 FOR UPDATE`, m.OrgID, member); err != nil {
 			return err
 		}
-		retired, err := sso.RetireMemberBinding(ctx, tx, m.OrgID, member)
+		retired, err := sso.RetireMemberLink(ctx, tx, m.OrgID, member)
 		if err != nil {
 			return err
 		}
 		if retired.ID == uuid.Nil() {
 			return org.ErrMemberNotFound
 		}
-		if err := retireSSOBindings(ctx, tx, []uuid.UUID{retired.ID}); err != nil {
+		if err := retireSSOLinks(ctx, tx, []uuid.UUID{retired.ID}); err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: ownerEvidence(current), OrgID: m.OrgID, Action: "sso.binding_retired", TargetKind: "member", TargetID: member,
-			Details: audit.SSOBindingDetails{ConnectionID: retired.ConnectionID, IdentityID: retired.IdentityID, Subject: retired.Subject}})
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: ownerEvidence(current), OrgID: m.OrgID, Action: "sso.member_unlinked", TargetKind: "member", TargetID: member,
+			Details: audit.SSOLinkDetails{ConnectionID: retired.ConnectionID, IdentityID: retired.IdentityID, Subject: retired.Subject}})
 	})
 }
 

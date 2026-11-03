@@ -15,8 +15,8 @@ var (
 	ErrEnforcerNotLinked = errors.New("the enforcing owner is not signed in through a linked company account")
 )
 
-// BindingProof reports whether proof is a live browser SSO proof.
-func BindingProof(ctx context.Context, q db.DBTX, proof uuid.UUID) (bool, error) {
+// LinkProof reports whether proof is a live browser SSO proof.
+func LinkProof(ctx context.Context, q db.DBTX, proof uuid.UUID) (bool, error) {
 	var linked bool
 	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sso_proofs WHERE id=$1 AND revoked_at IS NULL)`, proof).Scan(&linked)
 	return linked, err
@@ -24,8 +24,8 @@ func BindingProof(ctx context.Context, q db.DBTX, proof uuid.UUID) (bool, error)
 
 // Candidate reads an organization's candidate connection without locking it.
 func (s *Store) Candidate(ctx context.Context, q db.DBTX, org uuid.UUID) (Connection, error) {
-	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE org_id=$1 AND state='candidate'`, org))
 }
 
@@ -47,7 +47,7 @@ func Activate(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) error {
 }
 
 // RetireActive retires an organization's active connection and its live
-// bindings, returning the retired connection and binding IDs. It retires
+// links, returning the retired connection and link IDs. It retires
 // nothing when no connection is active.
 func RetireActive(ctx context.Context, tx pgx.Tx, org uuid.UUID) (Connection, []uuid.UUID, error) {
 	var c Connection
@@ -58,38 +58,38 @@ func RetireActive(ctx context.Context, tx pgx.Tx, org uuid.UUID) (Connection, []
 	if err != nil {
 		return Connection{}, nil, err
 	}
-	bindings, err := collectIDs(tx.Query(ctx, `UPDATE sso_member_bindings b SET retired_at=clock_timestamp() FROM sso_identities i
+	links, err := collectIDs(tx.Query(ctx, `UPDATE sso_member_links b SET retired_at=clock_timestamp() FROM sso_identities i
  WHERE i.id=b.identity_id AND i.connection_id=$1 AND b.retired_at IS NULL RETURNING b.id`, c.ID))
-	return c, bindings, err
+	return c, links, err
 }
 
-// RetiredBinding is a binding just retired, with the identity it linked.
-type RetiredBinding struct {
+// RetiredLink is a link just retired, with the identity it linked.
+type RetiredLink struct {
 	ID           uuid.UUID
 	IdentityID   uuid.UUID
 	ConnectionID uuid.UUID
 	Subject      string
 }
 
-// RetireMemberBinding retires one member's live binding. The result is zero
+// RetireMemberLink retires one member's live link. The result is zero
 // when the member has none.
-func RetireMemberBinding(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) (RetiredBinding, error) {
-	var r RetiredBinding
-	err := tx.QueryRow(ctx, `UPDATE sso_member_bindings b SET retired_at=clock_timestamp() FROM sso_identities i
+func RetireMemberLink(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) (RetiredLink, error) {
+	var r RetiredLink
+	err := tx.QueryRow(ctx, `UPDATE sso_member_links b SET retired_at=clock_timestamp() FROM sso_identities i
  WHERE i.id=b.identity_id AND b.org_id=$1 AND b.member_id=$2 AND b.retired_at IS NULL RETURNING b.id,i.id,i.connection_id,i.subject`, org, member).Scan(&r.ID, &r.IdentityID, &r.ConnectionID, &r.Subject)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return RetiredBinding{}, nil
+		return RetiredLink{}, nil
 	}
 	return r, err
 }
 
-// RevokeBindingProofs revokes the live browser SSO proofs of the bindings.
-func RevokeBindingProofs(ctx context.Context, tx pgx.Tx, bindings []uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE sso_proofs SET revoked_at=clock_timestamp() WHERE binding_id=ANY($1) AND revoked_at IS NULL`, bindings)
+// RevokeLinkProofs revokes the live browser SSO proofs of the links.
+func RevokeLinkProofs(ctx context.Context, tx pgx.Tx, links []uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE sso_proofs SET revoked_at=clock_timestamp() WHERE link_id=ANY($1) AND revoked_at IS NULL`, links)
 	return err
 }
 
-// LinkedMember is one member and their live binding, if any.
+// LinkedMember is one member and their live link, if any.
 type LinkedMember struct {
 	MemberID    uuid.UUID
 	UserID      uuid.UUID
@@ -99,12 +99,12 @@ type LinkedMember struct {
 	LinkedAt    *time.Time
 }
 
-// LinkedMembers lists the organization's live members with their binding
+// LinkedMembers lists the organization's live members with their link
 // through the active connection.
 func LinkedMembers(ctx context.Context, q db.DBTX, org uuid.UUID) ([]LinkedMember, error) {
 	rows, err := q.Query(ctx, `SELECT m.id,m.user_id,COALESCE(m.display_name,u.display_name),COALESCE(u.primary_email,''),COALESCE(i.subject,''),b.created_at
  FROM org_members m JOIN users u ON u.id=m.user_id
- LEFT JOIN sso_member_bindings b ON b.member_id=m.id AND b.retired_at IS NULL
+ LEFT JOIN sso_member_links b ON b.member_id=m.id AND b.retired_at IS NULL
  LEFT JOIN sso_identities i ON i.id=b.identity_id
  WHERE m.org_id=$1 AND m.removed_at IS NULL ORDER BY m.created_at,m.id`, org)
 	if err != nil {

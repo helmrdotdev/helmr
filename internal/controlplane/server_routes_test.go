@@ -68,7 +68,7 @@ DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /api/sso/connections/{connectionID}
-DELETE /api/sso/members/{memberID}/binding
+DELETE /api/sso/members/{memberID}/link
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/account-repairs/{id}
 GET /admin/api/v1/audit-events
@@ -83,12 +83,12 @@ GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /agent-setup/{harness}.md
 GET /api/account/credentials
-GET /api/account/sso/bindings
+GET /api/account/sso/links
 GET /api/audit-events
 GET /api/audit-events/actions
 GET /api/auth/config
 GET /api/auth/device/status
-GET /api/auth/sso/link
+GET /api/auth/sso/confirm
 GET /api/auth/sso/saml/{connectionID}/metadata
 GET /api/groups
 GET /api/groups/{id}
@@ -258,7 +258,7 @@ POST /api/auth/invitations/resolve
 POST /api/auth/logout
 POST /api/auth/passkey/options
 POST /api/auth/passkey/verify
-POST /api/auth/sso/link/confirm
+POST /api/auth/sso/confirm
 POST /api/auth/sso/oidc/finish
 POST /api/auth/sso/saml/finish
 POST /api/auth/sso/saml/{connectionID}/acs

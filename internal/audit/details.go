@@ -37,14 +37,14 @@ type MembershipDetails struct {
 }
 type InvitationStateDetails struct{}
 
-// SSOBindingDetails names the company SSO identity a membership was linked to.
-type SSOBindingDetails struct {
+// SSOLinkDetails names the company SSO identity a membership was linked to.
+type SSOLinkDetails struct {
 	ConnectionID uuid.UUID `json:"connection_id"`
 	IdentityID   uuid.UUID `json:"identity_id"`
 	Subject      string    `json:"subject"`
 }
 
-func (SSOBindingDetails) auditDetails() {}
+func (SSOLinkDetails) auditDetails() {}
 
 // SSOConnectionDetails names a connection's protocol; its configuration is
 // never recorded.
@@ -243,8 +243,8 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "sso.policy_updated":
 		d, ok := details.(SSOPolicyDetails)
 		valid = ok && d.RevokedCLISessions >= 0 && d.RevokedSlackLinks >= 0
-	case "sso.binding_created", "sso.binding_retired":
-		d, ok := details.(SSOBindingDetails)
+	case "sso.member_linked", "sso.member_unlinked":
+		d, ok := details.(SSOLinkDetails)
 		valid = ok && d.ConnectionID != uuid.Nil() && d.IdentityID != uuid.Nil() && d.Subject != "" && len(d.Subject) <= 512
 	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		d, ok := details.(MembershipDetails)

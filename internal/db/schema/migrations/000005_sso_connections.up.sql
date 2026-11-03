@@ -8,9 +8,9 @@ CREATE TABLE sso_connections (
  state text NOT NULL CHECK (state IN ('candidate','active','retired')),
  oidc_issuer text CHECK (oidc_issuer LIKE 'https://%'),
  oidc_client_id text CHECK (oidc_client_id<>''),
- oidc_secret_ciphertext bytea CHECK (octet_length(oidc_secret_ciphertext)>=16),
- oidc_secret_nonce bytea CHECK (octet_length(oidc_secret_nonce)=12),
- saml_idp_entity_id text CHECK (saml_idp_entity_id<>''),
+ oidc_client_secret_ciphertext bytea CHECK (octet_length(oidc_client_secret_ciphertext)>=16),
+ oidc_client_secret_nonce bytea CHECK (octet_length(oidc_client_secret_nonce)=12),
+ saml_entity_id text CHECK (saml_entity_id<>''),
  saml_sso_url text CHECK (saml_sso_url LIKE 'https://%'),
  saml_certificates text[] CHECK (cardinality(saml_certificates)>=1),
  tested_at timestamptz,
@@ -21,10 +21,10 @@ CREATE TABLE sso_connections (
  FOREIGN KEY (org_id,created_by_member_id) REFERENCES org_members(org_id,id),
  UNIQUE (id,org_id),
  CONSTRAINT sso_connections_protocol_shape CHECK (
-  (protocol='oidc' AND num_nonnulls(oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce)=4
-   AND num_nonnulls(saml_idp_entity_id,saml_sso_url,saml_certificates)=0)
-  OR (protocol='saml' AND num_nonnulls(saml_idp_entity_id,saml_sso_url,saml_certificates)=3
-   AND num_nonnulls(oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce)=0)
+  (protocol='oidc' AND num_nonnulls(oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce)=4
+   AND num_nonnulls(saml_entity_id,saml_sso_url,saml_certificates)=0)
+  OR (protocol='saml' AND num_nonnulls(saml_entity_id,saml_sso_url,saml_certificates)=3
+   AND num_nonnulls(oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce)=0)
  ),
  CONSTRAINT sso_connections_state_shape CHECK (
   (state='candidate' AND activated_at IS NULL AND retired_at IS NULL)
@@ -67,7 +67,7 @@ CREATE TABLE sso_identities (
 
 -- Binds an identity to one membership lifetime. Each identity and each member
 -- has at most one live binding.
-CREATE TABLE sso_member_bindings (
+CREATE TABLE sso_member_links (
  id uuid PRIMARY KEY,
  org_id uuid NOT NULL,
  identity_id uuid NOT NULL,
@@ -79,8 +79,8 @@ CREATE TABLE sso_member_bindings (
  FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id),
  UNIQUE (id,org_id,member_id,user_id)
 );
-CREATE UNIQUE INDEX sso_member_bindings_live_identity ON sso_member_bindings(identity_id) WHERE retired_at IS NULL;
-CREATE UNIQUE INDEX sso_member_bindings_live_member ON sso_member_bindings(member_id) WHERE retired_at IS NULL;
+CREATE UNIQUE INDEX sso_member_links_live_identity ON sso_member_links(identity_id) WHERE retired_at IS NULL;
+CREATE UNIQUE INDEX sso_member_links_live_member ON sso_member_links(member_id) WHERE retired_at IS NULL;
 
 -- The SSO proof one browser session holds for one organization. Admission
 -- computes its expiry from authenticated_at and the organization's lifetime.
@@ -91,17 +91,17 @@ CREATE TABLE sso_proofs (
  org_id uuid NOT NULL,
  member_id uuid NOT NULL,
  user_id uuid NOT NULL,
- binding_id uuid NOT NULL,
+ link_id uuid NOT NULL,
  authenticated_at timestamptz NOT NULL,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  revoked_at timestamptz,
  FOREIGN KEY (session_id,user_id) REFERENCES login_sessions(id,user_id),
- FOREIGN KEY (binding_id,org_id,member_id,user_id) REFERENCES sso_member_bindings(id,org_id,member_id,user_id),
+ FOREIGN KEY (link_id,org_id,member_id,user_id) REFERENCES sso_member_links(id,org_id,member_id,user_id),
  UNIQUE (id,user_id)
 );
 CREATE UNIQUE INDEX sso_proofs_live_session ON sso_proofs(session_id,org_id) WHERE revoked_at IS NULL;
 CREATE INDEX sso_proofs_live_member ON sso_proofs(org_id,member_id) WHERE revoked_at IS NULL;
-CREATE INDEX sso_proofs_live_binding ON sso_proofs(binding_id) WHERE revoked_at IS NULL;
+CREATE INDEX sso_proofs_live_link ON sso_proofs(link_id) WHERE revoked_at IS NULL;
 
 -- A CLI session approved under SSO records the browser's proof as its source.
 ALTER TABLE login_sessions ADD COLUMN sso_proof_id uuid;

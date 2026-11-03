@@ -65,7 +65,7 @@ func (s *Store) CreateOIDC(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 	if err != nil {
 		return Connection{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id)
+	_, err = tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,created_by_member_id)
  VALUES($1,$2,'oidc','candidate',$3,$4,$5,$6,$7)`, id, org, cfg.Issuer, cfg.ClientID, ciphertext, nonce, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -80,7 +80,7 @@ func (s *Store) CreateSAML(ctx context.Context, tx pgx.Tx, org, creator uuid.UUI
 		return Connection{}, err
 	}
 	id := uuid.NewV7()
-	_, err := tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
+	_, err := tx.Exec(ctx, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id)
  VALUES($1,$2,'saml','candidate',$3,$4,$5,$6)`, id, org, idp.EntityID, idp.SSOURL, idp.Certificates, creator)
 	if err != nil {
 		return Connection{}, candidateError(err)
@@ -98,7 +98,7 @@ func (s *Store) RotateOIDCSecret(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 	if err != nil {
 		return err
 	}
-	return affected(tx.Exec(ctx, `UPDATE sso_connections SET oidc_secret_ciphertext=$3,oidc_secret_nonce=$4,tested_at=NULL
+	return affected(tx.Exec(ctx, `UPDATE sso_connections SET oidc_client_secret_ciphertext=$3,oidc_client_secret_nonce=$4,tested_at=NULL
  WHERE org_id=$1 AND id=$2 AND protocol='oidc' AND state<>'retired'`, org, id, ciphertext, nonce))
 }
 
@@ -136,22 +136,22 @@ func (s *Store) DiscardCandidate(ctx context.Context, tx pgx.Tx, org, id uuid.UU
 // Get reads one connection with its client secret, locking it for the caller's
 // administrative transaction. Sign-in reads must not hold this lock.
 func (s *Store) Get(ctx context.Context, tx pgx.Tx, org, id uuid.UUID) (Connection, error) {
-	return s.scan(tx.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	return s.scan(tx.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE org_id=$1 AND id=$2 FOR UPDATE`, org, id))
 }
 
 // Active reads an organization's active connection without locking it.
 func (s *Store) Active(ctx context.Context, q db.DBTX, org uuid.UUID) (Connection, error) {
-	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE org_id=$1 AND state='active'`, org))
 }
 
 // ByID reads a connection in any state without locking it.
 func (s *Store) ByID(ctx context.Context, q db.DBTX, id uuid.UUID) (Connection, error) {
-	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE id=$1`, id))
 }
 
@@ -165,16 +165,16 @@ func HasActive(ctx context.Context, q db.DBTX, org uuid.UUID) (bool, error) {
 // ActiveByID reads an active connection without locking it, for callbacks that
 // name the connection. The transaction acting on the callback rechecks it.
 func (s *Store) ActiveByID(ctx context.Context, q db.DBTX, id uuid.UUID) (Connection, error) {
-	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
- saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,
+ saml_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
  FROM sso_connections WHERE id=$1 AND state='active'`, id))
 }
 
 // ActiveBySlug reads the active connection of the organization with slug
 // without locking it.
 func (s *Store) ActiveBySlug(ctx context.Context, q db.DBTX, slug string) (Connection, error) {
-	return s.scan(q.QueryRow(ctx, `SELECT c.id,c.org_id,c.protocol,c.state,c.oidc_issuer,c.oidc_client_id,c.oidc_secret_ciphertext,c.oidc_secret_nonce,
- c.saml_idp_entity_id,c.saml_sso_url,c.saml_certificates,c.tested_at,c.created_at,c.activated_at
+	return s.scan(q.QueryRow(ctx, `SELECT c.id,c.org_id,c.protocol,c.state,c.oidc_issuer,c.oidc_client_id,c.oidc_client_secret_ciphertext,c.oidc_client_secret_nonce,
+ c.saml_entity_id,c.saml_sso_url,c.saml_certificates,c.tested_at,c.created_at,c.activated_at
  FROM sso_connections c JOIN organizations o ON o.id=c.org_id WHERE o.slug=$1 AND c.state='active'`, slug))
 }
 

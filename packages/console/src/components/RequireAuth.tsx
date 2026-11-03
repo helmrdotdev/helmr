@@ -40,7 +40,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
           />
         </AuthWindow>
       }>
-        <Show when={props.requirement === "session" || !me.data?.organization_sso} fallback={<SSORequired organization={me.data!.organization_sso!} next={locationDestination(location)} />}>
+        <Show when={props.requirement === "session" || !me.data?.sso_sign_in_required} fallback={<SSORequired organization={me.data!.sso_sign_in_required!} next={locationDestination(location)} />}>
         <Show when={props.requirement === "session" || !me.data?.organization_access_denied} fallback={<AuthWindow><AuthError title="Organization access is unavailable" message="Confirm your sign-in to refresh access. If your membership is suspended, an administrator must resume it."/><button class={ui.button} onClick={() => window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}}))}>Confirm sign-in</button><AuthLinks><AuthLink href={withNext("/organizations",locationDestination(location))}>Choose another organization</AuthLink><AuthLink onClick={()=>void me.refetch()}>Retry</AuthLink></AuthLinks></AuthWindow>}><div data-account-active style={{display:"contents"}}>{props.children}</div></Show>
         </Show>
       </Show>
@@ -55,7 +55,7 @@ function SSORequired(props: { organization: { id: string; slug: string; name: st
   const [error, setError] = createSignal("");
   const start = async () => {
     setBusy(true); setError("");
-    try { window.location.assign((await startSSO({ organization: props.organization.slug, next: props.next, reauthenticate: props.organization.reauthenticate })).redirect_url); }
+    try { window.location.assign((await startSSO({ organization_slug: props.organization.slug, next: props.next, reauthenticate: props.organization.reauthenticate })).redirect_url); }
     catch (cause) { setError(loadError(cause, "Single sign-on could not start.", AUTH_MESSAGES)); setBusy(false); }
   };
   return (
@@ -63,7 +63,7 @@ function SSORequired(props: { organization: { id: string; slug: string; name: st
       <AuthTitle>{props.organization.name} uses single sign-on</AuthTitle>
       <AuthCopy>{props.organization.reauthenticate ? "Sign in through your company identity provider again to continue." : "Sign in through your company identity provider to open this organization."}</AuthCopy>
       <Show when={error()}><AuthError message={error()} /></Show>
-      <button type="button" class={cx(ui.button, "auth-full")} disabled={busy()} onClick={() => void start()}>Continue with company SSO</button>
+      <button type="button" class={cx(ui.button, "auth-full")} disabled={busy()} onClick={() => void start()}>Continue with single sign-on</button>
       <AuthLinks>
         <AuthLink href={withNext("/organizations", props.next)}>Choose another organization</AuthLink>
         <AuthLink href="/settings/security">Link your company account</AuthLink>

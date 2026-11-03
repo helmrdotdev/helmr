@@ -105,5 +105,5 @@ export function AuthSSOOIDCCallback() {
 // The SAML response was validated when the identity provider posted it; this
 // page finishes the sign-in with this browser's own session.
 export function AuthSSOSAMLCallback() {
-  return <SignInCallback sso path="/sso/callback" finish={() => finishSAML()} />;
+  return <SignInCallback sso path="/sso/saml/callback" finish={() => finishSAML()} />;
 }

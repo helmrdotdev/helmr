@@ -8,7 +8,7 @@ export type OrganizationContext = {id:string;name:string;slug:string;current_mem
 export type Me = Account & {
  org_id?:string;org_name?:string;org_slug?:string;org_sso:boolean;app_origin:string;membership_id?:string;is_owner:boolean;
  permissions:string[];permission_scopes:OrganizationContext["current_member"]["permission_scopes"];
- organization_access_denied?:boolean;organization_sso?:{id:string;slug:string;name:string;reauthenticate:boolean};organization_required:boolean;project_required:boolean;access_required:boolean;
+ organization_access_denied?:boolean;sso_sign_in_required?:{id:string;slug:string;name:string;reauthenticate:boolean};organization_required:boolean;project_required:boolean;access_required:boolean;
  email_delivery:boolean;organizations:OrganizationMembership[];organization_selection_required:boolean;setup_required:boolean;
 };
 export const getAccount = () => request<Account>("/api/me",{redirectOnUnauthorized:false});
@@ -19,7 +19,7 @@ export async function getMe():Promise<Me>{
  const [config,memberships]=await Promise.all([getAuthConfig(),getOrganizations()]);
  let org=selectedOrganization();
  if(!org){org=config.single_organization?.id??(memberships.organizations.length===1?memberships.organizations[0]!.id:"");if(org)setOrganization(org);}
- let context:OrganizationContext|undefined;let denied=false;let sso:Me["organization_sso"];
+ let context:OrganizationContext|undefined;let denied=false;let sso:Me["sso_sign_in_required"];
  if(org&&memberships.organizations.some(m=>m.id===org)) {
   try{context=await request<OrganizationContext>("/api/organization",{redirectOnUnauthorized:false});}
   catch(error){
@@ -28,7 +28,7 @@ export async function getMe():Promise<Me>{
    else throw error;
   }
  }
- return {...account,organization_access_denied:denied,...(sso?{organization_sso:sso}:{}),app_origin:config.app_origin,email_delivery:config.email_delivery,organizations:memberships.organizations,
+ return {...account,organization_access_denied:denied,...(sso?{sso_sign_in_required:sso}:{}),app_origin:config.app_origin,email_delivery:config.email_delivery,organizations:memberships.organizations,
  ...(context?{org_id:context.id,org_name:context.name,org_slug:context.slug,membership_id:context.current_member.id}:{}),
  org_sso:context?.sso??false,is_owner:context?.current_member.is_owner??false,permissions:context?.current_member.permissions??[],permission_scopes:context?.current_member.permission_scopes??[],
  organization_required:!context&&memberships.organizations.length===0&&config.organization_creation_enabled,

@@ -6,7 +6,7 @@ import { getAuthConfig } from "../lib/auth";
 import { AUTH_MESSAGES, errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { registerPasskey } from "../lib/passkey";
-import { listSSOBindings, startSSOLink } from "../lib/sso";
+import { listSSOLinks, startSSOLink } from "../lib/sso";
 import { DataTable, RowActions, TableCount } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { Field, TextInput } from "../ui/Field";
@@ -40,18 +40,18 @@ export function AccountSecurity() {
   // A SAML self-link the server refused returns here with its code.
   const [params] = useSearchParams();
   const [error, setError] = createSignal(typeof params["sso_error"] === "string" ? AUTH_MESSAGES[params["sso_error"]] ?? AUTH_MESSAGES["authentication_invalid"]! : "");
-  const bindings = createQuery(() => ({ queryKey: ["account", "sso-bindings"], queryFn: listSSOBindings }));
+  const links = createQuery(() => ({ queryKey: ["account", "sso-links"], queryFn: listSSOLinks }));
   const [linkingSSO, setLinkingSSO] = createSignal(false);
   const linkSSO = async (organizationID: string) => {
     setLinkingSSO(true); setError("");
     try { window.location.assign((await startSSOLink(organizationID)).redirect_url); }
-    catch (cause) { setError(loadError(cause, "Could not start linking company SSO.", AUTH_MESSAGES)); setLinkingSSO(false); }
+    catch (cause) { setError(loadError(cause, "Could not start linking your company account.", AUTH_MESSAGES)); setLinkingSSO(false); }
   };
   // The organization to link: the selected one when it offers SSO, or the
   // selected one that requires SSO and so admits no browser without it yet.
   const linkable = () => me.data?.org_id && me.data.org_sso ? { id: me.data.org_id, name: me.data.org_name ?? "this organization" }
-    : me.data?.organization_sso ? { id: me.data.organization_sso.id, name: me.data.organization_sso.name } : undefined;
-  const linkedHere = () => (bindings.data?.bindings ?? []).some(binding => binding.organization_id === linkable()?.id);
+    : me.data?.sso_sign_in_required ? { id: me.data.sso_sign_in_required.id, name: me.data.sso_sign_in_required.name } : undefined;
+  const linkedHere = () => (links.data?.links ?? []).some(link => link.organization_id === linkable()?.id);
   const refresh = () => cache.invalidateQueries({ queryKey: ["account", "sign-in-methods"] });
   const linkGitHub = async () => {
     setLinking(true); setError("");
@@ -85,21 +85,21 @@ export function AccountSecurity() {
           </DataTable>
         )}
       </QueryState>
-      <Panel title="Company SSO" actions={<Show when={!linkedHere() ? linkable() : undefined}>{organization => (
-        <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization().id)}>{linkingSSO() ? "Linking…" : `Link company SSO for ${organization().name}`}</button>
+      <Panel title="Single sign-on" actions={<Show when={!linkedHere() ? linkable() : undefined}>{organization => (
+        <button type="button" class={ui.secondaryButton} disabled={linkingSSO()} onClick={() => void linkSSO(organization().id)}>{linkingSSO() ? "Linking…" : `Link company account for ${organization().name}`}</button>
       )}</Show>}>
         <p class={cx(ui.muted, "m-0")}>Organizations where you can sign in with your company identity provider. Linking needs a recent sign-in, and your company account's email can differ from your Helmr email.</p>
-        <QueryState query={bindings} pending={<TableSkeleton label="Loading company SSO links" columns={SSO_COLUMNS} />} error={cause => loadError(cause, "Could not load your company SSO links.")}>
+        <QueryState query={links} pending={<TableSkeleton label="Loading linked company accounts" columns={SSO_COLUMNS} />} error={cause => loadError(cause, "Could not load your linked company accounts.")}>
           {data => (
-            <Show when={data().bindings.length > 0}>
+            <Show when={data().links.length > 0}>
               <DataTable columns={SSO_COLUMNS} minWidth="min-w-150">
-                <For each={data().bindings}>
-                  {binding => (
+                <For each={data().links}>
+                  {link => (
                     <tr>
-                      <td>{binding.organization_name}</td>
-                      <td><Tag>{binding.protocol.toUpperCase()}</Tag></td>
-                      <td class="font-mono text-chrome!">{binding.subject}</td>
-                      <td><RelativeTime value={binding.linked_at} /></td>
+                      <td>{link.organization_name}</td>
+                      <td><Tag>{link.protocol.toUpperCase()}</Tag></td>
+                      <td class="font-mono text-chrome!">{link.subject}</td>
+                      <td><RelativeTime value={link.linked_at} /></td>
                     </tr>
                   )}
                 </For>

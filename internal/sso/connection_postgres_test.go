@@ -68,7 +68,7 @@ func TestConnectionLifecycle(t *testing.T) {
 	}
 	// The secret is stored encrypted and bound to its connection.
 	var ciphertext []byte
-	if err := f.db.Pool.QueryRow(t.Context(), `SELECT oidc_secret_ciphertext FROM sso_connections WHERE id=$1`, oidcID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("first")) {
+	if err := f.db.Pool.QueryRow(t.Context(), `SELECT oidc_client_secret_ciphertext FROM sso_connections WHERE id=$1`, oidcID).Scan(&ciphertext); err != nil || bytes.Contains(ciphertext, []byte("first")) {
 		t.Fatalf("ciphertext %x err %v", ciphertext, err)
 	}
 	// Testing, then rotating, clears the test result.
@@ -122,11 +122,11 @@ func TestConnectionLifecycle(t *testing.T) {
 func TestConnectionShapeConstraints(t *testing.T) {
 	f := newConnectionFixture(t)
 	for name, stmt := range map[string]string{
-		"oidc with saml fields":       `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,saml_idp_entity_id,created_by_member_id) VALUES($1,$2,'oidc','candidate','https://i','c',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),'e',$3)`,
+		"oidc with saml fields":       `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,saml_entity_id,created_by_member_id) VALUES($1,$2,'oidc','candidate','https://i','c',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),'e',$3)`,
 		"oidc without secret":         `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,created_by_member_id) VALUES($1,$2,'oidc','candidate','https://i','c',$3)`,
-		"http issuer":                 `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,created_by_member_id) VALUES($1,$2,'oidc','candidate','http://i','c',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),$3)`,
-		"saml without certificates":   `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{}',$3)`,
-		"active without activated_at": `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','active','e','https://s','{x}',$3)`,
+		"http issuer":                 `INSERT INTO sso_connections(id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_client_secret_ciphertext,oidc_client_secret_nonce,created_by_member_id) VALUES($1,$2,'oidc','candidate','http://i','c',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),$3)`,
+		"saml without certificates":   `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{}',$3)`,
+		"active without activated_at": `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','active','e','https://s','{x}',$3)`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := f.db.Pool.Exec(t.Context(), stmt, uuid.NewV7(), f.org, f.member); err == nil {
@@ -139,7 +139,7 @@ func TestConnectionShapeConstraints(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Other')`, otherUser)
 	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, otherOrg)
 	dbtest.MustExec(t, t.Context(), f.db.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, otherMember, otherOrg, otherUser)
-	_, err := f.db.Pool.Exec(t.Context(), `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{x}',$3)`, uuid.NewV7(), f.org, otherMember)
+	_, err := f.db.Pool.Exec(t.Context(), `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id) VALUES($1,$2,'saml','candidate','e','https://s','{x}',$3)`, uuid.NewV7(), f.org, otherMember)
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) || pg.Code != "23503" {
 		t.Fatalf("cross-organization creator err = %v", err)

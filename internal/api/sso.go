@@ -3,10 +3,10 @@ package api
 type SSOStartRequest struct {
 	// Organization is the organization slug. An invitation names its own
 	// organization, and self-hosted deployments with one organization may omit it.
-	Organization    string `json:"organization,omitempty"`
-	Next            string `json:"next,omitempty"`
-	InvitationToken string `json:"invitation_token,omitempty"`
-	Reauthenticate  bool   `json:"reauthenticate,omitempty"`
+	OrganizationSlug string `json:"organization_slug,omitempty"`
+	Next             string `json:"next,omitempty"`
+	InvitationToken  string `json:"invitation_token,omitempty"`
+	Reauthenticate   bool   `json:"reauthenticate,omitempty"`
 }
 
 type SSOStartResponse struct {
@@ -24,7 +24,7 @@ type SSOFinishResponse struct {
 	RedirectAfter string `json:"redirect_after"`
 }
 
-type SSOLinkResponse struct {
+type SSOConfirmationResponse struct {
 	OrganizationID   string `json:"organization_id"`
 	OrganizationName string `json:"organization_name"`
 	AssertedEmail    string `json:"asserted_email"`
@@ -32,7 +32,7 @@ type SSOLinkResponse struct {
 	SignedInEmail    string `json:"signed_in_email,omitempty"`
 }
 
-type SSOLinkConfirmResponse struct {
+type SSOConfirmResponse struct {
 	OrganizationID string `json:"organization_id"`
 	RedirectAfter  string `json:"redirect_after"`
 }
@@ -42,7 +42,7 @@ type AccountSSOLinkRequest struct {
 	Reauthenticate bool   `json:"reauthenticate,omitempty"`
 }
 
-type AccountSSOBinding struct {
+type AccountSSOLink struct {
 	OrganizationID   string `json:"organization_id"`
 	OrganizationName string `json:"organization_name"`
 	Protocol         string `json:"protocol"`
@@ -50,8 +50,8 @@ type AccountSSOBinding struct {
 	LinkedAt         string `json:"linked_at"`
 }
 
-type AccountSSOBindingsResponse struct {
-	Bindings []AccountSSOBinding `json:"bindings"`
+type AccountSSOLinksResponse struct {
+	Links []AccountSSOLink `json:"links"`
 }
 
 type SSOConnection struct {

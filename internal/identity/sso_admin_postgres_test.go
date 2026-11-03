@@ -188,7 +188,7 @@ func TestRecentProofCountsOrdinaryOrSSOProof(t *testing.T) {
 	}
 }
 
-func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
+func TestUnlinkingAndRetiringRevokeWhatTheLinkIssued(t *testing.T) {
 	f := newSSOAdminFixture(t)
 	member := f.user(t, "Member", "member@example.test")
 	memberID := f.member(t, f.org, member, "member")
@@ -209,7 +209,7 @@ func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !f.revoked(t, ssoCLI) || f.revoked(t, ordinaryCLI) {
-		t.Fatal("unlinking must revoke CLI sessions approved through the binding and only those")
+		t.Fatal("unlinking must revoke CLI sessions approved through the link and only those")
 	}
 	var status string
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM device_codes WHERE id=$1`, device).Scan(&status); err != nil || status != "denied" {
@@ -233,12 +233,12 @@ func TestUnlinkingAndRetiringRevokeWhatTheBindingIssued(t *testing.T) {
 		t.Fatal(err)
 	}
 	var required bool
-	var liveBindings int
-	if err := f.pool.QueryRow(t.Context(), `SELECT sso_required,(SELECT count(*) FROM sso_member_bindings WHERE org_id=$1 AND retired_at IS NULL) FROM organizations WHERE id=$1`, f.org).Scan(&required, &liveBindings); err != nil {
+	var liveLinks int
+	if err := f.pool.QueryRow(t.Context(), `SELECT sso_required,(SELECT count(*) FROM sso_member_links WHERE org_id=$1 AND retired_at IS NULL) FROM organizations WHERE id=$1`, f.org).Scan(&required, &liveLinks); err != nil {
 		t.Fatal(err)
 	}
-	if required || liveBindings != 0 {
-		t.Fatalf("after disabling SSO: required=%v live bindings=%d", required, liveBindings)
+	if required || liveLinks != 0 {
+		t.Fatalf("after disabling SSO: required=%v live links=%d", required, liveLinks)
 	}
 }
 
@@ -335,7 +335,7 @@ func TestSSOTestActivationAndReplacement(t *testing.T) {
 	if err := ActivateSSOConnection(t.Context(), f.pool, store, f.manager(t), candidate.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The previous connection retired with its bindings, so the owner's proof
+	// The previous connection retired with its links, so the owner's proof
 	// through it no longer admits.
 	var state string
 	if err := f.pool.QueryRow(t.Context(), `SELECT state FROM sso_connections WHERE id=$1`, f.connection).Scan(&state); err != nil || state != "retired" {
