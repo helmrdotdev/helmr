@@ -56,9 +56,23 @@ docker load -i "$builder_archive" >/dev/null
 docker run --rm --platform linux/amd64 --entrypoint node --workdir / \
   --volume "$repo_root:/product:ro" bundle-builder:0 --input-type=module -e '
     import { execFileSync } from "node:child_process"
-    import { existsSync } from "node:fs"
+    import { existsSync, readFileSync, readdirSync } from "node:fs"
+    import { createHash, X509Certificate } from "node:crypto"
     import assert from "node:assert/strict"
     import { requireVersion, managerInterpreter } from "/product/scripts/check-node-toolchain.mjs"
+    // Debian clients can select either the CA bundle or the hashed directory.
+    const certs = "/etc/ssl/certs"
+    const roots = readFileSync(certs + "/ca-certificates.crt", "utf8").match(/-----BEGIN CERTIFICATE-----[^]*?-----END CERTIFICATE-----/g)
+    const hashed = readdirSync(certs).filter(name => /^[a-f0-9]{8}\.\d+$/.test(name))
+    const keyHash = pem => createHash("sha256").update(new X509Certificate(pem).publicKey.export({type:"spki", format:"der"})).digest("hex")
+    const trusted = new Set(roots.map(keyHash))
+    assert.ok(trusted.size > 0)
+    assert.deepEqual(new Set(hashed.map(name => keyHash(readFileSync(certs + "/" + name)))), trusted)
+    for (const removed of [
+      "eabc185c4e82d942b1a5978ba3c0181487d6b3b9974e5c49f72f6d0bd9637150",
+      "8d417db2dd8bf5e3084d1e3f196d583849d81bdd4c00c70b9d39369e96b8c782",
+      "b7408b4d2be0238ba37004dd34e276c6019bd2f24c9db7d4980f5f6c359a4bcc",
+    ]) assert.ok(!trusted.has(removed), "distrusted emSign root " + removed)
     requireVersion(process.versions.node, "builder image Node")
     assert.equal(process.execPath, "/usr/local/bin/node")
     assert.equal(existsSync("/usr/bin/node"), false, "distribution Node must not exist")
@@ -195,10 +209,10 @@ build_fixture() {
 # Generated compiler inputs remain readable under a restrictive caller umask.
 (umask 077; build_fixture npm npm@11.5.1)
 build_fixture pnpm pnpm@10.14.0
-build_fixture bun bun@1.3.13
+build_fixture bun bun@1.4.4
 build_fixture yarn yarn@4.9.2
 # An exact Bun selector is an ordinary versioned registry fetch.
-grep -F '["npx","--yes","bun@1.3.13","install"]' "$tmp/bun.log" >/dev/null
+grep -F '["npx","--yes","bun@1.4.4","install"]' "$tmp/bun.log" >/dev/null
 
 # Without a selector the lockfile chooses the manager: Corepack's pinned pnpm
 # and the image's official Bun. The lockfiles come from the same tools.

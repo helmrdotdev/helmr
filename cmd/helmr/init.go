@@ -184,7 +184,7 @@ func starterPackageJSON() string {
 	return `{
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.13",
+  "packageManager": "bun@1.4.4",
   "devEngines": {
     "runtime": {
       "name": "node",

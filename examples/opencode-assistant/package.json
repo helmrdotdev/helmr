@@ -2,7 +2,7 @@
   "name": "helmr-opencode-assistant",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.3.13",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
     "test": "bun build tests/*.test.ts --target=node --tsconfig-override tests/tsconfig.json --external \"@opencode/*\" --external effect --outdir dist --entry-naming \"[name].mjs\" && node --test dist/*.test.mjs"
