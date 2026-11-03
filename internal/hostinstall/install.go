@@ -39,14 +39,20 @@ func System() Installer {
 
 func (i Installer) path(path string) string { return filepath.Join(i.Root, path) }
 
-// Stopped reports whether the worker service is inactive, which replacing its
-// installed files requires.
+// Stopped reports whether the worker service runs nothing, which replacing
+// its installed files requires.
 func (i Installer) Stopped() (bool, error) {
 	state, err := i.Run("systemctl", "show", ServiceName, "-p", "ActiveState", "--value")
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(state) == "inactive", nil
+	// A failed unit runs nothing either, for example after an interrupted
+	// install left it restarting a missing worker.
+	switch strings.TrimSpace(state) {
+	case "inactive", "failed":
+		return true, nil
+	}
+	return false, nil
 }
 
 // Install puts verified files in place, prepares the accounts and devices the
