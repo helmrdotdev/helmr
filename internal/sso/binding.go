@@ -33,7 +33,7 @@ type Binding struct {
 // caller's transaction and returns its organization.
 func LockActive(ctx context.Context, tx pgx.Tx, connection uuid.UUID) (uuid.UUID, error) {
 	var org uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT org_id FROM org_sso_connections WHERE id=$1 AND state='active' FOR SHARE`, connection).Scan(&org)
+	err := tx.QueryRow(ctx, `SELECT org_id FROM sso_connections WHERE id=$1 AND state='active' FOR SHARE`, connection).Scan(&org)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil(), ErrConnectionNotFound
 	}
@@ -45,8 +45,8 @@ func LockActive(ctx context.Context, tx pgx.Tx, connection uuid.UUID) (uuid.UUID
 // the member next and then holds the binding with HoldBinding.
 func LiveBinding(ctx context.Context, q db.DBTX, connection uuid.UUID, subject string) (Binding, error) {
 	var b Binding
-	err := q.QueryRow(ctx, `SELECT b.id,b.org_id,b.identity_id,b.member_id,b.user_id FROM org_sso_identities i
- JOIN org_sso_member_bindings b ON b.identity_id=i.id AND b.retired_at IS NULL
+	err := q.QueryRow(ctx, `SELECT b.id,b.org_id,b.identity_id,b.member_id,b.user_id FROM sso_identities i
+ JOIN sso_member_bindings b ON b.identity_id=i.id AND b.retired_at IS NULL
  WHERE i.connection_id=$1 AND i.subject=$2`, connection, subject).Scan(&b.ID, &b.OrgID, &b.IdentityID, &b.MemberID, &b.UserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Binding{}, ErrNotBound
@@ -58,7 +58,7 @@ func LiveBinding(ctx context.Context, q db.DBTX, connection uuid.UUID, subject s
 // caller's transaction.
 func HoldBinding(ctx context.Context, tx pgx.Tx, b Binding) error {
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT id FROM org_sso_member_bindings WHERE id=$1 AND retired_at IS NULL FOR SHARE`, b.ID).Scan(&id)
+	err := tx.QueryRow(ctx, `SELECT id FROM sso_member_bindings WHERE id=$1 AND retired_at IS NULL FOR SHARE`, b.ID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotBound
 	}
@@ -69,19 +69,19 @@ func HoldBinding(ctx context.Context, tx pgx.Tx, b Binding) error {
 // to one user forever; each identity and each member has one live binding. A
 // live binding of the same pair is returned unchanged with created false.
 func Link(ctx context.Context, tx pgx.Tx, org, connection uuid.UUID, subject string, member, user uuid.UUID) (Binding, bool, error) {
-	if _, err := tx.Exec(ctx, `INSERT INTO org_sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)
+	if _, err := tx.Exec(ctx, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)
  ON CONFLICT (connection_id,subject) DO NOTHING`, uuid.NewV7(), org, connection, subject, user); err != nil {
 		return Binding{}, false, err
 	}
 	b := Binding{OrgID: org, MemberID: member, UserID: user}
 	var owner uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id,user_id FROM org_sso_identities WHERE connection_id=$1 AND subject=$2 FOR UPDATE`, connection, subject).Scan(&b.IdentityID, &owner); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id,user_id FROM sso_identities WHERE connection_id=$1 AND subject=$2 FOR UPDATE`, connection, subject).Scan(&b.IdentityID, &owner); err != nil {
 		return Binding{}, false, err
 	}
 	if owner != user {
 		return Binding{}, false, ErrIdentityConflict
 	}
-	rows, err := tx.Query(ctx, `SELECT id,identity_id,member_id FROM org_sso_member_bindings
+	rows, err := tx.Query(ctx, `SELECT id,identity_id,member_id FROM sso_member_bindings
  WHERE org_id=$1 AND retired_at IS NULL AND (identity_id=$2 OR member_id=$3)`, org, b.IdentityID, member)
 	if err != nil {
 		return Binding{}, false, err
@@ -107,7 +107,7 @@ func Link(ctx context.Context, tx pgx.Tx, org, connection uuid.UUID, subject str
 		return Binding{}, false, ErrIdentityConflict
 	}
 	b.ID = uuid.NewV7()
-	_, err = tx.Exec(ctx, `INSERT INTO org_sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, b.ID, org, b.IdentityID, member, user)
+	_, err = tx.Exec(ctx, `INSERT INTO sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, b.ID, org, b.IdentityID, member, user)
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && pg.Code == "23505" {
 		return Binding{}, false, ErrIdentityConflict
@@ -125,10 +125,10 @@ func ProofLifetime(ctx context.Context, q db.DBTX, org uuid.UUID) (time.Duration
 // AddProof gives a browser session the binding's SSO proof, replacing any
 // earlier proof the session held for that organization.
 func AddProof(ctx context.Context, tx pgx.Tx, session uuid.UUID, b Binding, authenticatedAt time.Time) error {
-	if _, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1 AND org_id=$2 AND revoked_at IS NULL`, session, b.OrgID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE sso_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1 AND org_id=$2 AND revoked_at IS NULL`, session, b.OrgID); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO browser_sso_proofs(id,session_id,org_id,member_id,user_id,binding_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+	_, err := tx.Exec(ctx, `INSERT INTO sso_proofs(id,session_id,org_id,member_id,user_id,binding_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
 		uuid.NewV7(), session, b.OrgID, b.MemberID, b.UserID, b.ID, authenticatedAt)
 	return err
 }
@@ -136,7 +136,7 @@ func AddProof(ctx context.Context, tx pgx.Tx, session uuid.UUID, b Binding, auth
 // RetireMemberAccess runs when a membership ends: its binding retires and the
 // browser SSO proofs derived from it are revoked.
 func RetireMemberAccess(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `UPDATE org_sso_member_bindings SET retired_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND retired_at IS NULL`, org, member); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE sso_member_bindings SET retired_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND retired_at IS NULL`, org, member); err != nil {
 		return err
 	}
 	return RevokeMemberProofs(ctx, tx, org, member)
@@ -145,14 +145,14 @@ func RetireMemberAccess(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) e
 // RevokeMemberProofs revokes a member's browser SSO proofs and keeps the
 // binding, for suspension.
 func RevokeMemberProofs(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL`, org, member)
+	_, err := tx.Exec(ctx, `UPDATE sso_proofs SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL`, org, member)
 	return err
 }
 
 // RevokeAccountProofs revokes the browser SSO proofs of every session of user
 // except keep. A zero keep revokes them all.
 func RevokeAccountProofs(ctx context.Context, tx pgx.Tx, user, keep uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE browser_sso_proofs SET revoked_at=clock_timestamp() WHERE user_id=$1 AND session_id<>$2 AND revoked_at IS NULL`, user, keep)
+	_, err := tx.Exec(ctx, `UPDATE sso_proofs SET revoked_at=clock_timestamp() WHERE user_id=$1 AND session_id<>$2 AND revoked_at IS NULL`, user, keep)
 	return err
 }
 
@@ -167,10 +167,10 @@ type AccountBinding struct {
 
 // AccountBindings lists the account's live bindings through active connections.
 func AccountBindings(ctx context.Context, q db.DBTX, user uuid.UUID) ([]AccountBinding, error) {
-	rows, err := q.Query(ctx, `SELECT b.org_id,o.name,c.protocol,i.subject,b.created_at FROM org_sso_member_bindings b
+	rows, err := q.Query(ctx, `SELECT b.org_id,o.name,c.protocol,i.subject,b.created_at FROM sso_member_bindings b
  JOIN organizations o ON o.id=b.org_id
- JOIN org_sso_identities i ON i.id=b.identity_id
- JOIN org_sso_connections c ON c.id=i.connection_id AND c.state='active'
+ JOIN sso_identities i ON i.id=b.identity_id
+ JOIN sso_connections c ON c.id=i.connection_id AND c.state='active'
  WHERE b.user_id=$1 AND b.retired_at IS NULL ORDER BY b.created_at,b.id`, user)
 	if err != nil {
 		return nil, err

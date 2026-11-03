@@ -101,7 +101,7 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	}
 	idp := ssotest.NewIdP(t)
 	connection := uuid.NewV7()
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
  VALUES($1,$2,'saml','active',$3,'https://idp.example.test/sso',$4,$5,clock_timestamp())`, connection, orgID, idp.EntityID, []string{idp.CertPEM}, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func newOIDCFixture(t *testing.T) (httpPostgresFixture, *ssotest.OIDCIssuer, uui
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(t.Context(), `UPDATE org_sso_connections SET state='active',activated_at=clock_timestamp() WHERE id=$1`, c.ID)
+		_, err = tx.Exec(t.Context(), `UPDATE sso_connections SET state='active',activated_at=clock_timestamp() WHERE id=$1`, c.ID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -291,11 +291,11 @@ func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
 	member := f.member(t, orgID, alice, "member")
 	identity, binding := uuid.NewV7(), uuid.NewV7()
 	var connection uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM org_sso_connections WHERE org_id=$1`, orgID).Scan(&connection); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sso_connections WHERE org_id=$1`, orgID).Scan(&connection); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,'alice',$4)`, identity, orgID, connection, alice)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, binding, orgID, identity, member, alice)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,'alice',$4)`, identity, orgID, connection, alice)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, binding, orgID, identity, member, alice)
 	console := f.origin
 	browser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
 

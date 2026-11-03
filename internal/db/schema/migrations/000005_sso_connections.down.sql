@@ -21,10 +21,10 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
 );
 ALTER TABLE login_sessions ALTER COLUMN authenticated_at SET NOT NULL;
 
-DROP TABLE browser_sso_proofs;
+DROP TABLE sso_proofs;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_id_user_id_key;
-DROP TABLE org_sso_member_bindings;
-DROP TABLE org_sso_identities;
+DROP TABLE sso_member_bindings;
+DROP TABLE sso_identities;
 ALTER TABLE organizations DROP COLUMN sso_session_seconds;
-DROP TABLE saml_consumed_assertions;
-DROP TABLE org_sso_connections;
+DROP TABLE sso_consumed_assertions;
+DROP TABLE sso_connections;

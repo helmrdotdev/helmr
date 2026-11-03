@@ -34,7 +34,7 @@ func newSSOFixture(t *testing.T) ssoFixture {
 func (f ssoFixture) activeConnection(t *testing.T, orgID, creator uuid.UUID) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	f.exec(t, `INSERT INTO org_sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
+	f.exec(t, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
  VALUES($1,$2,'saml','active',$4,'https://idp.example.test/sso',ARRAY['cert'],$3,clock_timestamp())`, id, orgID, creator, "https://idp.example.test/"+id.String())
 	return id
 }
@@ -46,8 +46,8 @@ func (f ssoFixture) assertion(subject, email string, at time.Time) SSOAssertion 
 func (f ssoFixture) bind(t *testing.T, subject string, member, user uuid.UUID) {
 	t.Helper()
 	identity := uuid.NewV7()
-	f.exec(t, `INSERT INTO org_sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)`, identity, f.org, f.connection, subject, user)
-	f.exec(t, `INSERT INTO org_sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, uuid.NewV7(), f.org, identity, member, user)
+	f.exec(t, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)`, identity, f.org, f.connection, subject, user)
+	f.exec(t, `INSERT INTO sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, uuid.NewV7(), f.org, identity, member, user)
 }
 
 func (f ssoFixture) admits(t *testing.T, raw string, target uuid.UUID) (auth.Principal, error) {
@@ -145,7 +145,7 @@ func TestSSOSignInWithoutBindingContinuesToAssociation(t *testing.T) {
 	if err != nil || !result.Unbound || result.Session != "" {
 		t.Fatalf("sign-in = %+v, %v", result, err)
 	}
-	f.exec(t, `UPDATE org_sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection)
+	f.exec(t, `UPDATE sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection)
 	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("new-subject", "", time.Now()), "", uuid.Nil()); !errors.Is(err, sso.ErrConnectionNotFound) {
 		t.Fatalf("a retired connection signed in: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestSSOProofEndsWithMembershipAndConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var proofs int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM browser_sso_proofs WHERE member_id=$1 AND revoked_at IS NULL`, suspended).Scan(&proofs); err != nil || proofs != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sso_proofs WHERE member_id=$1 AND revoked_at IS NULL`, suspended).Scan(&proofs); err != nil || proofs != 0 {
 		t.Fatalf("live proofs after suspension = %d, %v", proofs, err)
 	}
 	if _, err := f.admits(t, suspendedRaw, f.org); !errors.Is(err, ErrOrganizationAccessDenied) {
@@ -279,7 +279,7 @@ func TestSSOProofEndsWithMembershipAndConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var live int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM org_sso_member_bindings WHERE member_id=$1 AND retired_at IS NULL`, removed).Scan(&live); err != nil || live != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sso_member_bindings WHERE member_id=$1 AND retired_at IS NULL`, removed).Scan(&live); err != nil || live != 0 {
 		t.Fatalf("live bindings after removal = %d, %v", live, err)
 	}
 	if _, err := f.admits(t, removedRaw, f.org); !errors.Is(err, ErrOrganizationAccessDenied) {
@@ -290,7 +290,7 @@ func TestSSOProofEndsWithMembershipAndConnection(t *testing.T) {
 	if _, err := f.admits(t, keptRaw, f.org); err != nil {
 		t.Fatal(err)
 	}
-	f.exec(t, `UPDATE org_sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection)
+	f.exec(t, `UPDATE sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection)
 	if _, err := f.admits(t, keptRaw, f.org); !errors.Is(err, ErrOrganizationAccessDenied) {
 		t.Fatalf("a proof survived connection retirement: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond)
-	if _, err := removal.Exec(t.Context(), `UPDATE org_sso_member_bindings SET retired_at=clock_timestamp() WHERE member_id=$1`, member); err != nil {
+	if _, err := removal.Exec(t.Context(), `UPDATE sso_member_bindings SET retired_at=clock_timestamp() WHERE member_id=$1`, member); err != nil {
 		t.Fatalf("removal blocked behind the sign-in: %v", err)
 	}
 	if _, err := removal.Exec(t.Context(), `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member); err != nil {
