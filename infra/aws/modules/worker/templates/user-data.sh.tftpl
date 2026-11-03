@@ -73,7 +73,7 @@ launch_timeout='${launch_readiness_timeout_seconds}'
 termination_hook='${termination_lifecycle_hook_name}'
 termination_wait_timeout='${termination_wait_timeout_seconds}s'
 heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
-worker_binary='${worker_binary_path}'
+helmr='${helmr_binary_path}'
 drain_marker='${worker_work_dir}/drain-complete'
 metadata_url=http://169.254.169.254/latest
 launch_started_at="$(date +%s)"
@@ -142,7 +142,7 @@ complete_launch() {
     *) return 1 ;;
   esac
   systemctl is-active --quiet '${worker_service_name}' || return 1
-  "$worker_binary" status >/dev/null || return 1
+  "$helmr" worker status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
 
@@ -166,7 +166,7 @@ drain_and_complete_termination() {
 		complete_lifecycle_action "$termination_hook" CONTINUE
 		return 0
 	fi
-  "$worker_binary" drain --wait-timeout "$termination_wait_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
+  "$helmr" worker drain --wait-timeout "$termination_wait_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
   drain_pid="$!"
   while kill -0 "$drain_pid" 2>/dev/null; do
     record_heartbeat "$termination_hook" || true
@@ -180,7 +180,7 @@ drain_and_complete_termination() {
       return 1
     fi
     echo "provider termination is in progress; fencing actual worker loss after bounded cleanup" >>/var/log/helmr-worker-drain.log
-    if "$worker_binary" fence >>/var/log/helmr-worker-drain.log 2>&1; then
+    if "$helmr" worker fence >>/var/log/helmr-worker-drain.log 2>&1; then
       complete_lifecycle_action "$termination_hook" CONTINUE
     else
       echo "worker drain failed and durable fence could not be persisted" >>/var/log/helmr-worker-drain.log

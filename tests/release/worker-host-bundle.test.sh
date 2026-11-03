@@ -17,6 +17,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/cpu-template-helper"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/firecracker"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/jailer"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/mkfs.ext4"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/helmr"
 chmod 0755 "${host}/bin/"*
 printf '[defaults]\n' >"${host}/share/helmr/mke2fs.conf"
 chmod 0444 "${host}/share/helmr/mke2fs.conf"
@@ -47,19 +48,19 @@ jq -e '
   (keys | sort) == ["arch", "files", "schema"] and
   .schema == "helmr.worker-host-artifacts.v0" and
   .arch == "amd64" and
-  [.files[].path] == ["cpu-template-helper", "firecracker", "jailer", "mkfs.ext4", "worker", "mke2fs.conf"] and
+  [.files[].path] == ["cpu-template-helper", "firecracker", "jailer", "mkfs.ext4", "worker", "helmr", "mke2fs.conf"] and
   all(.files[];
     ((.path == "mke2fs.conf" and .mode == "0444") or (.path != "mke2fs.conf" and .mode == "0755")) and
     (.size_bytes | type == "number" and . > 0) and
     (.digest | test("^sha256:[0-9a-f]{64}$")))
 ' "${tmp}/bundle-a/worker-host-artifacts.json" >/dev/null
 
-expected_entries="$(printf '%s\n' cpu-template-helper firecracker jailer mkfs.ext4 worker mke2fs.conf worker-host-artifacts.json)"
+expected_entries="$(printf '%s\n' cpu-template-helper firecracker jailer mkfs.ext4 worker helmr mke2fs.conf worker-host-artifacts.json)"
 [ "$(tar -tf "${tmp}/bundle-a/worker-host-artifacts.tar")" = "${expected_entries}" ]
 
 mkdir "${tmp}/unpacked"
 tar -C "${tmp}/unpacked" -xf "${tmp}/bundle-a/worker-host-artifacts.tar"
-for name in cpu-template-helper firecracker jailer mkfs.ext4 worker; do
+for name in cpu-template-helper firecracker jailer mkfs.ext4 worker helmr; do
   cmp "${host}/bin/${name}" "${tmp}/unpacked/${name}"
 done
 cmp "${host}/share/helmr/mke2fs.conf" "${tmp}/unpacked/mke2fs.conf"

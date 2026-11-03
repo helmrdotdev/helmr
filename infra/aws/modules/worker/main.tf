@@ -80,6 +80,7 @@ locals {
     worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
+    helmr_binary_path                    = var.helmr_binary_path
     autoscaling_group_name               = local.asg_name
     launch_lifecycle_hook_name           = local.launch_hook_name
     launch_readiness_timeout_seconds     = var.launch_lifecycle_heartbeat_timeout_seconds

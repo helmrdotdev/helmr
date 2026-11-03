@@ -50,9 +50,6 @@ func LoadWorker() (Worker, error) {
 	if err := workerpoolname.Validate(cfg.WorkerPoolName); err != nil {
 		return cfg, fmt.Errorf("WORKER_POOL_NAME: %w", err)
 	}
-	if cfg.WorkerEnrollmentTokenFile == "" {
-		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")
-	}
 	var err error
 	for _, limit := range []struct {
 		name   string
@@ -181,19 +178,6 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.NetworkResolverIPv4 == "" {
 		return cfg, errors.New("WORKER_NETWORK_RESOLVER_IPV4 is required")
-	}
-	return cfg, nil
-}
-
-func LoadWorkerControlPlane() (WorkerControlPlane, error) {
-	cfg := WorkerControlPlane{
-		ControlPlaneURL:    envText("CONTROL_PLANE_URL"),
-		WorkerIdentityPath: envText("WORKER_IDENTITY_PATH"),
-		WorkDir:            envText("WORKER_WORK_DIR"),
-		PollEvery:          2 * time.Second,
-	}
-	if cfg.ControlPlaneURL == "" {
-		return cfg, errors.New("CONTROL_PLANE_URL is required")
 	}
 	return cfg, nil
 }

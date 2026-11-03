@@ -9,6 +9,8 @@ volume. The module does not build the worker AMI.
 The AMI must provide:
 
 - `worker` at `worker_binary_path`
+- `helmr` at `helmr_binary_path`; the lifecycle watcher runs `helmr worker status`, `drain` and
+  `fence`
 - the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
 - `/usr/local/sbin/helmr-prepare-root`, matching the checked-in
@@ -77,7 +79,7 @@ operator separately verifies provider convergence and Product readiness.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 worker systemd unit is active. Planned removal first drains the exact host to
-`termination_ready`; `worker drain --wait-timeout` bounds observation only and
+`termination_ready`; `helmr worker drain --wait-timeout` bounds observation only and
 leaves admitted work running when that wait expires. The termination lifecycle
 hook handles provider termination that has already begun. It verifies the local
 instance identity and termination state before bounded cleanup, then fences actual

@@ -99,7 +99,7 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_imagebuilder_component.worker.data, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") &&
       strcontains(local.build_script, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") &&
       strcontains(aws_imagebuilder_component.worker.data, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") &&
-      strcontains(local.build_script, "install -m 0444 \"$work/runtime/$name\"") &&
+      strcontains(local.build_script, "\"$work/installer/helmr\" worker install") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/vmlinuz") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/initramfs") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/rootfs.squashfs") &&

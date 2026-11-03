@@ -177,8 +177,8 @@ HELMR_EXECUTION_POLICY_SUBJECT=finite \
 
 Select `hibernate` for ordinary driver-owned Hibernate/Wake, or `drain` for
 operator-controlled logical Host replacement on the same retained physical host.
-For `drain`, wait for `ready-for-drain.json`, invoke native
-`worker drain --wait-timeout 10m` using the profile's Worker environment, and
+For `drain`, wait for `ready-for-drain.json`, invoke
+`helmr worker drain --wait-timeout 10m` on the Worker host, and
 require successful drain plus `capture-observed.json`. The driver waits up to two
 minutes for a fresh `draining` observation of that exact source Host and Worker
 incarnation, records `draining-observed.json`, then requests ordinary Computer
@@ -293,7 +293,7 @@ is inactive. Write `dispatcher-paused.json` with exactly the observed `computerI
 private temporary file and atomic rename. Pause promptly: a source already captured
 by the ordinary idle path is rejected. Do not run competing `host.py` commands
 during a case; its observations use the existing exclusive profile lock.
-After `command-queued.json`, invoke native `worker drain --wait-timeout 10m` using
+After `command-queued.json`, invoke `helmr worker drain --wait-timeout 10m` using
 the profile's Worker environment. Keep CP running. Require successful drain and
 `capture-observed.json`, then stop/start `helmr-worker.service` and start Dispatcher.
 The driver checks the pending Command survives capture, the source is reclaimed,
@@ -313,7 +313,7 @@ cleanup; interrupted receipts contain the owned Session, Turn and Computer IDs.
 
 For `cases/drain-renewal/run.ts`, allow approximately 40 minutes on the already
 authorized host. After `ready-for-drain.json`, invoke native
-`worker drain --wait=false` using the profile's Worker environment. This returns
+`helmr worker drain --wait-timeout 0` using the profile's Worker environment. This returns
 after CP accepts the drain request. Keep Worker and all profile dependencies
 alive. The Agent uses ordinary JavaScript timers for 36 minutes, preserving its
 memory/file marker; it never requests a managed wait. The driver requires the same

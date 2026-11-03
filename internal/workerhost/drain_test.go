@@ -1,4 +1,4 @@
-package main
+package workerhost
 
 import (
 	"context"
@@ -14,10 +14,10 @@ func TestWaitForDrainCompletionAcceptsMatchingReceipt(t *testing.T) {
 	dir := t.TempDir()
 	result := make(chan error, 1)
 	go func() {
-		result <- waitForDrainCompleteMarker(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
+		result <- WaitForDrainComplete(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
 	}()
 	// The waiter consumes the persisted receipt without a remote status request.
-	if err := writeDrainCompleteMarker(dir, "worker-current"); err != nil {
+	if err := WriteDrainComplete(dir, "worker-current"); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-result; err != nil {
@@ -29,10 +29,10 @@ func TestWaitForDrainCompletionRejectsInvalidReceipts(t *testing.T) {
 	for _, payload := range []string{"worker-previous\n", ""} {
 		t.Run(payload, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, drainCompleteMarkerName), []byte(payload), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, DrainCompleteMarkerName), []byte(payload), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := waitForDrainCompleteMarker(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
+			err := WaitForDrainComplete(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
 			if err == nil || !strings.Contains(err.Error(), "different worker") {
 				t.Fatalf("got %v", err)
 			}
@@ -41,23 +41,23 @@ func TestWaitForDrainCompletionRejectsInvalidReceipts(t *testing.T) {
 }
 
 func TestWaitForDrainCompletionDoesNotInferSuccessWithoutReceipt(t *testing.T) {
-	err := waitForDrainCompleteMarker(t.Context(), t.TempDir(), "worker-current", time.Millisecond, time.Millisecond)
+	err := WaitForDrainComplete(t.Context(), t.TempDir(), "worker-current", time.Millisecond, time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "observation wait expired") {
 		t.Fatalf("got %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := waitForDrainCompleteMarker(ctx, t.TempDir(), "worker-current", time.Second, time.Millisecond); !errors.Is(err, context.Canceled) {
+	if err := WaitForDrainComplete(ctx, t.TempDir(), "worker-current", time.Second, time.Millisecond); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
 	}
 }
 
 func TestWaitForDrainCompletionReportsUnreadableReceipt(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, drainCompleteMarkerName), 0o700); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, DrainCompleteMarkerName), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	err := waitForDrainCompleteMarker(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
+	err := WaitForDrainComplete(t.Context(), dir, "worker-current", time.Second, time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "read drain completion marker") {
 		t.Fatalf("got %v", err)
 	}

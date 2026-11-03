@@ -354,7 +354,7 @@ def start(cfg):
         run('systemctl', 'start', unit(name))
     wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'Control Plane', unit_name=unit('control-plane'))
     run('systemctl', 'start', 'helmr-worker.service')
-    wait_for(lambda: run('/usr/local/bin/worker', 'status', env=dict(os.environ) | cfg['worker'], capture_output=True).returncode == 0, 'Worker readiness', seconds=300, unit_name='helmr-worker.service')
+    wait_for(lambda: run('/usr/local/bin/helmr', 'worker', 'status', '--env', f'{CONFIG}/worker.env', capture_output=True).returncode == 0, 'Worker readiness', seconds=300, unit_name='helmr-worker.service')
     require_active_services()
     print('CP and Worker report ready; all service processes are active. No Agent execution assertion has run.')
 
@@ -363,7 +363,7 @@ def stop(cfg):
     active = state('helmr-worker.service')
     if active == 'active':
         # Keep CP and dispatcher alive until the native drain is acknowledged.
-        run('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
+        run('/usr/local/bin/helmr', 'worker', 'drain', '--env', f'{CONFIG}/worker.env', '--wait-timeout', '5m', timeout=310)
         run('systemctl', 'stop', 'helmr-worker.service', timeout=180)
     elif active != 'inactive':
         raise RuntimeError('Worker is not inactive or active; inspect failure before stopping dependencies')

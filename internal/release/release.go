@@ -59,11 +59,11 @@ const (
 	HostArtifactsManifest    = "worker-host-artifacts.json"
 	RuntimeArtifacts         = "runtime-artifacts.tar"
 	RuntimeArtifactsManifest = "runtime-artifacts.json"
-	LinuxCLI                 = "helmr-linux-amd64.tar.gz"
 )
 
-// HostAssets are the assets a worker host needs to install or update.
-var HostAssets = []string{HostArtifacts, HostArtifactsManifest, RuntimeArtifacts, RuntimeArtifactsManifest, LinuxCLI}
+// HostAssets are the assets a worker host needs to install or update; the
+// host bundle carries the host's own helmr CLI.
+var HostAssets = []string{HostArtifacts, HostArtifactsManifest, RuntimeArtifacts, RuntimeArtifactsManifest}
 
 // ValidVersion reports whether version names a release.
 func ValidVersion(version string) bool { return versionPattern.MatchString(version) }

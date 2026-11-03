@@ -30,6 +30,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
+	"github.com/helmrdotdev/helmr/internal/workerhost"
 )
 
 func run(log *slog.Logger) error {
@@ -51,9 +52,9 @@ func run(log *slog.Logger) error {
 	}
 	workDir := cfg.WorkDir
 	if workDir == "" {
-		workDir = defaultWorkDir()
+		workDir = workerhost.DefaultWorkDir()
 	}
-	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, cfg.JailerChrootDir)
+	workDir, jailerDir, err := workerhost.RecoveryRoots(workDir, cfg.JailerChrootDir)
 	if err != nil {
 		return err
 	}
@@ -100,14 +101,14 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("qualify deployment artifact verifier: %w", err)
 	}
 	log.Info("worker startup phase completed", "phase", "verifier_qualification", "duration_ms", time.Since(phaseStarted).Milliseconds())
-	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(filepath.Join(workDir, workerhost.DrainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
 	var controlPlaneClient *workerclient.Client
 	phaseStarted = time.Now()
-	workerIdentity, err := resolveAuthenticatedWorkerIdentity(ctx, cfg, workDir, func(identity workerIdentityFile) error {
+	workerIdentity, err := workerhost.ResolveAuthenticatedIdentity(ctx, cfg, workDir, func(identity workerhost.Identity) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
-			workerclient.WithAuth(identity.WorkerHostID, identity.key()),
+			workerclient.WithAuth(identity.WorkerHostID, identity.Key()),
 			workerclient.WithService(serviceID),
 			workerclient.WithNetwork(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}),
 		)
@@ -369,7 +370,7 @@ func run(log *slog.Logger) error {
 			return final, computerhost.CheckComputerAttachmentsReleased(filepath.Join(workDir, "tmp"), cfg.ComputerDevices)
 		},
 		DrainCompleted: func(status workerapi.StatusResponse) error {
-			return writeDrainCompleteMarker(workDir, status.WorkerHostID)
+			return workerhost.WriteDrainComplete(workDir, status.WorkerHostID)
 		},
 	})
 	if err != nil {

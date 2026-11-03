@@ -237,8 +237,18 @@ in
     bundleBuilderImage
     runtimeRelease
     ;
+  # The worker host's own CLI: static and unwrapped, since worker commands
+  # need neither Node.js nor Bun.
+  hostHelmr = helmr.overrideAttrs (old: {
+    env = (old.env or { }) // {
+      CGO_ENABLED = "0";
+    };
+    nativeBuildInputs = [ ];
+    postInstall = "";
+  });
   workerHost = pkgs.runCommand "worker-host" { } ''
     install -d "$out/bin" "$out/share/helmr"
+    install -m 0755 "${hostHelmr}/bin/helmr" "$out/bin/helmr"
     install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
     install -m 0755 "${worker}/bin/worker" "$out/bin/worker"
     install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
