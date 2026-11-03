@@ -5,7 +5,6 @@
   unzip,
   crane,
   openssl,
-  openssh,
   baseImage,
   nodeArchive,
   bunArchive,
@@ -103,10 +102,6 @@ dockerTools.buildLayeredImage {
     mkdir -p usr/local
     cp -a ${userTools}/usr/local/. usr/local/
     chmod -R u+w usr/local
-    mkdir -p usr/bin
-    for command in ssh scp sftp ssh-add ssh-agent ssh-keygen ssh-keyscan; do
-      ln -s ${openssh}/bin/"$command" "usr/bin/$command"
-    done
   '';
 
   config = {

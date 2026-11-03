@@ -84,7 +84,6 @@ let
     baseImage = pkgs.callPackage ./builder-base.nix {
       debian = debianImage debianImages.runtimeLibraries;
     };
-    openssh = pkgsBun.openssh;
     nodeArchive = nodeArchive "x86_64-linux";
     bunArchive = pkgsBun.bun.src;
   };
