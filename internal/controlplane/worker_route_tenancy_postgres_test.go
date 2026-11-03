@@ -62,6 +62,8 @@ var workerRouteTenancyExempt = map[string]string{
 	"POST /worker/v1/instance/drain":          "the caller's own host incarnation",
 	"POST /worker/v1/allocations/list":        "lists only allocations held by the caller; the cursor is a position, not authority",
 	"GET /worker/v1/updates":                  "streams only the caller's own updates",
+	"GET /worker/v1/release":                  "the deployment's own release, shared by every host",
+	"POST /worker/v1/release/reads":           "reads only objects of the deployment's own release",
 }
 
 // tenancyVictim is organization A: the sessiontest fixture plus every durable
