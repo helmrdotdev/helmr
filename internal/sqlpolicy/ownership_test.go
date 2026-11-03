@@ -47,6 +47,7 @@ var tableOwners = map[string]string{
 	"org_sso_identities":             "internal/sso",
 	"org_sso_member_bindings":        "internal/sso",
 	"browser_sso_proofs":             "internal/sso",
+	"org_recovery_codes":             "internal/sso",
 	"passkey_credentials":            "internal/identity",
 	"platform_operators":             "internal/identity",
 	"webauthn_challenges":            "internal/identity",
