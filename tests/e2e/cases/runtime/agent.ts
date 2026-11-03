@@ -26,7 +26,7 @@ const base = image("helmr-runtime-smoke")
       "rm -rf /var/lib/apt/lists/*",
     ].join(" && "),
   ])
-  .run(["npm", "install", "-g", "bun@1.3.13"])
+  .run(["npm", "install", "-g", "bun@1.4.4"])
   .workdir("/workspace")
 
 export const runtimeSmokeComputer = template({

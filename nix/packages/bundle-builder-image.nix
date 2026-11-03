@@ -3,6 +3,9 @@
   runCommand,
   dockerTools,
   unzip,
+  skopeo,
+  umoci,
+  openssl,
   baseImage,
   nodeArchive,
   bunArchive,
@@ -14,6 +17,34 @@
 }:
 
 let
+  # Rebuild Debian's bundle and hashed CA directory with the distrusted
+  # Mozilla roots disabled. Keep Debian's selection for later package updates.
+  trustStore =
+    runCommand "helmr-builder-trust-store"
+      {
+        nativeBuildInputs = [
+          skopeo
+          umoci
+          openssl
+        ];
+      }
+      ''
+        skopeo --insecure-policy copy docker-archive:${baseImage} oci:base:bookworm
+        umoci unpack --rootless --image base:bookworm unpacked
+        root="$PWD/unpacked/rootfs"
+        sed -i -E '/^mozilla\/emSign_(ECC_Root_CA_-_(C3|G3)|Root_CA_-_C1)\.crt$/s/^/!/' "$root/etc/ca-certificates.conf"
+        sh -e "$root/usr/sbin/update-ca-certificates" --sysroot "$root" --fresh --hooksdir "$TMPDIR/no-hooks"
+        mkdir -p "$out/etc/ssl"
+        cp "$root/etc/ca-certificates.conf" "$out/etc/"
+        cp -a "$root/etc/ssl/certs" "$out/etc/ssl/"
+        # The sysroot helper creates sysroot-prefixed absolute PEM symlinks.
+        for link in "$out/etc/ssl/certs/"*.pem; do
+          target=$(readlink "$link")
+          ln -sfn "''${target#"$root"}" "$link"
+        done
+        # Hide old hash and PEM links from lower OCI layers.
+        touch "$out/etc/ssl/certs/.wh..wh..opq"
+      '';
   # Helmr's verified tools live only under /opt/helmr and /nix, the two trees
   # the build graph mounts read-only from this pinned image.
   platform = runCommand "helmr-bundle-builder-platform" { } ''
@@ -63,6 +94,7 @@ dockerTools.buildLayeredImage {
   # Exported compiler/runtime paths must be real files so the scratch bundling
   # stage can copy only that closure. Native filesystem tools keep store links.
   extraCommands = ''
+    cp -a ${trustStore}/etc .
     rm -rf opt/helmr nix/helmr
     mkdir -p opt/helmr nix/helmr
     cp -a ${platform}/opt/helmr/. opt/helmr/

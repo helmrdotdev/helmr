@@ -7,6 +7,8 @@ export const workspace = template({
   image: image(agentName)
     .from("node:24-bookworm-slim")
     .run(["sh", "-ceu", "apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep && rm -rf /var/lib/apt/lists/*"])
+    .run(["sed", "-i", "-E", "/^mozilla[/]emSign_(ECC_Root_CA_-_(C3|G3)|Root_CA_-_C1)[.]crt$/s/^/!/", "/etc/ca-certificates.conf"])
+    .run(["update-ca-certificates", "--fresh"])
     .run(["mkdir", "-p", "/var/lib/helmr/codex"])
     .workdir("/workspace"),
   resources: { cpu: 2, memory: "4GiB" },
