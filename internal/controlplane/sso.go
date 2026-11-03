@@ -13,7 +13,6 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -26,6 +25,7 @@ const (
 	browserAuthSSOSignIn   browserAuthKind = "sso_sign_in"
 	browserAuthSSOSelfLink browserAuthKind = "sso_self_link"
 	browserAuthSSOLink     browserAuthKind = "sso_link"
+	browserAuthSSOTest     browserAuthKind = "sso_test"
 )
 
 // SSO flows use the ordinary Lax auth-flow cookie, except two:
@@ -193,7 +193,17 @@ func (s *Server) flowConnection(ctx context.Context, flow browserAuthFlow) (sso.
 	if err != nil || s.ssoStore == nil {
 		return sso.Connection{}, sso.ErrConnectionNotFound
 	}
-	connection, err := s.ssoStore.ActiveByID(ctx, s.tx, id)
+	// A test signs in through the candidate; everything else through the
+	// active connection.
+	var connection sso.Connection
+	if flow.Kind == browserAuthSSOTest {
+		connection, err = s.ssoStore.ByID(ctx, s.tx, id)
+		if err == nil && connection.State != "candidate" {
+			err = sso.ErrConnectionNotFound
+		}
+	} else {
+		connection, err = s.ssoStore.ActiveByID(ctx, s.tx, id)
+	}
 	if err != nil {
 		return sso.Connection{}, err
 	}
@@ -204,7 +214,7 @@ func (s *Server) flowConnection(ctx context.Context, flow browserAuthFlow) (sso.
 }
 
 func ssoStartKind(kind browserAuthKind) bool {
-	return kind == browserAuthSSOSignIn || kind == browserAuthSSOSelfLink
+	return kind == browserAuthSSOSignIn || kind == browserAuthSSOSelfLink || kind == browserAuthSSOTest
 }
 
 func (s *Server) ssoOIDCFinish(w http.ResponseWriter, r *http.Request) {
@@ -262,8 +272,11 @@ func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 	var flow browserAuthFlow
 	fail := func(code string) {
 		page := "/login"
-		if flow.Kind == browserAuthSSOSelfLink {
+		switch flow.Kind {
+		case browserAuthSSOSelfLink:
 			page = "/settings/security"
+		case browserAuthSSOTest:
+			page = "/settings/sso"
 		}
 		http.Redirect(w, r, page+"?sso_error="+url.QueryEscape(code), http.StatusSeeOther)
 	}
@@ -293,8 +306,10 @@ func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 	assertion, err := sp.Validate(r.PostForm.Get("SAMLResponse"), flow.SSORequestID)
 	if err == nil {
 		err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-			if _, err := sso.LockActive(r.Context(), tx, connection.ID); err != nil {
-				return err
+			if flow.Kind != browserAuthSSOTest {
+				if _, err := sso.LockActive(r.Context(), tx, connection.ID); err != nil {
+					return err
+				}
 			}
 			return sso.ConsumeAssertion(r.Context(), tx, connection.ID, assertion)
 		})
@@ -337,6 +352,21 @@ func (s *Server) ssoSAMLFinish(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browserAuthFlow, connection sso.Connection, validated sso.Identity) {
 	a := identity.SSOAssertion{ConnectionID: connection.ID, Protocol: connection.Protocol, Identity: validated}
+	if flow.Kind == browserAuthSSOTest {
+		p := s.optionalAccount(r)
+		member, memberErr := uuid.Parse(flow.MemberID)
+		fingerprint, fingerprintErr := base64.RawURLEncoding.DecodeString(flow.SSOFingerprint)
+		if memberErr != nil || fingerprintErr != nil || flow.SessionID == uuid.Nil() || p.SessionID != flow.SessionID {
+			s.writeIdentityError(w, r, identity.ErrWrongAccount)
+			return
+		}
+		if err := identity.CompleteSSOTest(r.Context(), s.tx, s.identity, s.ssoStore, p, connection.OrgID, member, connection.ID, fingerprint); err != nil {
+			s.writeOperationError(w, r, ssoAdminError(err))
+			return
+		}
+		writeJSON(w, http.StatusOK, api.SSOFinishResponse{RedirectAfter: "/settings/sso?tested=" + url.QueryEscape(connection.ID.String())})
+		return
+	}
 	if flow.Kind == browserAuthSSOSelfLink {
 		p := s.optionalAccount(r)
 		member, err := uuid.Parse(flow.MemberID)
@@ -453,13 +483,9 @@ func (s *Server) accountSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("organization_id is invalid")))
 		return
 	}
-	member, err := access.SessionPrincipal(r.Context(), s.tx, p.SessionID, orgID)
-	if errors.Is(err, access.ErrDenied) {
-		s.writeIdentityError(w, r, identity.ErrSSONotEligible)
-		return
-	}
+	member, err := identity.LiveMember(r.Context(), s.tx, p, orgID)
 	if err != nil {
-		writeError(w, err)
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	if s.ssoStore == nil {
@@ -471,7 +497,7 @@ func (s *Server) accountSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.writeSSOStart(w, r, connection, browserAuthFlow{Kind: browserAuthSSOSelfLink, MemberID: member.MemberID.String(), UserID: p.UserID.String()}, request.Reauthenticate)
+	s.writeSSOStart(w, r, connection, browserAuthFlow{Kind: browserAuthSSOSelfLink, MemberID: member.String(), UserID: p.UserID.String()}, request.Reauthenticate)
 }
 
 func (s *Server) accountSSOBindings(w http.ResponseWriter, r *http.Request) {

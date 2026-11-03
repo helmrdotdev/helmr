@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -17,7 +18,8 @@ import (
 
 var (
 	ErrSSONotEligible              = errors.New("this company identity has no membership in the organization yet")
-	ErrSSOReauthenticationRequired = errors.New("sign in again at your company identity provider")
+	ErrSSOReauthenticationRequired = access.ErrSSOReauthenticationRequired
+	ErrSSORequired                 = access.ErrSSORequired
 	ErrSSOIdentityConflict         = errors.New("this company identity or membership is already linked to another")
 	ErrOrdinarySignInRequired      = errors.New("sign in with your email, a passkey or GitHub to continue")
 )
@@ -115,6 +117,18 @@ func LinkSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Pri
 		}
 		return bindSSO(ctx, tx, cfg, p, orgID, member, a)
 	})
+}
+
+// LiveMember finds the account's live membership of an organization without
+// admitting the browser to it: a member who must link SSO before entering a
+// required-SSO organization starts the link from their account.
+func LiveMember(ctx context.Context, q db.DBTX, p auth.Principal, orgID uuid.UUID) (uuid.UUID, error) {
+	var member uuid.UUID
+	err := q.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, orgID, p.UserID).Scan(&member)
+	if isNoRows(err) {
+		return uuid.Nil(), ErrSSONotEligible
+	}
+	return member, err
 }
 
 // SSOLink is a validated identity without a binding, carried to first

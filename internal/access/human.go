@@ -25,8 +25,16 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	}
 	p := auth.Principal{Kind: auth.PrincipalKindSession, SessionID: sessionID, UserID: pgvalue.MustUUIDValue(row.UserID), Channel: row.Channel}
 	p.IdentityID, p.PasskeyID, p.AuthenticatedAt = nullableID(row.IdentityID), nullableID(row.PasskeyID), row.AuthenticatedAt.Time
+	if p.IdentityID != uuid.Nil() {
+		if err := database.QueryRow(ctx, `SELECT provider FROM auth_identities WHERE id=$1`, p.IdentityID).Scan(&p.ProofProvider); err != nil {
+			return auth.Principal{}, humanReadError(err)
+		}
+	}
 	if row.Channel == "cli" {
 		p.OrgID, p.MemberID = pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.MemberID)
+		if row.SsoProofID.Valid {
+			p.SSOProofID, p.SSOAuthenticatedAt = pgvalue.MustUUIDValue(row.SsoProofID), row.AuthenticatedAt.Time
+		}
 		if target != uuid.Nil() && target != p.OrgID {
 			return p, ErrDenied
 		}
@@ -40,20 +48,18 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 }
 
 // loadSSOProof reads a browser session's live SSO proof for its organization:
-// unrevoked, unexpired under the organization's lifetime, and derived from a
-// live binding through an active connection.
+// unrevoked, unexpired under the organization's lifetime, and either from an
+// owner's recovery code or from a live binding through an active connection.
 func loadSSOProof(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, uuid.UUID, error) {
 	p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
-	if p.Channel != "browser" || p.SlackLinkID != uuid.Nil() {
-		return p, uuid.Nil(), nil
-	}
 	var member uuid.UUID
 	err := q.QueryRow(ctx, `SELECT p.id,p.authenticated_at,p.member_id FROM browser_sso_proofs p
- JOIN org_sso_member_bindings b ON b.id=p.binding_id AND b.retired_at IS NULL
- JOIN org_sso_identities i ON i.id=b.identity_id
- JOIN org_sso_connections c ON c.id=i.connection_id AND c.state='active'
  JOIN organizations o ON o.id=p.org_id
+ LEFT JOIN org_sso_member_bindings b ON b.id=p.binding_id
+ LEFT JOIN org_sso_identities i ON i.id=b.identity_id
+ LEFT JOIN org_sso_connections c ON c.id=i.connection_id
  WHERE p.session_id=$1 AND p.org_id=$2 AND p.user_id=$3 AND p.revoked_at IS NULL
+ AND (p.recovery_code_id IS NOT NULL OR (b.retired_at IS NULL AND c.state='active'))
  AND p.authenticated_at+make_interval(secs=>COALESCE(o.sso_session_seconds,86400))>clock_timestamp()`, p.SessionID, p.OrgID, p.UserID).Scan(&p.SSOProofID, &p.SSOAuthenticatedAt, &member)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, uuid.Nil(), nil
@@ -74,29 +80,42 @@ func humanReadError(err error) error {
 	return err
 }
 
-// attachMembership admits a principal to its organization. A browser is
-// admitted by its ordinary proof or by its live SSO proof for that
-// organization; the member's cutoff applies to whichever admits it.
+// attachMembership admits a principal to its organization. Under optional SSO
+// a browser is admitted by its ordinary proof or by its live SSO proof for the
+// organization, and the member's cutoff applies to whichever admits it. Under
+// required SSO only the SSO proof admits a browser, and a CLI session must have
+// been approved with one.
 func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, error) {
 	var id uuid.UUID
 	var cutoff pgtype.Timestamptz
-	err := q.QueryRow(ctx, `SELECT id,is_owner,reauthenticate_after FROM org_members
- WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL AND suspended_at IS NULL FOR SHARE`, p.OrgID, p.UserID).Scan(&id, &p.IsOwner, &cutoff)
+	err := q.QueryRow(ctx, `SELECT m.id,m.is_owner,m.reauthenticate_after,o.sso_required FROM org_members m JOIN organizations o ON o.id=m.org_id
+ WHERE m.org_id=$1 AND m.user_id=$2 AND m.removed_at IS NULL AND m.suspended_at IS NULL FOR SHARE OF m`, p.OrgID, p.UserID).Scan(&id, &p.IsOwner, &cutoff, &p.SSORequired)
 	if err != nil {
 		return p, humanReadError(err)
 	}
 	if p.MemberID != uuid.Nil() && p.MemberID != id {
 		return p, ErrDenied
 	}
-	p, proofMember, err := loadSSOProof(ctx, q, p)
-	if err != nil {
-		return p, err
-	}
-	if proofMember != uuid.Nil() && proofMember != id {
-		p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
-	}
 	after := func(at time.Time) bool { return !at.IsZero() && (!cutoff.Valid || at.After(cutoff.Time)) }
-	if !after(p.AuthenticatedAt) && !after(p.SSOAuthenticatedAt) {
+	if p.Channel == "browser" && p.SlackLinkID == uuid.Nil() {
+		var proofMember uuid.UUID
+		if p, proofMember, err = loadSSOProof(ctx, q, p); err != nil {
+			return p, err
+		}
+		if proofMember != uuid.Nil() && proofMember != id {
+			p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
+		}
+		if p.SSORequired {
+			if p.SSOProofID == uuid.Nil() {
+				return p, ErrSSORequired
+			}
+			if !after(p.SSOAuthenticatedAt) {
+				return p, ErrSSOReauthenticationRequired
+			}
+		} else if !after(p.AuthenticatedAt) && !after(p.SSOAuthenticatedAt) {
+			return p, ErrDenied
+		}
+	} else if (p.SSORequired && p.Channel == "cli" && p.SSOProofID == uuid.Nil()) || !after(p.AuthenticatedAt) {
 		return p, ErrDenied
 	}
 	p.MemberID = id

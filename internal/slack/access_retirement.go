@@ -24,3 +24,15 @@ func RetireMemberAccess(ctx context.Context, tx pgx.Tx, org, member uuid.UUID) e
 	_, err := tx.Exec(ctx, `UPDATE slack_link_requests SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL`, org, member)
 	return err
 }
+
+// RetireOrganizationLinks retires every Slack link and pending link request of
+// the organization, when it starts requiring SSO, and returns how many links
+// it retired.
+func RetireOrganizationLinks(ctx context.Context, tx pgx.Tx, org uuid.UUID) (int, error) {
+	tag, err := tx.Exec(ctx, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE org_id=$1 AND revoked_at IS NULL`, org)
+	if err != nil {
+		return 0, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE slack_link_requests SET revoked_at=clock_timestamp() WHERE org_id=$1 AND revoked_at IS NULL`, org)
+	return int(tag.RowsAffected()), err
+}

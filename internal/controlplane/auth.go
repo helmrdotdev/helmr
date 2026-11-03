@@ -243,6 +243,10 @@ func (s *Server) requireSessionWithErrorWriter(
 // Cookie-only entry has no HTTP authentication scheme to challenge. The
 // explicit code drives browser continuation without advertising bearer access.
 func writeCookieAuthError(w http.ResponseWriter, _ *slog.Logger, err error) {
+	if errors.Is(err, identity.ErrSSORequired) || errors.Is(err, identity.ErrSSOReauthenticationRequired) {
+		writeError(w, identityError(err))
+		return
+	}
 	if errors.Is(err, identity.ErrOrganizationAccessDenied) {
 		writeError(w, forbidden(codedError{code: "access_denied", message: "Organization access is unavailable."}))
 		return
@@ -255,6 +259,10 @@ func writeCookieAuthError(w http.ResponseWriter, _ *slog.Logger, err error) {
 }
 
 func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, err error) {
+	if errors.Is(err, identity.ErrSSORequired) || errors.Is(err, identity.ErrSSOReauthenticationRequired) {
+		writeError(w, identityError(err))
+		return
+	}
 	if errors.Is(err, identity.ErrOrganizationAccessDenied) {
 		writeError(w, forbidden(codedError{code: "access_denied", message: "Organization access is unavailable."}))
 		return

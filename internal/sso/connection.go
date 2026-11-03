@@ -148,6 +148,13 @@ func (s *Store) Active(ctx context.Context, q db.DBTX, org uuid.UUID) (Connectio
  FROM org_sso_connections WHERE org_id=$1 AND state='active'`, org))
 }
 
+// ByID reads a connection in any state without locking it.
+func (s *Store) ByID(ctx context.Context, q db.DBTX, id uuid.UUID) (Connection, error) {
+	return s.scan(q.QueryRow(ctx, `SELECT id,org_id,protocol,state,oidc_issuer,oidc_client_id,oidc_secret_ciphertext,oidc_secret_nonce,
+ saml_idp_entity_id,saml_sso_url,saml_certificates,tested_at,created_at,activated_at
+ FROM org_sso_connections WHERE id=$1`, id))
+}
+
 // HasActive reports whether an organization has an active connection.
 func HasActive(ctx context.Context, q db.DBTX, org uuid.UUID) (bool, error) {
 	var active bool

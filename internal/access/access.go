@@ -5,6 +5,7 @@ package access
 import (
 	"context"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -13,6 +14,14 @@ import (
 )
 
 var ErrDenied = errors.New("permission is required")
+
+// ErrSSORequired refuses a browser without a live SSO proof for an organization
+// that requires SSO. ErrSSOReauthenticationRequired refuses one whose proof is
+// not after the member's sign-in cutoff. Both are denials.
+var (
+	ErrSSORequired                 = fmt.Errorf("this organization requires single sign-on: %w", ErrDenied)
+	ErrSSOReauthenticationRequired = fmt.Errorf("sign in again with single sign-on: %w", ErrDenied)
+)
 
 // PrincipalUnavailable preserves only the predicate observed during a refresh.
 // Not-found predicates do not distinguish revocation, expiry or missing membership.

@@ -46,6 +46,33 @@ type SSOBindingDetails struct {
 
 func (SSOBindingDetails) auditDetails() {}
 
+// SSOConnectionDetails names a connection's protocol; its configuration is
+// never recorded.
+type SSOConnectionDetails struct {
+	Protocol string `json:"protocol"`
+}
+
+func (SSOConnectionDetails) auditDetails() {}
+
+// SSOPolicyDetails records a policy change and what requiring SSO revoked.
+type SSOPolicyDetails struct {
+	RequiredBefore       bool   `json:"required_before"`
+	RequiredAfter        bool   `json:"required_after"`
+	SessionSecondsBefore *int32 `json:"session_seconds_before,omitempty"`
+	SessionSecondsAfter  *int32 `json:"session_seconds_after,omitempty"`
+	RevokedCLISessions   int    `json:"revoked_cli_sessions"`
+	RevokedSlackLinks    int    `json:"revoked_slack_links"`
+}
+
+func (SSOPolicyDetails) auditDetails() {}
+
+// SSORecoveryDetails records how many recovery codes the live set has left.
+type SSORecoveryDetails struct {
+	Remaining int `json:"remaining"`
+}
+
+func (SSORecoveryDetails) auditDetails() {}
+
 func (MembershipDetails) auditDetails()      {}
 func (InvitationStateDetails) auditDetails() {}
 
@@ -217,7 +244,16 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		d, ok := details.(AccessChangeDetails)
 		valid = ok && (d.Before != nil || d.After != nil)
-	case "sso.binding_created":
+	case "sso.connection_created", "sso.connection_updated", "sso.connection_tested", "sso.connection_activated", "sso.connection_retired":
+		d, ok := details.(SSOConnectionDetails)
+		valid = ok && (d.Protocol == "oidc" || d.Protocol == "saml")
+	case "sso.policy_updated":
+		d, ok := details.(SSOPolicyDetails)
+		valid = ok && d.RevokedCLISessions >= 0 && d.RevokedSlackLinks >= 0
+	case "sso.recovery_codes_generated", "sso.recovery_code_used":
+		d, ok := details.(SSORecoveryDetails)
+		valid = ok && d.Remaining >= 0
+	case "sso.binding_created", "sso.binding_retired":
 		d, ok := details.(SSOBindingDetails)
 		valid = ok && d.ConnectionID != uuid.Nil() && d.IdentityID != uuid.Nil() && d.Subject != "" && len(d.Subject) <= 512
 	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":

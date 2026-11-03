@@ -29,7 +29,8 @@ func ProvedRecently(at, now time.Time) bool {
 // RequireRecentProof is called after admission. Activity does not refresh
 // proof time. Slack sends security changes to the browser. A CLI login was
 // approved from a browser with recent proof, and that approval is
-// its proof, so CLI sessions never need recent proof again.
+// its proof, so CLI sessions never need recent proof again. A browser's live
+// SSO proof for the organization counts like its ordinary proof.
 func RequireRecentProof(p Principal) error {
 	if p.Kind != PrincipalKindSession && p.Kind != PrincipalKindOperator {
 		return nil
@@ -37,10 +38,23 @@ func RequireRecentProof(p Principal) error {
 	if p.Kind == PrincipalKindSession && p.Channel == "cli" && p.SlackLinkID == uuid.Nil() {
 		return nil
 	}
-	if p.SlackLinkID != uuid.Nil() || !ProvedRecently(p.AuthenticatedAt, time.Now()) {
+	if p.SlackLinkID != uuid.Nil() {
 		return ErrRecentProofRequired
 	}
-	return nil
+	now := time.Now()
+	if p.SSORequired {
+		// The organization's SSO proof must be live. Fresh SSO proves it, and so
+		// does the account's own passkey or email code; GitHub does not, because
+		// it is not an account credential the organization controls.
+		if p.SSOProofID != uuid.Nil() && (ProvedRecently(p.SSOAuthenticatedAt, now) || (ProvedRecently(p.AuthenticatedAt, now) && p.ProofProvider != "github")) {
+			return nil
+		}
+		return ErrRecentProofRequired
+	}
+	if ProvedRecently(p.AuthenticatedAt, now) || (p.SSOProofID != uuid.Nil() && ProvedRecently(p.SSOAuthenticatedAt, now)) {
+		return nil
+	}
+	return ErrRecentProofRequired
 }
 
 // Recent proof guards what adds authority or issues credentials. Removing

@@ -53,3 +53,87 @@ type AccountSSOBinding struct {
 type AccountSSOBindingsResponse struct {
 	Bindings []AccountSSOBinding `json:"bindings"`
 }
+
+type SSOConnection struct {
+	ID               string   `json:"id"`
+	Protocol         string   `json:"protocol"`
+	State            string   `json:"state"`
+	OIDCIssuer       string   `json:"oidc_issuer,omitempty"`
+	OIDCClientID     string   `json:"oidc_client_id,omitempty"`
+	SAMLEntityID     string   `json:"saml_entity_id,omitempty"`
+	SAMLSSOURL       string   `json:"saml_sso_url,omitempty"`
+	SAMLCertificates []string `json:"saml_certificates,omitempty"`
+	// The values an administrator copies into the identity provider.
+	ServiceProviderEntityID string  `json:"service_provider_entity_id,omitempty"`
+	ServiceProviderACSURL   string  `json:"service_provider_acs_url,omitempty"`
+	OIDCRedirectURL         string  `json:"oidc_redirect_url,omitempty"`
+	TestedAt                *string `json:"tested_at"`
+	CreatedAt               string  `json:"created_at"`
+	ActivatedAt             *string `json:"activated_at"`
+}
+
+type SSORecoveryCodesStatus struct {
+	Remaining   int     `json:"remaining"`
+	GeneratedAt *string `json:"generated_at"`
+}
+
+type SSOStatusResponse struct {
+	Required        bool                   `json:"required"`
+	SessionSeconds  *int32                 `json:"session_seconds"`
+	Active          *SSOConnection         `json:"active"`
+	Candidate       *SSOConnection         `json:"candidate"`
+	MembersLinked   int                    `json:"members_linked"`
+	MembersTotal    int                    `json:"members_total"`
+	RecoveryCodes   SSORecoveryCodesStatus `json:"recovery_codes"`
+	OIDCRedirectURL string                 `json:"oidc_redirect_url"`
+}
+
+// SSOConnectionCreateRequest creates a candidate: OIDC with issuer, client ID
+// and secret, or SAML with pasted metadata or its three fields.
+type SSOConnectionCreateRequest struct {
+	Protocol     string   `json:"protocol"`
+	Issuer       string   `json:"issuer,omitempty"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	MetadataXML  string   `json:"metadata_xml,omitempty"`
+	EntityID     string   `json:"entity_id,omitempty"`
+	SSOURL       string   `json:"sso_url,omitempty"`
+	Certificates []string `json:"certificates,omitempty"`
+}
+
+// SSOConnectionUpdateRequest rotates material: an OIDC client secret, or SAML
+// metadata or sign-in URL and certificates.
+type SSOConnectionUpdateRequest struct {
+	ClientSecret *string  `json:"client_secret,omitempty"`
+	MetadataXML  string   `json:"metadata_xml,omitempty"`
+	SSOURL       string   `json:"sso_url,omitempty"`
+	Certificates []string `json:"certificates,omitempty"`
+}
+
+type SSOPolicyResponse struct {
+	Required           bool   `json:"required"`
+	SessionSeconds     *int32 `json:"session_seconds"`
+	RevokedCLISessions int    `json:"revoked_cli_sessions"`
+	RevokedSlackLinks  int    `json:"revoked_slack_links"`
+}
+
+type SSOMember struct {
+	MemberID    string  `json:"member_id"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Subject     string  `json:"subject,omitempty"`
+	LinkedAt    *string `json:"linked_at"`
+}
+
+type SSOMembersResponse struct {
+	Members []SSOMember `json:"members"`
+}
+
+type SSORecoveryCodesResponse struct {
+	Codes []string `json:"codes"`
+}
+
+type AccountSSORecoverRequest struct {
+	OrganizationID string `json:"organization_id"`
+	Code           string `json:"code"`
+}

@@ -50,6 +50,8 @@ func (n SecurityNotification) Text() string {
 		"identity.access_revoked":       "All human access to your account was revoked. Sign in again to continue.",
 		"identity.other_access_revoked": "Your account was signed out of every other browser, CLI and Slack.",
 		"identity.account_repaired":     "A deployment operator completed supervised account recovery and revoked previous access.",
+		"sso.recovery_code_used":        "An owner of your organization signed in with a single sign-on recovery code.",
+		"sso.recovery_codes_generated":  "An owner of your organization generated new single sign-on recovery codes. The previous codes no longer work.",
 	}[n.Event]
 	return description + "\nIf you did not request this change, contact your deployment administrator."
 }

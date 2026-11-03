@@ -66,6 +66,8 @@ type browserAuthFlow struct {
 	SSOSubject         string    `json:"sso_subject,omitempty"`
 	SSOEmail           string    `json:"sso_email,omitempty"`
 	SSOAuthenticatedAt time.Time `json:"sso_authenticated_at,omitzero"`
+	// SSOFingerprint is a tested connection's material at the test's start.
+	SSOFingerprint string `json:"sso_fingerprint,omitempty"`
 }
 
 type browserAuthEnvelope struct {
@@ -387,6 +389,8 @@ func identityError(err error) error {
 		return notFound(codedError{code: "sso_not_available", message: "Single sign-on is not available for this organization."})
 	case errors.Is(err, identity.ErrSSONotEligible):
 		return forbidden(codedError{code: "sso_not_eligible", message: "Ask an owner of this organization to invite you, then sign in with single sign-on again."})
+	case errors.Is(err, identity.ErrSSORequired):
+		return forbidden(codedError{code: "sso_required", message: "This organization requires single sign-on. Sign in with your company identity provider."})
 	case errors.Is(err, identity.ErrSSOReauthenticationRequired):
 		return forbidden(codedError{code: "sso_reauthentication_required", message: "Sign in again at your company identity provider."})
 	case errors.Is(err, identity.ErrSSOIdentityConflict):

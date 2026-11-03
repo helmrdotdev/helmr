@@ -60,6 +60,8 @@ DELETE /api/groups/{id}
 DELETE /api/groups/{id}/members/{memberID}
 DELETE /api/invitations/{id}
 DELETE /api/members/{memberID}
+DELETE /api/organization/sso/connections/{connectionID}
+DELETE /api/organization/sso/members/{memberID}/binding
 DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agent}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
@@ -96,6 +98,8 @@ GET /api/me
 GET /api/members
 GET /api/members/{memberID}/permissions
 GET /api/organization
+GET /api/organization/sso
+GET /api/organization/sso/members
 GET /api/organizations
 GET /api/ownership/members
 GET /api/permission-catalog
@@ -199,6 +203,8 @@ PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/account
 PATCH /api/groups/{id}
+PATCH /api/organization/sso
+PATCH /api/organization/sso/connections/{connectionID}
 PATCH /api/projects/{project}
 PATCH /api/projects/{project}/environments/{environment}
 PATCH /api/projects/{project}/settings
@@ -237,6 +243,7 @@ POST /api/account/passkeys/complete
 POST /api/account/passkeys/options
 POST /api/account/providers/github/link
 POST /api/account/sso/link
+POST /api/account/sso/recover
 POST /api/auth/device/approve
 POST /api/auth/device/deny
 POST /api/auth/device/start
@@ -262,6 +269,10 @@ POST /api/invitations
 POST /api/members/{memberID}/resume
 POST /api/members/{memberID}/revoke-sessions
 POST /api/members/{memberID}/suspend
+POST /api/organization/sso/connections
+POST /api/organization/sso/connections/{connectionID}/activate
+POST /api/organization/sso/connections/{connectionID}/test
+POST /api/organization/sso/recovery-codes
 POST /api/organizations
 POST /api/ownership/recover-access
 POST /api/projects

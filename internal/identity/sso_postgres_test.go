@@ -71,8 +71,8 @@ func TestSSOSignInIssuesSessionThatEntersOnlyItsOrganization(t *testing.T) {
 	if err != nil || p.MemberID != member || p.SSOProofID == uuid.Nil() || !p.AuthenticatedAt.IsZero() {
 		t.Fatalf("organization admission = %+v, %v", p, err)
 	}
-	if err := auth.RequireRecentProof(p); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatalf("SSO proof counted as ordinary recent proof: %v", err)
+	if err := auth.RequireRecentProof(p); err != nil {
+		t.Fatalf("a fresh SSO proof is recent proof for its organization: %v", err)
 	}
 	if _, err := f.admits(t, result.Session, other); !errors.Is(err, ErrOrganizationAccessDenied) {
 		t.Fatalf("another organization admitted an SSO-only session: %v", err)

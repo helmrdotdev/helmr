@@ -304,7 +304,7 @@ func (e Evidence) Validate() error {
 	if c.Result != "verified" && (c.CredentialID != uuid.Nil() || c.CredentialVersion != 0 || e.RuntimeGeneration != 0 || e.ProcessEpoch != 0) {
 		return errors.New("unverified credential reference")
 	}
-	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "device_code", "email_code", "passkey", "slack_link", "sso_assertion"}, c.CredentialKind) {
+	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "device_code", "email_code", "passkey", "slack_link", "sso_assertion", "recovery_code"}, c.CredentialKind) {
 		return errors.New("invalid credential kind")
 	}
 	if c.Result == "verified" && c.CredentialKind == "" {
@@ -329,10 +329,10 @@ func (e Evidence) Validate() error {
 		return errors.New("invalid operator credential")
 	}
 	if a.UserID != uuid.Nil() {
-		if !slices.Contains([]string{"login_session", "provider_assertion", "device_code", "email_code", "passkey", "slack_link", "sso_assertion"}, c.CredentialKind) {
+		if !slices.Contains([]string{"login_session", "provider_assertion", "device_code", "email_code", "passkey", "slack_link", "sso_assertion", "recovery_code"}, c.CredentialKind) {
 			return errors.New("invalid user credential")
 		}
-		if (c.CredentialKind == "login_session" || c.CredentialKind == "device_code" || c.CredentialKind == "sso_assertion") && c.CredentialID == uuid.Nil() {
+		if (c.CredentialKind == "login_session" || c.CredentialKind == "device_code" || c.CredentialKind == "sso_assertion" || c.CredentialKind == "recovery_code") && c.CredentialID == uuid.Nil() {
 			return errors.New("user credential reference required")
 		}
 		if c.CredentialKind == "provider_assertion" && c.Provider == "" {

@@ -1,11 +1,14 @@
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM audit_events WHERE credential_kind='sso_assertion') OR EXISTS(SELECT 1 FROM login_sessions WHERE authenticated_at IS NULL) THEN
+ IF EXISTS(SELECT 1 FROM audit_events WHERE credential_kind IN ('sso_assertion','recovery_code')) OR EXISTS(SELECT 1 FROM account_security_notifications WHERE event LIKE 'sso.%') OR EXISTS(SELECT 1 FROM login_sessions WHERE sso_proof_id IS NOT NULL) OR EXISTS(SELECT 1 FROM login_sessions WHERE authenticated_at IS NULL) THEN
  RAISE EXCEPTION 'SSO downgrade requires a pre-cutover backup'; END IF;
 END $$;
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
 ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','device_code','email_code','passkey','slack_link'));
 ALTER TABLE audit_events DROP CONSTRAINT audit_user_credential_kind;
 ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','device_code','email_code','passkey','slack_link'));
+
+ALTER TABLE account_security_notifications DROP CONSTRAINT account_security_notifications_event_check;
+ALTER TABLE account_security_notifications ADD CONSTRAINT account_security_notifications_event_check CHECK (event IN ('identity.email_changed','identity.credential_added','identity.credential_removed','identity.access_revoked','identity.other_access_revoked','identity.account_repaired'));
 
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape;
 ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
@@ -21,10 +24,12 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
 );
 ALTER TABLE login_sessions ALTER COLUMN authenticated_at SET NOT NULL;
 
+ALTER TABLE login_sessions DROP COLUMN sso_proof_id;
 DROP TABLE browser_sso_proofs;
+DROP TABLE org_recovery_codes;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_id_user_id_key;
 DROP TABLE org_sso_member_bindings;
 DROP TABLE org_sso_identities;
-ALTER TABLE organizations DROP COLUMN sso_session_seconds;
+ALTER TABLE organizations DROP COLUMN sso_session_seconds, DROP COLUMN sso_required;
 DROP TABLE saml_consumed_assertions;
 DROP TABLE org_sso_connections;
