@@ -261,8 +261,8 @@ function SetupDialog(props: { replacing: boolean; onClose: () => void; onCreated
   const [metadata, setMetadata] = createSignal(""); const [entityID, setEntityID] = createSignal(""); const [ssoURL, setSSOURL] = createSignal(""); const [certs, setCerts] = createSignal("");
   const [busy, setBusy] = createSignal(false); const [error, setError] = createSignal("");
   const input = (): SSOConnectionInput => protocol() === "oidc"
-    ? { protocol: "oidc", issuer: issuer().trim(), client_id: clientID().trim(), client_secret: secret() }
-    : metadata().trim() ? { protocol: "saml", metadata_xml: metadata() } : { protocol: "saml", entity_id: entityID().trim(), sso_url: ssoURL().trim(), certificates: certificates(certs()) };
+    ? { protocol: "oidc", oidc_issuer: issuer().trim(), oidc_client_id: clientID().trim(), oidc_client_secret: secret() }
+    : metadata().trim() ? { protocol: "saml", saml_metadata_xml: metadata() } : { protocol: "saml", saml_entity_id: entityID().trim(), saml_sso_url: ssoURL().trim(), saml_certificates: certificates(certs()) };
   const ready = () => protocol() === "oidc" ? !!issuer().trim() && !!clientID().trim() && !!secret() : !!metadata().trim() || (!!entityID().trim() && !!ssoURL().trim() && !!certs().trim());
   const submit = async () => {
     setBusy(true); setError("");
@@ -302,7 +302,7 @@ function UpdateDialog(props: { connection: SSOConnection; onClose: () => void; o
   const submit = async () => {
     setBusy(true); setError("");
     try {
-      await updateSSOConnection(props.connection.id, oidc() ? { client_secret: secret() } : metadata().trim() ? { metadata_xml: metadata() } : { sso_url: ssoURL().trim(), certificates: certificates(certs()) });
+      await updateSSOConnection(props.connection.id, oidc() ? { oidc_client_secret: secret() } : metadata().trim() ? { saml_metadata_xml: metadata() } : { saml_sso_url: ssoURL().trim(), saml_certificates: certificates(certs()) });
       await props.onUpdated(); props.onClose();
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }

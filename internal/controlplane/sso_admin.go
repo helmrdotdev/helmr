@@ -111,7 +111,7 @@ func (s *Server) createSSOConnection(w http.ResponseWriter, r *http.Request) {
 	var input identity.SSOConnectionInput
 	switch request.Protocol {
 	case sso.ProtocolOIDC:
-		cfg := sso.OIDCConfig{Issuer: strings.TrimSpace(request.Issuer), ClientID: strings.TrimSpace(request.ClientID), ClientSecret: request.ClientSecret}
+		cfg := sso.OIDCConfig{Issuer: strings.TrimSpace(request.OIDCIssuer), ClientID: strings.TrimSpace(request.OIDCClientID), ClientSecret: request.OIDCClientSecret}
 		// Discovery proves the issuer before anything is stored.
 		if _, err := sso.NewOIDC(r.Context(), s.ssoHTTP, cfg.Issuer, cfg.ClientID, cfg.ClientSecret, s.appOrigin.JoinPath("/sso/oidc/callback").String()); err != nil {
 			s.writeOperationError(w, r, badRequest(fmt.Errorf("the OIDC issuer could not be verified: %w", err)))
@@ -119,7 +119,7 @@ func (s *Server) createSSOConnection(w http.ResponseWriter, r *http.Request) {
 		}
 		input.OIDC = &cfg
 	case sso.ProtocolSAML:
-		idp, err := samlInput(request.MetadataXML, request.EntityID, request.SSOURL, request.Certificates)
+		idp, err := samlInput(request.SAMLMetadataXML, request.SAMLEntityID, request.SAMLSSOURL, request.SAMLCertificates)
 		if err == nil && idp.EntityID == "" {
 			err = errors.New("the SAML identity provider entity ID is required")
 		}
@@ -154,9 +154,9 @@ func (s *Server) updateSSOConnection(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(fmt.Errorf("invalid SSO connection JSON: %w", err)))
 		return
 	}
-	update := identity.SSOConnectionUpdate{ClientSecret: request.ClientSecret}
-	if request.MetadataXML != "" || request.SSOURL != "" || len(request.Certificates) > 0 {
-		idp, err := samlInput(request.MetadataXML, "", request.SSOURL, request.Certificates)
+	update := identity.SSOConnectionUpdate{ClientSecret: request.OIDCClientSecret}
+	if request.SAMLMetadataXML != "" || request.SAMLSSOURL != "" || len(request.SAMLCertificates) > 0 {
+		idp, err := samlInput(request.SAMLMetadataXML, "", request.SAMLSSOURL, request.SAMLCertificates)
 		if err != nil {
 			s.writeOperationError(w, r, badRequest(err))
 			return

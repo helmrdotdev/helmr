@@ -60,8 +60,6 @@ DELETE /api/groups/{id}
 DELETE /api/groups/{id}/members/{memberID}
 DELETE /api/invitations/{id}
 DELETE /api/members/{memberID}
-DELETE /api/organization/sso/connections/{connectionID}
-DELETE /api/organization/sso/members/{memberID}/binding
 DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agent}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
@@ -69,6 +67,8 @@ DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
+DELETE /api/sso/connections/{connectionID}
+DELETE /api/sso/members/{memberID}/binding
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/account-repairs/{id}
 GET /admin/api/v1/audit-events
@@ -98,8 +98,6 @@ GET /api/me
 GET /api/members
 GET /api/members/{memberID}/permissions
 GET /api/organization
-GET /api/organization/sso
-GET /api/organization/sso/members
 GET /api/organizations
 GET /api/ownership/members
 GET /api/permission-catalog
@@ -156,6 +154,8 @@ GET /api/slack/link-workspaces
 GET /api/slack/user-links
 GET /api/slack/user-links/callback
 GET /api/slack/user-links/first-use
+GET /api/sso
+GET /api/sso/members
 GET /capacity/v1/deployment
 GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
@@ -203,13 +203,13 @@ PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/account
 PATCH /api/groups/{id}
-PATCH /api/organization/sso
-PATCH /api/organization/sso/connections/{connectionID}
 PATCH /api/projects/{project}
 PATCH /api/projects/{project}/environments/{environment}
 PATCH /api/projects/{project}/settings
 PATCH /api/role-grants/{id}
 PATCH /api/roles/{id}
+PATCH /api/sso
+PATCH /api/sso/connections/{connectionID}
 POST /admin/api/v1/account-repairs/redeem
 POST /admin/api/v1/account-repairs/{id}/complete
 POST /admin/api/v1/account-repairs/{id}/options
@@ -268,9 +268,6 @@ POST /api/invitations
 POST /api/members/{memberID}/resume
 POST /api/members/{memberID}/revoke-sessions
 POST /api/members/{memberID}/suspend
-POST /api/organization/sso/connections
-POST /api/organization/sso/connections/{connectionID}/activate
-POST /api/organization/sso/connections/{connectionID}/test
 POST /api/organizations
 POST /api/ownership/recover-access
 POST /api/projects
@@ -307,6 +304,9 @@ POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
 POST /api/slack/user-links/confirm
 POST /api/slack/user-links/verify
+POST /api/sso/connections
+POST /api/sso/connections/{connectionID}/activate
+POST /api/sso/connections/{connectionID}/test
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-groups/{workerGroupID}/pools
 POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable

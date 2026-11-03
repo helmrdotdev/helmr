@@ -83,25 +83,26 @@ type SSOStatusResponse struct {
 }
 
 // SSOConnectionCreateRequest creates a candidate: OIDC with issuer, client ID
-// and secret, or SAML with pasted metadata or its three fields.
+// and secret, or SAML with pasted metadata or its three fields. Field names
+// match SSOConnection.
 type SSOConnectionCreateRequest struct {
-	Protocol     string   `json:"protocol"`
-	Issuer       string   `json:"issuer,omitempty"`
-	ClientID     string   `json:"client_id,omitempty"`
-	ClientSecret string   `json:"client_secret,omitempty"`
-	MetadataXML  string   `json:"metadata_xml,omitempty"`
-	EntityID     string   `json:"entity_id,omitempty"`
-	SSOURL       string   `json:"sso_url,omitempty"`
-	Certificates []string `json:"certificates,omitempty"`
+	Protocol         string   `json:"protocol"`
+	OIDCIssuer       string   `json:"oidc_issuer,omitempty"`
+	OIDCClientID     string   `json:"oidc_client_id,omitempty"`
+	OIDCClientSecret string   `json:"oidc_client_secret,omitempty"`
+	SAMLMetadataXML  string   `json:"saml_metadata_xml,omitempty"`
+	SAMLEntityID     string   `json:"saml_entity_id,omitempty"`
+	SAMLSSOURL       string   `json:"saml_sso_url,omitempty"`
+	SAMLCertificates []string `json:"saml_certificates,omitempty"`
 }
 
 // SSOConnectionUpdateRequest rotates material: an OIDC client secret, or SAML
 // metadata or sign-in URL and certificates.
 type SSOConnectionUpdateRequest struct {
-	ClientSecret *string  `json:"client_secret,omitempty"`
-	MetadataXML  string   `json:"metadata_xml,omitempty"`
-	SSOURL       string   `json:"sso_url,omitempty"`
-	Certificates []string `json:"certificates,omitempty"`
+	OIDCClientSecret *string  `json:"oidc_client_secret,omitempty"`
+	SAMLMetadataXML  string   `json:"saml_metadata_xml,omitempty"`
+	SAMLSSOURL       string   `json:"saml_sso_url,omitempty"`
+	SAMLCertificates []string `json:"saml_certificates,omitempty"`
 }
 
 type SSOPolicyResponse struct {

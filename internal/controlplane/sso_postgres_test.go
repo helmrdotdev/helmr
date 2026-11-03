@@ -366,8 +366,8 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	owner := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: ownerToken}}}
 	idp := ssotest.NewIdP(t)
 
-	body, _ := json.Marshal(map[string]any{"protocol": "saml", "entity_id": idp.EntityID, "sso_url": "https://idp.example.test/sso", "certificates": []string{idp.CertPEM}})
-	created := owner.do(t, http.MethodPost, "/api/organization/sso/connections", string(body), console, selected)
+	body, _ := json.Marshal(map[string]any{"protocol": "saml", "saml_entity_id": idp.EntityID, "saml_sso_url": "https://idp.example.test/sso", "saml_certificates": []string{idp.CertPEM}})
+	created := owner.do(t, http.MethodPost, "/api/sso/connections", string(body), console, selected)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", created.Code, created.Body)
 	}
@@ -380,20 +380,20 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 		t.Fatalf("connection = %+v, %v", connection, err)
 	}
 	id := uuid.MustParse(connection.ID)
-	if got := owner.do(t, http.MethodPost, "/api/organization/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusConflict {
+	if got := owner.do(t, http.MethodPost, "/api/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusConflict {
 		t.Fatalf("activate untested = %d %s", got.Code, got.Body)
 	}
-	acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/organization/sso/connections/"+connection.ID+"/test", "", selected)
+	acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/sso/connections/"+connection.ID+"/test", "", selected)
 	if acs.Header().Get("Location") != "/sso/callback" {
 		t.Fatalf("test ACS = %s", acs.Header().Get("Location"))
 	}
 	if tested := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); tested.Code != http.StatusOK || !strings.Contains(tested.Body.String(), "tested=") {
 		t.Fatalf("test finish = %d %s", tested.Code, tested.Body)
 	}
-	if got := owner.do(t, http.MethodPost, "/api/organization/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusNoContent {
+	if got := owner.do(t, http.MethodPost, "/api/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusNoContent {
 		t.Fatalf("activate = %d %s", got.Code, got.Body)
 	}
-	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
+	if got := owner.do(t, http.MethodPatch, "/api/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
 		t.Fatalf("require by an owner who has not signed in through the connection = %d %s", got.Code, got.Body)
 	}
 	// The owner links their own company account, then requires SSO.
@@ -403,7 +403,7 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	if linked := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); linked.Code != http.StatusOK {
 		t.Fatalf("self-link finish = %d %s", linked.Code, linked.Body)
 	}
-	if got := owner.do(t, http.MethodPatch, "/api/organization/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
+	if got := owner.do(t, http.MethodPatch, "/api/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
 		t.Fatalf("require = %d %s", got.Code, got.Body)
 	}
 	// Another browser of the owner holds no SSO proof; owners keep their
@@ -412,7 +412,7 @@ func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
 	if got := other.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusOK {
 		t.Fatalf("owner's ordinary browser under required SSO = %d %s", got.Code, got.Body)
 	}
-	status := other.do(t, http.MethodGet, "/api/organization/sso", "", console, selected)
+	status := other.do(t, http.MethodGet, "/api/sso", "", console, selected)
 	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"required":true`) {
 		t.Fatalf("status = %d %s", status.Code, status.Body)
 	}
