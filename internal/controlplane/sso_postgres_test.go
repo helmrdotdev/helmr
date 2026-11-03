@@ -128,9 +128,9 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	if replay := first.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(replay.Header().Get("Location"), "sso_error=authentication_invalid") {
 		t.Fatalf("replayed response without a flow = %s", replay.Header().Get("Location"))
 	}
-	link := first.do(t, http.MethodGet, "/api/auth/sso/confirm", "", console, nil)
-	if link.Code != http.StatusOK || !strings.Contains(link.Body.String(), `"asserted_email":"alice@example.test"`) {
-		t.Fatalf("link = %d %s", link.Code, link.Body)
+	confirmation := first.do(t, http.MethodGet, "/api/auth/sso/confirm", "", console, nil)
+	if confirmation.Code != http.StatusOK || !strings.Contains(confirmation.Body.String(), `"asserted_email":"alice@example.test"`) {
+		t.Fatalf("confirmation = %d %s", confirmation.Code, confirmation.Body)
 	}
 	if refused := first.do(t, http.MethodPost, "/api/auth/sso/confirm", "", console, nil); refused.Code != http.StatusForbidden {
 		t.Fatalf("confirm without an ordinary sign-in = %d %s", refused.Code, refused.Body)

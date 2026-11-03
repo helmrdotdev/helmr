@@ -357,13 +357,13 @@ func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browse
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	if result.Unbound {
-		link := browserAuthFlow{Kind: browserAuthSSOConfirm, StartedAt: time.Now(), ConnectionID: flow.ConnectionID, OrganizationID: flow.OrganizationID,
+	if result.Unlinked {
+		confirmation := browserAuthFlow{Kind: browserAuthSSOConfirm, StartedAt: time.Now(), ConnectionID: flow.ConnectionID, OrganizationID: flow.OrganizationID,
 			SSOProtocol: connection.Protocol, SSOSubject: validated.Subject, SSOEmail: validated.Email, SSOAuthenticatedAt: validated.AuthenticatedAt,
 			TokenHash: flow.TokenHash, RedirectAfter: flow.RedirectAfter}
-		encoded, err := s.encodeAuthFlow(link)
+		encoded, err := s.encodeAuthFlow(confirmation)
 		if err != nil {
-			writeError(w, errors.New("encode SSO link"))
+			writeError(w, errors.New("encode SSO confirmation"))
 			return
 		}
 		http.SetCookie(w, ssoConfirmCookie(r, encoded, int(authFlowTTL.Seconds())))
@@ -420,14 +420,14 @@ func (s *Server) ssoConfirm(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, identity.ErrInvalidToken)
 		return
 	}
-	link := identity.SSOAssociation{ConnectionID: connection, Protocol: flow.SSOProtocol, Subject: flow.SSOSubject, Email: flow.SSOEmail, AuthenticatedAt: flow.SSOAuthenticatedAt}
+	association := identity.SSOAssociation{ConnectionID: connection, Protocol: flow.SSOProtocol, Subject: flow.SSOSubject, Email: flow.SSOEmail, AuthenticatedAt: flow.SSOAuthenticatedAt}
 	if flow.TokenHash != "" {
-		if link.InvitationTokenHash, err = decodeFlowTokenHash(flow); err != nil {
+		if association.InvitationTokenHash, err = decodeFlowTokenHash(flow); err != nil {
 			s.writeIdentityError(w, r, identity.ErrInvalidToken)
 			return
 		}
 	}
-	orgID, err := identity.ConfirmSSOAssociation(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), link)
+	orgID, err := identity.ConfirmSSOAssociation(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), association)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return

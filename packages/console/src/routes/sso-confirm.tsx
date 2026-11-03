@@ -14,7 +14,7 @@ import { cx, ui } from "../ui/styles";
 // linked yet. The person proves that mailbox with an ordinary email sign-in,
 // sees the account that will be used, and links it to the organization.
 export function SSOConfirmPage() {
-  const [link, setLink] = createSignal<SSOConfirmation>();
+  const [confirmation, setConfirmation] = createSignal<SSOConfirmation>();
   const [failure, setFailure] = createSignal<Failure>();
   const [account, setAccount] = createSignal<Account>();
   const [config, setConfig] = createSignal<AuthConfig>();
@@ -24,7 +24,7 @@ export function SSOConfirmPage() {
   const [stale, setStale] = createSignal(false);
   async function refresh() {
     try { setAccount(await getAccount()); } catch { setAccount(undefined); }
-    setLink(await getSSOConfirmation());
+    setConfirmation(await getSSOConfirmation());
   }
   async function run(fn: () => Promise<void>) {
     setBusy(true); setError("");
@@ -41,7 +41,7 @@ export function SSOConfirmPage() {
   });
   return (
     <AuthWindow>
-      <Show when={link()} fallback={<Show when={failure()} fallback={<LinesSkeleton label="Continuing your sign-in" />}>{current => (
+      <Show when={confirmation()} fallback={<Show when={failure()} fallback={<LinesSkeleton label="Continuing your sign-in" />}>{current => (
         <div class={ui.blockStack}>
           <AuthTitle>Sign in with single sign-on</AuthTitle>
           <Notice tone="danger">{current().message}</Notice>
@@ -56,7 +56,7 @@ export function SSOConfirmPage() {
             <Show when={stale()}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { if (!await restartSSO()) window.location.assign("/login"); })}>Sign in again with single sign-on</button></Show>
             <Show when={pending().asserted_email} fallback={<Notice tone="danger">Your identity provider did not send an email address. Ask an owner of {pending().organization_name} to configure it.</Notice>}>
               <Show when={account()} fallback={
-                <Show when={config()?.methods.includes("email")} fallback={<Notice tone="warning">Email sign-in is not available on this server. Sign in to your account, then link company single sign-on from Sign-in and security.</Notice>}>
+                <Show when={config()?.methods.includes("email")} fallback={<Notice tone="warning">Email sign-in is not available on this server. Sign in to your account, then link your company account from Sign-in and security.</Notice>}>
                   <EmailSignIn email={pending().asserted_email} complete={() => void run(refresh)} />
                 </Show>
               }>

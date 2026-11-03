@@ -43,7 +43,7 @@ func (f ssoFixture) assertion(subject, email string, at time.Time) SSOAssertion 
 	return SSOAssertion{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Identity: sso.Identity{Subject: subject, Email: email, AuthenticatedAt: at}}
 }
 
-func (f ssoFixture) bind(t *testing.T, subject string, member, user uuid.UUID) {
+func (f ssoFixture) link(t *testing.T, subject string, member, user uuid.UUID) {
 	t.Helper()
 	identity := uuid.NewV7()
 	f.exec(t, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)`, identity, f.org, f.connection, subject, user)
@@ -61,10 +61,10 @@ func TestSSOSignInIssuesSessionThatEntersOnlyItsOrganization(t *testing.T) {
 	member := f.member(t, f.org, user, "member")
 	other := f.organization(t, "other")
 	f.member(t, other, user, "member")
-	f.bind(t, "alice-subject", member, user)
+	f.link(t, "alice-subject", member, user)
 
 	result, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("alice-subject", "alice@example.test", time.Now().Add(-time.Minute)), "", uuid.Nil())
-	if err != nil || result.Unbound || result.Session == "" || result.OrgID != f.org {
+	if err != nil || result.Unlinked || result.Session == "" || result.OrgID != f.org {
 		t.Fatalf("sign-in = %+v, %v", result, err)
 	}
 	p, err := f.admits(t, result.Session, f.org)
@@ -90,7 +90,7 @@ func TestSSOSignInAddsProofToTheStartingSessionOfTheSameAccount(t *testing.T) {
 	f := newSSOFixture(t)
 	user := f.user(t, "Alice", "alice@example.test")
 	member := f.member(t, f.org, user, "member")
-	f.bind(t, "alice-subject", member, user)
+	f.link(t, "alice-subject", member, user)
 	raw := f.session(t, user, uuid.Nil())
 	started, err := f.admits(t, raw, uuid.Nil())
 	if err != nil {
@@ -122,7 +122,7 @@ func TestSSOSignInRefusesStaleAuthentication(t *testing.T) {
 	f := newSSOFixture(t)
 	user := f.user(t, "Alice", "alice@example.test")
 	member := f.member(t, f.org, user, "member")
-	f.bind(t, "alice-subject", member, user)
+	f.link(t, "alice-subject", member, user)
 	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("alice-subject", "", time.Now().Add(-25*time.Hour)), "", uuid.Nil()); !errors.Is(err, ErrSSOReauthenticationRequired) {
 		t.Fatalf("authentication older than the proof lifetime: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSSOSignInWithoutLinkContinuesToAssociation(t *testing.T) {
 		t.Fatalf("a stale authentication reached association: %v", err)
 	}
 	result, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("new-subject", "new@example.test", time.Now()), "", uuid.Nil())
-	if err != nil || !result.Unbound || result.Session != "" {
+	if err != nil || !result.Unlinked || result.Session != "" {
 		t.Fatalf("sign-in = %+v, %v", result, err)
 	}
 	f.exec(t, `UPDATE sso_connections SET state='retired',retired_at=clock_timestamp() WHERE id=$1`, f.connection)
@@ -151,7 +151,7 @@ func TestSSOSignInWithoutLinkContinuesToAssociation(t *testing.T) {
 	}
 }
 
-func TestSSOSelfLinkBindsTheMemberAndRefusesConflicts(t *testing.T) {
+func TestSSOSelfLinkAttachesTheMemberAndRefusesConflicts(t *testing.T) {
 	f := newSSOFixture(t)
 	user := f.user(t, "Alice", "alice@login.test")
 	member := f.member(t, f.org, user, "member")
@@ -201,18 +201,18 @@ func TestSSOFirstAssociationByMembershipAndInvitation(t *testing.T) {
 	f.member(t, f.org, user, "member")
 	raw := f.session(t, user, uuid.Nil())
 	p, _ := f.admits(t, raw, uuid.Nil())
-	link := SSOAssociation{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "alice-subject", Email: "Alice@Example.test", AuthenticatedAt: time.Now()}
+	association := SSOAssociation{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "alice-subject", Email: "Alice@Example.test", AuthenticatedAt: time.Now()}
 
-	mismatch := link
+	mismatch := association
 	mismatch.Email = "someone@example.test"
 	if _, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, mismatch); !errors.Is(err, ErrWrongAccount) {
 		t.Fatalf("asserted email of another account: %v", err)
 	}
-	orgID, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, link)
+	orgID, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, association)
 	if err != nil || orgID != f.org {
 		t.Fatalf("association = %v, %v", orgID, err)
 	}
-	if _, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, link); err != nil {
+	if _, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, p, association); err != nil {
 		t.Fatalf("a retry of the same association: %v", err)
 	}
 	if admitted, err := f.admits(t, raw, f.org); err != nil || admitted.SSOProofID == uuid.Nil() {
@@ -250,7 +250,7 @@ func TestSSOProofEndsWithMembershipAndConnection(t *testing.T) {
 	signedIn := func(name string) (uuid.UUID, string) {
 		user := f.user(t, name, name+"@example.test")
 		member := f.member(t, f.org, user, "member")
-		f.bind(t, name+"-subject", member, user)
+		f.link(t, name+"-subject", member, user)
 		result, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion(name+"-subject", "", time.Now()), "", uuid.Nil())
 		if err != nil {
 			t.Fatal(err)
@@ -300,7 +300,7 @@ func TestOrdinarySignInKeepsSSOProofsOfTheSession(t *testing.T) {
 	f := newSSOFixture(t)
 	user := f.user(t, "Alice", "alice@example.test")
 	member := f.member(t, f.org, user, "member")
-	f.bind(t, "alice-subject", member, user)
+	f.link(t, "alice-subject", member, user)
 	result, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("alice-subject", "", time.Now()), "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
 	f := newSSOFixture(t)
 	user := f.user(t, "Alice", "alice@example.test")
 	member := f.member(t, f.org, user, "member")
-	f.bind(t, "alice-subject", member, user)
+	f.link(t, "alice-subject", member, user)
 	removal, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

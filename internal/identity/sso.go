@@ -30,12 +30,12 @@ type SSOAssertion struct {
 	sso.Identity
 }
 
-// SSOSignIn is the outcome of an SSO sign-in. Unbound means the identity has no
+// SSOSignIn is the outcome of an SSO sign-in. Unlinked means the identity has no
 // live link and the browser continues with first association.
 type SSOSignIn struct {
-	OrgID   uuid.UUID
-	Session string
-	Unbound bool
+	OrgID    uuid.UUID
+	Session  string
+	Unlinked bool
 }
 
 // SignInSSO adds the identity's SSO proof to the browser session that started
@@ -56,7 +56,7 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 		}
 		b, err := sso.LiveLink(ctx, tx, a.ConnectionID, a.Subject)
 		if errors.Is(err, sso.ErrNotLinked) {
-			result.Unbound = true
+			result.Unlinked = true
 			return nil
 		}
 		if err != nil {
@@ -67,7 +67,7 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 			return err
 		}
 		if err := sso.HoldLink(ctx, tx, b); errors.Is(err, sso.ErrNotLinked) {
-			result.Unbound = true
+			result.Unlinked = true
 			return nil
 		} else if err != nil {
 			return err
@@ -92,7 +92,7 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 	return result, err
 }
 
-// LinkSSO binds the identity to the member's own membership from the browser
+// LinkSSO links the identity to the member's own membership from the browser
 // session that started the self-link, which must still have recent proof.
 func LinkSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, member uuid.UUID, a SSOAssertion) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
@@ -113,7 +113,7 @@ func LinkSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Pri
 			}
 			return err
 		}
-		return bindSSO(ctx, tx, cfg, p, orgID, member, a)
+		return linkSSOMember(ctx, tx, cfg, p, orgID, member, a)
 	})
 }
 
@@ -132,11 +132,11 @@ type SSOAssociation struct {
 // ordinary proof for the account whose login email is the asserted email; the
 // membership comes from the invitation the flow started with or from the
 // account's existing live membership.
-func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, link SSOAssociation) (uuid.UUID, error) {
+func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, association SSOAssociation) (uuid.UUID, error) {
 	var orgID uuid.UUID
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var err error
-		if orgID, err = sso.LockActive(ctx, tx, link.ConnectionID); err != nil {
+		if orgID, err = sso.LockActive(ctx, tx, association.ConnectionID); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, orgID); err != nil {
@@ -156,15 +156,15 @@ func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Conf
 		if err := tx.QueryRow(ctx, `SELECT primary_email FROM users WHERE id=$1`, p.UserID).Scan(&email); err != nil {
 			return err
 		}
-		if !email.Valid || normalizeEmail(email.String) != normalizeEmail(link.Email) {
+		if !email.Valid || normalizeEmail(email.String) != normalizeEmail(association.Email) {
 			return ErrWrongAccount
 		}
-		member, err := ssoEligibleMember(ctx, tx, cfg, current, orgID, link.InvitationTokenHash)
+		member, err := ssoEligibleMember(ctx, tx, cfg, current, orgID, association.InvitationTokenHash)
 		if err != nil {
 			return err
 		}
-		return bindSSO(ctx, tx, cfg, current, orgID, member, SSOAssertion{ConnectionID: link.ConnectionID, Protocol: link.Protocol,
-			Identity: sso.Identity{Subject: link.Subject, Email: link.Email, AuthenticatedAt: link.AuthenticatedAt}})
+		return linkSSOMember(ctx, tx, cfg, current, orgID, member, SSOAssertion{ConnectionID: association.ConnectionID, Protocol: association.Protocol,
+			Identity: sso.Identity{Subject: association.Subject, Email: association.Email, AuthenticatedAt: association.AuthenticatedAt}})
 	})
 	return orgID, err
 }
@@ -192,9 +192,9 @@ func ssoEligibleMember(ctx context.Context, tx pgx.Tx, cfg Config, current auth.
 	return member, err
 }
 
-// bindSSO links the identity to the member and gives the current browser
+// linkSSOMember links the identity to the member and gives the current browser
 // session the resulting proof.
-func bindSSO(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, orgID, member uuid.UUID, a SSOAssertion) error {
+func linkSSOMember(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, orgID, member uuid.UUID, a SSOAssertion) error {
 	b, created, err := sso.Link(ctx, tx, orgID, a.ConnectionID, a.Subject, member, p.UserID)
 	if errors.Is(err, sso.ErrIdentityConflict) {
 		return ErrSSOIdentityConflict
@@ -274,7 +274,7 @@ func issueSSOSession(ctx context.Context, tx pgx.Tx, cfg Config, user uuid.UUID)
 	return raw, id, err
 }
 
-// AccountSSOLinks lists the account's live company SSO links.
+// AccountSSOLinks lists the account's live company account links.
 func AccountSSOLinks(ctx context.Context, q db.DBTX, p auth.Principal) ([]sso.AccountLink, error) {
 	return sso.AccountLinks(ctx, q, p.UserID)
 }

@@ -65,7 +65,7 @@ func HoldLink(ctx context.Context, tx pgx.Tx, b MemberLink) error {
 	return err
 }
 
-// Link binds a connection subject to a membership of user. The subject belongs
+// Link ties a connection subject to a membership of user. The subject belongs
 // to one user forever; each identity and each member has one live link. A
 // live link of the same pair is returned unchanged with created false.
 func Link(ctx context.Context, tx pgx.Tx, org, connection uuid.UUID, subject string, member, user uuid.UUID) (MemberLink, bool, error) {
@@ -156,7 +156,7 @@ func RevokeAccountProofs(ctx context.Context, tx pgx.Tx, user, keep uuid.UUID) e
 	return err
 }
 
-// AccountLink is one organization in which an account is linked to company SSO.
+// AccountLink is one organization in which an account is linked to a company account.
 type AccountLink struct {
 	OrgID    uuid.UUID
 	OrgName  string
