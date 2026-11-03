@@ -149,6 +149,7 @@ func TestWorkerCommandsNeedAnInstalledWorker(t *testing.T) {
 func TestWorkerDownKeepsTheIdentity(t *testing.T) {
 	root, calls := fakeWorkerHost(t)
 	writeHostFile(t, root, workerIdentityPath, "{}")
+	writeHostFile(t, root, "/etc/systemd/system/"+hostinstall.ServiceName, "")
 	if _, err := runWorkerCLI(t, "down"); err != nil {
 		t.Fatal(err)
 	}
@@ -203,5 +204,33 @@ func TestWorkerRemoveOnlyUninstallsTheUpLayout(t *testing.T) {
 	fakeWorkerHost(t)
 	if _, err := runWorkerCLI(t, "remove", "--env", "/etc/other.env"); err == nil || !strings.Contains(err.Error(), "only a worker that helmr worker up installed") {
 		t.Fatalf("remove with another layout = %v", err)
+	}
+}
+
+// A machine enrolled before its install finished has no unit; remove still
+// deletes its identity and names the host to revoke.
+func TestWorkerRemoveWithoutAnInstalledUnit(t *testing.T) {
+	root, calls := fakeWorkerHost(t)
+	workerHost.Run = func(name string, args ...string) (string, error) {
+		call := strings.Join(append([]string{name}, args...), " ")
+		*calls = append(*calls, call)
+		if strings.HasPrefix(call, "systemctl disable") || strings.HasPrefix(call, "systemctl stop") {
+			return "", errors.New("unit not loaded")
+		}
+		return "", nil
+	}
+	writeHostFile(t, root, workerIdentityPath, `{"worker_host_id":"019a0000-0000-7000-8000-000000000001","machine_key":"`+strings.Repeat("A", 43)+`="}`)
+	if err := os.Chmod(filepath.Join(root, workerIdentityPath), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runWorkerCLI(t, "remove")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "revoke worker host 019a0000-0000-7000-8000-000000000001") {
+		t.Fatalf("output = %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, workerIdentityPath)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("remove kept the identity")
 	}
 }

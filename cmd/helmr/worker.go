@@ -172,7 +172,7 @@ func workerDownCommand() *cobra.Command {
 			if err := requireRoot(); err != nil {
 				return err
 			}
-			if _, err := workerHost.Run("systemctl", "disable", "--now", hostinstall.ServiceName); err != nil {
+			if err := stopWorkerService(); err != nil {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "worker stopped; helmr worker up starts it again")
@@ -211,7 +211,7 @@ func workerRemoveCommand() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "drain did not finish: %v\n", err)
 				}
 			}
-			if _, err := workerHost.Run("systemctl", "disable", "--now", hostinstall.ServiceName); err != nil {
+			if err := stopWorkerService(); err != nil {
 				return err
 			}
 			if identityErr == nil && !drained {
@@ -304,6 +304,18 @@ func workerInstallCommand() *cobra.Command {
 	flags.StringVar(&bundles.Runtime.Digest, "runtime-bundle-digest", "", "sha256 digest of the runtime bundle")
 	flags.StringVar(&bundles.RuntimeManifest.Digest, "runtime-manifest-digest", "", "sha256 digest of "+release.RuntimeArtifactsManifest)
 	return cmd
+}
+
+// stopWorkerService stops and disables the worker unit when one is installed;
+// systemd refuses both for a unit file that does not exist.
+func stopWorkerService() error {
+	if _, err := os.Stat(hostPath("/etc/systemd/system/" + hostinstall.ServiceName)); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	_, err := workerHost.Run("systemctl", "disable", "--now", hostinstall.ServiceName)
+	return err
 }
 
 // installBundles verifies bundles into a private directory under staging and
