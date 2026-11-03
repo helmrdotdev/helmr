@@ -41,7 +41,7 @@ var requestDecoders = map[string]bool{
 // reads a request body; request-derived input reaches them only after the
 // owner decoded or canonicalized it, and they report fixed messages.
 var controlPlaneDecodersOutsideOwner = map[string]string{
-	"Server.decodeAuthFlow":              "sealed auth flow cookie, fixed message",
+	"Server.decodeAuthFlowValue":         "sealed auth flow cookie, fixed message",
 	"Server.parseCommandLogCursor":       "signed cursor, fixed message",
 	"Server.workerClaimComputerCommand":  "stored command environment",
 	"decodeAPIKeyListCursor":             "opaque cursor, fixed message",

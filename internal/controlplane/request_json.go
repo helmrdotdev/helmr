@@ -375,3 +375,15 @@ func decodeRequestForm(r *http.Request) (url.Values, error) {
 	}
 	return r.PostForm, nil
 }
+
+// requestFormValue reads one field of a form-encoded body, for protocol posts
+// such as a SAML response that are not JSON.
+func requestFormValue(r *http.Request, name string) (string, error) {
+	if err := r.ParseForm(); err != nil {
+		if isRequestBodyTooLarge(err) {
+			return "", requestBodyError(err)
+		}
+		return "", badRequest(errors.New("request body must be form encoded"))
+	}
+	return r.PostForm.Get(name), nil
+}
