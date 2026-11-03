@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -101,29 +100,55 @@ func CaptureInitialVersion(ctx context.Context, request VersionCapture) (_ *Init
 		return nil, err
 	}
 	const batchBytes = blockformat.MaxChangedBlocks * blockformat.BlockSize
-	buffer := make([]byte, batchBytes)
+	// Keep pending nonzero blocks at the front. The extra read space avoids
+	// block-at-a-time reads through allocated zeros when the batch is nearly full.
+	const readAhead = 64 << 10
+	buffer := make([]byte, batchBytes+readAhead)
 	zero := make([]byte, blockformat.BlockSize)
-	err = walkInitialDiskData(ctx, request.Disk, request.Capacity, func(offset, size int64) error {
-		chunk := buffer[:size]
-		if _, err = io.ReadFull(io.NewSectionReader(request.Disk, offset, size), chunk); err != nil {
+	changes := make(map[uint64][]byte)
+	flush := func() error {
+		if len(changes) == 0 {
+			return nil
+		}
+		root, err := writer.Capture(ctx, candidate.root, request.Capacity, changes)
+		if err != nil {
 			return err
 		}
-		changes := make(map[uint64][]byte)
-		for i := 0; i < len(chunk); i += blockformat.BlockSize {
-			block := chunk[i : i+blockformat.BlockSize]
-			if !bytes.Equal(block, zero) {
-				changes[uint64((offset+int64(i))/blockformat.BlockSize)] = block
-			}
-		}
-		if len(changes) > 0 {
-			candidate.root, err = writer.Capture(ctx, candidate.root, request.Capacity, changes)
-			if err != nil {
+		candidate.root = root
+		clear(changes)
+		return nil
+	}
+	err = walkInitialDiskData(ctx, request.Disk, request.Capacity, func(offset, size int64) error {
+		for size > 0 {
+			start := len(changes) * blockformat.BlockSize
+			chunk := buffer[start : start+min(int(size), len(buffer)-start)]
+			if _, err := request.Disk.ReadAt(chunk, offset); err != nil {
 				return err
 			}
+			for i := 0; i < len(chunk); i += blockformat.BlockSize {
+				block := chunk[i : i+blockformat.BlockSize]
+				if bytes.Equal(block, zero) {
+					continue
+				}
+				at := len(changes) * blockformat.BlockSize
+				dst := buffer[at : at+blockformat.BlockSize]
+				copy(dst, block)
+				changes[uint64((offset+int64(i))/blockformat.BlockSize)] = dst
+				if len(changes) == blockformat.MaxChangedBlocks {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+			}
+			offset += int64(len(chunk))
+			size -= int64(len(chunk))
 		}
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := flush(); err != nil {
 		return nil, err
 	}
 	after, err := request.Disk.Stat()
