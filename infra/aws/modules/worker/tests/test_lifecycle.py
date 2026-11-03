@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import textwrap
+import venv
 import unittest
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "templates/user-data.sh.tftpl"
@@ -216,6 +218,11 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
         self.assertIn("--lifecycle-hook-name terminate", calls)
 
     def test_boot_credentials_are_refreshed_after_stopped_standby(self):
+        for image in ("cli-only", "python-without-sdk", "system-sdk"):
+            with self.subTest(image=image):
+                self.check_boot_credentials(image)
+
+    def check_boot_credentials(self, image):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             script=TEMPLATE.read_text().split("cat >/usr/local/sbin/helmr-worker-enrollment-token <<'EOF'\n",1)[1].split("\nEOF",1)[0]
@@ -224,12 +231,45 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
             (root / "etc").mkdir();(root / "run").mkdir()
             (root / "etc/worker-base.env").write_text("WORKER_POOL_NAME=pool\n")
             (root / "aws").write_text('#!/bin/sh\nif [ -f "$TEST_ROOT/secret-fail" ]; then rm "$TEST_ROOT/secret-fail"; exit 1; fi\necho "token-$ROTATION"\n')
+            python = root / "venv/bin/python"
+            script = script.replace("/usr/bin/python3", str(python))
+            if image != "cli-only":
+                venv.EnvBuilder(with_pip=False).create(root / "venv")
+            if image == "system-sdk":
+                site = subprocess.check_output(
+                    [python, "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                    text=True,
+                ).strip()
+                package = Path(site) / "botocore"
+                package.mkdir()
+                (package / "session.py").write_text(textwrap.dedent("""\
+                    import os
+                    from pathlib import Path
+
+                    class Session:
+                        def create_client(self, service):
+                            assert service == "secretsmanager"
+                            assert os.environ["AWS_DEFAULT_REGION"] == "us-east-1"
+                            return self
+
+                        def get_secret_value(self, *, SecretId):
+                            assert SecretId == "enrollment"
+                            fail = Path(os.environ["TEST_ROOT"]) / "secret-fail"
+                            if fail.exists():
+                                fail.unlink()
+                                raise RuntimeError("fixture denial")
+                            return {"SecretString": "token-" + os.environ["ROTATION"]}
+
+                    get_session = Session
+                """))
+                (root / "aws").write_text('#!/bin/sh\necho unexpected-cli >&2\nexit 1\n')
             (root / "curl").write_text('#!/bin/sh\ncase "$*" in *instance-id*) echo i-current;; *) echo imds-token;; esac\n')
             for name in ("aws","curl"):(root / name).chmod(0o755)
             environment={**os.environ,"PATH":str(root)+os.pathsep+os.environ["PATH"],"TEST_ROOT":str(root)}
             (root / "secret-fail").touch()
             failed=subprocess.run(["sh","-c",script],env={**environment,"ROTATION":"first-attempt"},capture_output=True,text=True)
             self.assertNotEqual(failed.returncode,0)
+            self.assertNotIn("unexpected-cli", failed.stderr)
             self.assertFalse((root / "run/worker-enrollment-token").exists())
             for rotation in ("before-stop","after-wake"):
                 result=subprocess.run(["sh","-c",script],env={**environment,"ROTATION":rotation},capture_output=True,text=True)
@@ -239,6 +279,7 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
                 for name in ("CHECKPOINT_ENCRYPTION_KEY","CAS_URI","PLATFORM_STORE_URI"):
                     self.assertNotIn(name,(root / "etc/worker.env").read_text())
                 self.assertEqual((root / "run/worker-enrollment-token").read_text(),"token-"+rotation)
+                self.assertEqual((root / "run/worker-enrollment-token").stat().st_mode & 0o777, 0o400)
                 self.assertEqual((root / "etc/worker.env").stat().st_mode & 0o777,0o600)
 
     def test_planned_drain_does_not_enter_loss_path(self):
