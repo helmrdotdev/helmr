@@ -179,8 +179,7 @@ themselves.
 Each release embeds the Sigstore trusted root current when it was built, so
 hosts verify releases without reaching Sigstore. If Sigstore rotates its signing
 keys, a host whose release predates the rotation cannot verify releases signed
-only with the new keys; reinstall it with `helmr worker up` from a current
-release.
+only with the new keys; reinstall it from a current release.
 
 ## Machine keys, token rotation and revocation
 
