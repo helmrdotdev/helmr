@@ -58,4 +58,14 @@ if "${repo_root}/images/fetch-netboot.sh" \
   exit 1
 fi
 
+# A pin change must replace the derived kernel on the first incremental build.
+printf 'old kernel' >"${out}/vmlinuz"
+touch -t 200001010000 "${out}/vmlinuz-virt"
+touch -t 200001020000 "${out}/vmlinuz"
+printf 'patched kernel' | gzip -c >"${source_dir}/vmlinuz-virt"
+(cd "${source_dir}" && sha256sum initramfs-virt modloop-virt vmlinuz-virt) >"${tmp}/checksums"
+make -C "${repo_root}/images/guest" OUT="${out}" NETBOOT_CHECKSUMS="${tmp}/checksums" \
+  ALPINE_NETBOOT_URL="file://${source_dir}" "${out}/vmlinuz"
+printf 'patched kernel' | cmp - "${out}/vmlinuz"
+
 printf 'ok - netboot input tests\n'

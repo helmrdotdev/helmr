@@ -1,4 +1,4 @@
-ALPINE_VERSION ?= 3.22.2
+ALPINE_VERSION ?= 3.22.7
 ALPINE_BRANCH ?= v3.22
 ARCH ?= x86_64
 SHA256_COMMAND := $(shell if command -v sha256sum >/dev/null 2>&1; then printf '%s' sha256sum; elif command -v shasum >/dev/null 2>&1; then printf '%s' 'shasum -a 256'; fi)
@@ -83,7 +83,7 @@ netboot-inputs: $(NETBOOT_CHECKSUMS) ../fetch-netboot.sh | $(OUT)
 $(VMLINUX) $(INITRAMFS_BASE) $(MODLOOP): | netboot-inputs
 	@test -f $@
 
-$(KERNEL): $(VMLINUX)
+$(KERNEL): $(VMLINUX) $(NETBOOT_CHECKSUMS)
 	ruby -rzlib -rstringio -e 'data = File.binread(ARGV[0]); offset = data.index("\x1f\x8b\x08".b) or abort("gzip payload not found in #{ARGV[0]}"); File.binwrite(ARGV[1], Zlib::GzipReader.new(StringIO.new(data.byteslice(offset..))).read)' $< $@
 
 $(BOOT_TOOLS_ARCHIVE): $(BOOT_TOOLS_CONFIG) $(BOOT_TOOLS_LOCK) ../build-tools-image.sh $(REPO_ROOT)/flake.lock
@@ -94,7 +94,7 @@ boot-tools-image: $(BOOT_TOOLS_ARCHIVE)
 		../build-tools-image.sh $(BOOT_TOOLS_ARCHIVE) $(BOOT_TOOLS_IMAGE_ID_FILE); \
 	fi
 
-$(INITRAMFS) $(KERNEL_MODULES) &: $(INITRAMFS_BASE) $(MODLOOP) $(BOOT_TOOLS_ARCHIVE) ../build-initramfs.sh | $(OUT) boot-tools-image
+$(INITRAMFS) $(KERNEL_MODULES) &: $(INITRAMFS_BASE) $(MODLOOP) $(NETBOOT_CHECKSUMS) $(BOOT_TOOLS_ARCHIVE) ../build-initramfs.sh | $(OUT) boot-tools-image
 	BOOT_TOOLS_IMAGE=$$(cat $(BOOT_TOOLS_IMAGE_ID_FILE)) ../build-initramfs.sh $(INITRAMFS) $(INITRAMFS_BASE) $(MODLOOP) $(KERNEL_MODULES)
 
 apko-lock:
