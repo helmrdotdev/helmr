@@ -124,9 +124,10 @@ Installed dependencies have separate limits:
 
 ## Build environment
 
-Helmr's builder image is a digest-pinned Debian environment with the ELF
-loader, Git, CA certificates, Python, make, a C/C++ toolchain, and Helmr's
-pinned Node.js, npm, Corepack and Bun. Lifecycle scripts, development
+Helmr's builder image uses Debian 13 (Trixie). It includes Git with SSH, CA
+certificates, Python, make, a C/C++ toolchain, pkg-config, SQLite development
+headers, and Helmr's pinned Node.js, npm, Corepack and Bun. Install additional
+system dependencies through APT in a builder step. Lifecycle scripts, development
 dependencies, native compilation and dependency executables behave as on an
 ordinary Linux machine. Installation runs as an unprivileged user.
 

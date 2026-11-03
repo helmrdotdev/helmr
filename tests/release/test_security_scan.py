@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/release"))
 from security_scan import check_terraform_inputs, collect, guest_files, initramfs_inventory, tracked_source
+from security_decision import classify
 from security_policy import POLICY, load_policy, check_current
 
 
@@ -87,6 +88,36 @@ class SecurityScanTest(unittest.TestCase):
             return collect([row], "image", "digest")[0]["key"]
         self.assertEqual(key(Layer="registry"), key(Fingerprint="local"))
         self.assertNotEqual(key(), key(FixedVersion="2"))
+
+    def test_debian_package_assessment_only_follows_the_reviewed_binary(self):
+        entry = dict(VulnerabilityID="CVE-example", Severity="CRITICAL", PkgName="headers",
+                     InstalledVersion="1", Layer={"DiffID": "sha256:" + "a"*64},
+                     PkgIdentifier={"PURL": "pkg:deb/debian/headers@1?arch=amd64&distro=debian-12"})
+        def finding(identity="image", scope="bundle-builder", **updates):
+            row = dict(Type="debian", Class="os-pkgs", Target="debian", Vulnerabilities=[dict(entry, **updates)])
+            return collect([row], scope, identity)[0]
+        rule = dict(id="CVE-example", status="not_affected", debian_package_key=finding()["debian_package_key"],
+                    reason="Header-only binary", evidence="Reviewed package contents")
+        def state(item):
+            return classify(dict(findings=[item]), [rule])["state"]
+        self.assertEqual(state(finding(identity="rebuilt")), "clear")
+        for changed in (dict(Layer={}), dict(Layer={"DiffID": "sha256:" + "b"*64}),
+                        dict(PkgIdentifier={}), dict(PkgName="kernel"), dict(InstalledVersion="2"),
+                        dict(Description="advisory changed"), dict(scope="control-plane")):
+            self.assertEqual(state(finding(**changed)), "needs_review")
+
+    def test_backport_follows_executable_and_advisory(self):
+        entry = dict(VulnerabilityID="CVE-2026-60002", Severity="CRITICAL", PkgName="openssh-client",
+                     InstalledVersion="1:10.0p1-7+deb13u4+helmr1", Layer={"DiffID": "sha256:" + "a"*64},
+                     PkgIdentifier={"PURL": "pkg:deb/debian/openssh-client@10.0p1"})
+        def key(binary, **changes):
+            row = dict(Class="os-pkgs", Type="debian", Target="debian", Vulnerabilities=[dict(entry, **changes)])
+            return collect([row], "bundle-builder", "image", ssh_digest=binary)[0]["debian_package_key"]
+        expected = key("good")
+        self.assertEqual(expected, key("good", Layer={"DiffID": "sha256:" + "b"*64}))
+        for other in [key(None), key("changed"), key("good", Description="updated"),
+                      key("good", InstalledVersion="1:10.0p1-7+deb13u4")]:
+            self.assertNotEqual(expected, other)
 
     def test_template_key_requires_same_template_and_occurrence(self):
         def key(source="source", templates="templates", resource="control", check="AWS-0104"):

@@ -118,7 +118,7 @@ func TestInitialVersionBatchesNearbyExtents(t *testing.T) {
 		want[offset] = byte(offset / batchBytes)
 	}
 	// This last extent fills the pending batch partway through a read.
-	for offset := len(want)-batchBytes; offset < len(want); offset += blockformat.BlockSize {
+	for offset := len(want) - batchBytes; offset < len(want); offset += blockformat.BlockSize {
 		block := offset / blockformat.BlockSize
 		if block%128 != 0 {
 			want[offset] = byte(block%251 + 1)

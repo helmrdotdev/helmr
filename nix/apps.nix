@@ -279,6 +279,7 @@ ciApps
     pkgs.git
     pkgs.gnutar
     pkgs.skopeo
+    pkgs.umoci
     helmrPackages.squashfsTools
   ] ''
     exec python3 ${../scripts/release}/security_scan.py "$@"

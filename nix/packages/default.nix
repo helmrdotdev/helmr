@@ -16,8 +16,7 @@ let
     builtins.readFile ../../internal/version/runtime-dependencies.json
   );
   nodeRelease = runtimeDependencies.node;
-  # Digest-pinned linux/amd64 Debian images: the builder's base and the source
-  # of the Runtime's C/C++ libraries.
+  # Use the same Debian ABI for native builds and the managed runtime.
   debianImages = builtins.fromJSON (builtins.readFile ./debian-images.json);
   debianImage =
     pin:
@@ -82,7 +81,9 @@ let
       runtimeRelease
       squashfsTools
       ;
-    baseImage = debianImage debianImages.builderBase;
+    baseImage = pkgs.callPackage ./builder-base.nix {
+      debian = debianImage debianImages.runtimeLibraries;
+    };
     nodeArchive = nodeArchive "x86_64-linux";
     bunArchive = pkgsBun.bun.src;
   };
