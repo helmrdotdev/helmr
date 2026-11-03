@@ -71,6 +71,14 @@ def collect(rows, scope, identity, aws_templates=None):
                                   package=entry.get("PkgName", ""), version=entry.get("InstalledVersion", ""),
                                   severity=entry["Severity"], title=entry.get("Title", ""),
                                   key=fingerprint([scope, identity, row["Type"], row["Target"], evidence])))
+                if (scope == "bundle-builder" and kind == "Vulnerabilities"
+                        and row.get("Class") == "os-pkgs" and row["Type"] == "debian"):
+                    # The reviewed Debian binary package and advisory can remain
+                    # identical when a later image layer changes unrelated tools.
+                    purl = (entry.get("PkgIdentifier") or {}).get("PURL", "")
+                    layer = (entry.get("Layer") or {}).get("DiffID", "")
+                    if purl.startswith("pkg:deb/debian/") and re.fullmatch(r"sha256:[0-9a-f]{64}", layer):
+                        items[-1]["debian_package_key"] = fingerprint([purl, layer, evidence])
                 if (aws_templates and kind == "Misconfigurations" and advisory == "AWS-0104"
                         and scope == "source" and row["Type"] == "terraform"
                         and row["Target"].startswith("infra/aws/") and location.get("Occurrences")):

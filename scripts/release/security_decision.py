@@ -24,6 +24,12 @@ def classify(report, rules):
                     "template acceptance requires an exact AWS outbound finding")
             matched = [i for i in critical if i["component"] == "source" and i["id"] == rule["id"]
                        and i.get("template_key") == rule["template_key"]]
+        elif "debian_package_key" in rule:
+            package_key = rule["debian_package_key"]
+            require(status == "not_affected" and re.fullmatch(r"[0-9a-f]{64}", package_key),
+                    "invalid Debian package assessment")
+            matched = [i for i in critical if i["component"] == "bundle-builder" and i["id"] == rule["id"]
+                       and i.get("debian_package_key") == package_key]
         elif "absent_module" in rule:
             require(status == "not_affected" and re.fullmatch(r"[a-z0-9_]+", rule["absent_module"]),
                     "invalid module predicate")

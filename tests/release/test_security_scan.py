@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/release"))
 from security_scan import check_terraform_inputs, collect, guest_files, initramfs_inventory, tracked_source
+from security_decision import classify
 from security_policy import POLICY, load_policy, check_current
 
 
@@ -87,6 +88,23 @@ class SecurityScanTest(unittest.TestCase):
             return collect([row], "image", "digest")[0]["key"]
         self.assertEqual(key(Layer="registry"), key(Fingerprint="local"))
         self.assertNotEqual(key(), key(FixedVersion="2"))
+
+    def test_debian_package_assessment_only_follows_the_reviewed_binary(self):
+        entry = dict(VulnerabilityID="CVE-example", Severity="CRITICAL", PkgName="headers",
+                     InstalledVersion="1", Layer={"DiffID": "sha256:" + "a"*64},
+                     PkgIdentifier={"PURL": "pkg:deb/debian/headers@1?arch=amd64&distro=debian-12"})
+        def finding(identity="image", scope="bundle-builder", **updates):
+            row = dict(Type="debian", Class="os-pkgs", Target="debian", Vulnerabilities=[dict(entry, **updates)])
+            return collect([row], scope, identity)[0]
+        rule = dict(id="CVE-example", status="not_affected", debian_package_key=finding()["debian_package_key"],
+                    reason="Header-only binary", evidence="Reviewed package contents")
+        def state(item):
+            return classify(dict(findings=[item]), [rule])["state"]
+        self.assertEqual(state(finding(identity="rebuilt")), "clear")
+        for changed in (dict(Layer={}), dict(Layer={"DiffID": "sha256:" + "b"*64}),
+                        dict(PkgIdentifier={}), dict(PkgName="kernel"), dict(InstalledVersion="2"),
+                        dict(Description="advisory changed"), dict(scope="control-plane")):
+            self.assertEqual(state(finding(**changed)), "needs_review")
 
     def test_template_key_requires_same_template_and_occurrence(self):
         def key(source="source", templates="templates", resource="control", check="AWS-0104"):
