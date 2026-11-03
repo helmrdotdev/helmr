@@ -252,7 +252,7 @@ func (s *Server) updateMemberOwnership(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	updated, err := org.UpdateMemberOwnership(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), targetUserID, input.IsOwner, input.ExpectedIsOwner)
+	updated, err := identity.UpdateMemberOwnership(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), targetUserID, input.IsOwner, input.ExpectedIsOwner)
 	if err != nil {
 		s.writeOperationError(w, r, orgError(err))
 		return

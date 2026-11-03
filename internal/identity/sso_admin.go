@@ -430,3 +430,25 @@ func ssoPolicyEvent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, a
 		Details: audit.SSOPolicyDetails{RequiredBefore: before.Required, RequiredAfter: after.Required, SessionSecondsBefore: before.SessionSeconds, SessionSecondsAfter: after.SessionSeconds,
 			RevokedCLISessions: result.RevokedCLISessions, RevokedSlackLinks: result.RevokedSlackLinks}})
 }
+
+// UpdateMemberOwnership changes ownership. Owners keep their ordinary sign-in
+// under required SSO, so a former owner's Slack links, issued without SSO,
+// retire with the ownership; their browser and CLI sessions are checked at use.
+func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager org.ManagingMember, target uuid.UUID, value, expected bool) (org.UpdatedMember, error) {
+	var result org.UpdatedMember
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var err error
+		if result, err = org.UpdateMemberOwnershipTx(ctx, tx, manager, target, value, expected); err != nil {
+			return err
+		}
+		if value || !expected {
+			return nil
+		}
+		policy, err := org.ReadSSOPolicy(ctx, tx, manager.OrgID)
+		if err != nil || !policy.Required {
+			return err
+		}
+		return slack.RetireMemberAccess(ctx, tx, manager.OrgID, target)
+	})
+	return result, err
+}

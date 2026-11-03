@@ -1,6 +1,7 @@
 package org_test
 
 import (
+	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -12,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"uuid"
 )
@@ -141,7 +143,7 @@ func TestRemovedMembershipCannotReceiveAssignmentsAfterRejoin(t *testing.T) {
 
 func TestOwnershipDemotionAndMemberRemovalSerialize(t *testing.T) {
 	f := newMemberFixture(t)
-	if _, err := org.UpdateMemberOwnership(t.Context(), f.pool, f.owner, f.member.MemberID, true, false); err != nil {
+	if _, err := updateOwnership(t.Context(), f.pool, f.owner, f.member.MemberID, true, false); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
@@ -149,7 +151,7 @@ func TestOwnershipDemotionAndMemberRemovalSerialize(t *testing.T) {
 	removed := make(chan error, 1)
 	go func() {
 		<-start
-		_, err := org.UpdateMemberOwnership(t.Context(), f.pool, f.owner, f.member.MemberID, false, true)
+		_, err := updateOwnership(t.Context(), f.pool, f.owner, f.member.MemberID, false, true)
 		demoted <- err
 	}()
 	go func() { <-start; removed <- identity.RemoveMember(t.Context(), f.pool, f.owner, f.member.MemberID) }()
@@ -164,4 +166,14 @@ func TestOwnershipDemotionAndMemberRemovalSerialize(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FILTER(WHERE is_owner AND removed_at IS NOT NULL),count(*) FILTER(WHERE is_owner AND removed_at IS NULL) FROM org_members WHERE org_id=$1`, f.owner.OrgID).Scan(&invalid, &owners); err != nil || invalid != 0 || owners != 1 {
 		t.Fatalf("ownership after race: invalid=%d owners=%d %v", invalid, owners, err)
 	}
+}
+
+func updateOwnership(ctx context.Context, database db.TxBeginner, manager org.ManagingMember, target uuid.UUID, value, expected bool) (org.UpdatedMember, error) {
+	var result org.UpdatedMember
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var err error
+		result, err = org.UpdateMemberOwnershipTx(ctx, tx, manager, target, value, expected)
+		return err
+	})
+	return result, err
 }

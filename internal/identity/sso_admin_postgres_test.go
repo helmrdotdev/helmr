@@ -435,3 +435,31 @@ func (f ssoAdminFixture) slackLink(t *testing.T, user, member uuid.UUID) uuid.UU
 	f.exec(t, `INSERT INTO slack_user_links(id,installation_id,org_id,member_id,user_id,team_id,slack_user_id) VALUES($1,$2,$3,$4,$5,'team','slack-user')`, link, installation, f.org, member, user)
 	return link
 }
+
+// A former owner loses what ownership kept under required SSO: their Slack
+// links retire with the ownership, and their ordinary browser and CLI are
+// refused at use.
+func TestLosingOwnershipUnderRequiredSSO(t *testing.T) {
+	f := newSSOAdminFixture(t)
+	former := f.user(t, "Former owner", "former@example.test")
+	formerMember := f.member(t, f.org, former, "owner")
+	link := f.slackLink(t, former, formerMember)
+	cli := f.cliSession(t, former, formerMember, nil)
+	formerRaw := f.session(t, former, uuid.Nil())
+	if _, err := requireSSO(t, f); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateMemberOwnership(t.Context(), f.pool, f.manager(t), formerMember, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var revoked bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM slack_user_links WHERE id=$1`, link).Scan(&revoked); err != nil || !revoked {
+		t.Fatalf("former owner's Slack link revoked=%v, %v", revoked, err)
+	}
+	if _, err := f.admits(t, formerRaw, f.org); !errors.Is(err, ErrSSORequired) {
+		t.Fatalf("former owner's ordinary browser: %v", err)
+	}
+	if _, err := access.SessionPrincipal(t.Context(), f.pool, cli, f.org); err == nil {
+		t.Fatal("former owner's ordinary CLI session was admitted")
+	}
+}
