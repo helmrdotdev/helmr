@@ -267,15 +267,12 @@ def is_ssh_backport(entry):
 def ssh_executable_digest(layout, work):
     # Inspect the merged OCI filesystem, including replacements and whiteouts.
     # Never execute anything from the release being assessed.
-    root = work.resolve() / "ssh-rootfs"
-    try:
-        run("umoci", "raw", "unpack", "--rootless", "--image", f"{layout}:scan", root)
+    with tempfile.TemporaryDirectory(dir=work) as tmp:
+        root = Path(tmp).resolve() / "rootfs"
+        run("umoci", "--log", "error", "raw", "unpack", "--rootless", "--image", f"{layout}:scan", root)
         ssh = root / "usr/bin/ssh"
         require(ssh.resolve() == ssh and ssh.is_file(), "expected a regular Debian SSH executable")
         return digest(ssh)
-    finally:
-        if root.exists():
-            shutil.rmtree(root)
 
 
 def scan_image(work, assets, descriptor, scope, published):
