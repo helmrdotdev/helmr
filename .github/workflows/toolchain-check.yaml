@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 env:
-  RELEASE_SOURCE_COMMIT: eba8c0767fe4df9b13867d5e0278065c2711cbaa
+  RELEASE_SOURCE_COMMIT: 12a7fc9a905fc756eac15fc1c8b78e5f7d78f95d
   RELEASE_SOURCE_REF: refs/heads/fix/builder-toolchain-security
   RELEASE_TAG: v0.2.10
   RELEASE_BUILD_ID: ${{ github.run_id }}
