@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -140,6 +139,16 @@ func resolveWorkerIdentity(ctx context.Context, cfg config.Worker, workDir strin
 	return identity, nil
 }
 
+// errWorkerKeyRejected means the Control Plane no longer accepts this machine
+// key: it was revoked, its host was retired or replaced, or its group no
+// longer admits it. The worker stops rather than enrolling itself again;
+// coming back takes a new enrollment with a valid token.
+var errWorkerKeyRejected = errors.New("the Control Plane no longer admits this machine: its key was revoked, its host was retired or replaced, or its group no longer admits it. Remove the worker identity and enroll this machine again with a valid enrollment token")
+
+// exitWorkerKeyRejected is the worker's exit status when the Control Plane no
+// longer admits its machine; service units list it in RestartPreventExitStatus.
+const exitWorkerKeyRejected = 78
+
 func resolveAuthenticatedWorkerIdentity(
 	ctx context.Context,
 	cfg config.Worker,
@@ -150,48 +159,13 @@ func resolveAuthenticatedWorkerIdentity(
 	if err != nil {
 		return workerIdentityFile{}, err
 	}
-	if err := authenticate(identity); err == nil {
-		return identity, nil
-	} else if !httpclient.IsStatus(err, http.StatusUnauthorized) {
+	if err := authenticate(identity); err != nil {
+		if httpclient.IsStatus(err, http.StatusUnauthorized) {
+			return workerIdentityFile{}, errWorkerKeyRejected
+		}
 		return workerIdentityFile{}, fmt.Errorf("authenticate worker identity: %w", err)
 	}
-	path := workerIdentityPath(workDir, cfg.WorkerIdentityPath)
-	if err := removeWorkerIdentityIfMatch(path, identity); err != nil {
-		return workerIdentityFile{}, err
-	}
-	identity, err = resolveWorkerIdentity(ctx, cfg, workDir)
-	if err != nil {
-		return workerIdentityFile{}, fmt.Errorf("replace rejected worker identity: %w", err)
-	}
-	if err := authenticate(identity); err != nil {
-		return workerIdentityFile{}, fmt.Errorf("authenticate replaced worker identity: %w", err)
-	}
 	return identity, nil
-}
-
-func removeWorkerIdentityIfMatch(path string, rejected workerIdentityFile) error {
-	return withWorkerIdentityLock(path, func() error {
-		current, err := readWorkerIdentity(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if current.WorkerHostID != rejected.WorkerHostID || !bytes.Equal(current.MachineKey, rejected.MachineKey) {
-			return nil
-		}
-		if err := removePendingMachineKey(path); err != nil {
-			return err
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove rejected worker identity: %w", err)
-		}
-		if err := syncDirectory(filepath.Dir(path)); err != nil {
-			return fmt.Errorf("sync rejected worker identity removal: %w", err)
-		}
-		return nil
-	})
 }
 
 func resolveWorkerControlPlaneIdentity(cfg config.WorkerControlPlane, workDir string) (workerIdentityFile, error) {

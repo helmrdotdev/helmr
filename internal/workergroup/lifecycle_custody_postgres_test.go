@@ -82,7 +82,10 @@ func TestHostDrainWaitsForAllPhysicalCustodyAcrossEpochs(t *testing.T) {
 	}
 }
 
-func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T) {
+// Loss fences the host's credentials without releasing physical custody.
+// Silence and an operator's fence keep the machine key so the machine can
+// return; the worker's own fence gives it up.
+func TestHostLossFencesCredentialsWithoutReleasingPhysicalCustody(t *testing.T) {
 	for _, path := range []string{"provider drift", "worker fence", "stale observation"} {
 		t.Run(path, func(t *testing.T) {
 			f := sessiontest.New(t)
@@ -103,11 +106,11 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 				t.Fatal(err)
 			}
 			var kept bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT h.status='lost' AND s.revoked_at IS NOT NULL
+			if err = f.Pool.QueryRow(t.Context(), `SELECT h.status='lost' AND s.claim_version < h.claim_version AND (s.revoked_at IS NOT NULL) = $3
  AND EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$2 AND fenced_at IS NULL)
  AND EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$2 AND fenced_at IS NULL)
- FROM worker_hosts h JOIN worker_host_keys s ON s.worker_host_id=h.id WHERE h.id=$1`, f.Worker, f.Environment).Scan(&kept); err != nil || !kept {
-				t.Fatalf("loss released physical custody or kept credentials: %v %v", kept, err)
+ FROM worker_hosts h JOIN worker_host_keys s ON s.worker_host_id=h.id WHERE h.id=$1`, f.Worker, f.Environment, path == "worker fence").Scan(&kept); err != nil || !kept {
+				t.Fatalf("loss released physical custody or left credentials usable: %v %v", kept, err)
 			}
 		})
 	}

@@ -301,6 +301,8 @@ POST /api/worker-groups/{groupID}/drain
 POST /api/worker-groups/{groupID}/enrollment-tokens
 POST /api/worker-groups/{groupID}/host-credentials/revoke
 POST /api/worker-groups/{groupID}/hosts/{hostID}/fence
+POST /api/worker-groups/{groupID}/hosts/{hostID}/permanently-lost
+POST /api/worker-groups/{groupID}/hosts/{hostID}/revoke
 POST /api/worker-groups/{groupID}/pause
 POST /api/worker-groups/{groupID}/token/rotate
 POST /capacity/v1/worker-groups/{workerGroupID}/plan

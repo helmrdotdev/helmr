@@ -323,3 +323,64 @@ func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *t
 		t.Fatalf("physical confirmation count=%d err=%v", count, err)
 	}
 }
+
+// An organization declaring its machine permanently lost releases the host's
+// custody as provider absence does, revokes its key and records the member's
+// attestation in the organization's audit trail. Another organization cannot.
+func TestPermanentLossReleasesOrganizationHostCustody(t *testing.T) {
+	f := newFixture(t)
+	var org uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `UPDATE worker_groups SET owner_org_id=(SELECT org_id FROM environments WHERE id=$2) WHERE id=$1 RETURNING owner_org_id`, f.group, f.env).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	member := func(orgID uuid.UUID) workergroup.Operator {
+		return workergroup.OrganizationOperator(orgID, func(context.Context, pgx.Tx) (audit.Evidence, error) {
+			return audit.Internal(audit.ControlPlane), nil
+		})
+	}
+	declare := func(operator workergroup.Operator) error {
+		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+			absence, err := workergroup.DeclareHostPermanentlyLost(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, operator, f.group, f.worker)
+			if err != nil {
+				return err
+			}
+			return dispatch.ObserveProviderAbsentHost(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, absence)
+		})
+	}
+	other := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other',$2)`, other, other.String())
+	if err := declare(member(other)); !errors.Is(err, workergroup.ErrGroupNotFound) {
+		t.Fatalf("another organization declared the host lost: %v", err)
+	}
+	if err := declare(workergroup.DeploymentOperator(audit.Internal(audit.ControlPlane))); err == nil {
+		t.Fatal("the deployment operator declared an organization host lost")
+	}
+	// A host still reporting is not declared lost; fencing it keeps its
+	// custody until the declaration.
+	var conflicting workergroup.ConflictError
+	if err := declare(member(org)); !errors.As(err, &conflicting) {
+		t.Fatalf("declared a live host lost: %v", err)
+	}
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, member(org), f.group, "host", uuid.Nil(), 1); err != nil {
+		t.Fatal(err)
+	}
+	var custody int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL`, f.worker).Scan(&custody); err != nil || custody == 0 {
+		t.Fatalf("fenced host holds no custody: %d %v", custody, err)
+	}
+	if err := declare(member(org)); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var live, unrevoked, audited int
+	if err := f.pool.QueryRow(t.Context(), `SELECT h.status,
+ (SELECT count(*) FROM computer_leases WHERE worker_host_id=h.id AND fenced_at IS NULL),
+ (SELECT count(*) FROM worker_host_keys WHERE worker_host_id=h.id AND revoked_at IS NULL),
+ (SELECT count(*) FROM audit_events WHERE action='worker_host.declared_permanently_lost' AND target_id=h.id AND org_id=$2)
+ FROM worker_hosts h WHERE h.id=$1`, f.worker, org).Scan(&status, &live, &unrevoked, &audited); err != nil {
+		t.Fatal(err)
+	}
+	if status != "lost" || live != 0 || unrevoked != 0 || audited != 1 {
+		t.Fatalf("after permanent loss: status=%s live leases=%d live keys=%d audits=%d", status, live, unrevoked, audited)
+	}
+}

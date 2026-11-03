@@ -527,12 +527,14 @@ func TestDeploymentWorkerHostLossIsFencedAndReplaySafe(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale/new loss error = %v", err)
 	}
-	var revoked bool
-	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_host_keys WHERE id = $1`, hostKeyID).Scan(&revoked); err != nil {
+	// Loss keeps the machine key, so the machine can return, but fences
+	// every credential its earlier claims authorized.
+	var revoked, fenced bool
+	if err := pool.QueryRow(ctx, `SELECT k.revoked_at IS NOT NULL, k.claim_version < h.claim_version FROM worker_host_keys k JOIN worker_hosts h ON h.id=k.worker_host_id WHERE k.id = $1`, hostKeyID).Scan(&revoked, &fenced); err != nil {
 		t.Fatal(err)
 	}
-	if !revoked {
-		t.Fatal("worker loss did not revoke the Worker credential")
+	if revoked || !fenced {
+		t.Fatalf("worker loss: key revoked = %t, claims fenced = %t; want a kept key with fenced claims", revoked, fenced)
 	}
 }
 

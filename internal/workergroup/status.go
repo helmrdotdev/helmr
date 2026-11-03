@@ -234,7 +234,8 @@ func ReadHostStatus(ctx context.Context, q db.Querier, groupID uuid.UUID, resour
 }
 
 // MarkHostLost fences the worker group's host with the provider resource ID as
-// lost, under the group's status mutation lock. A non-Nil hostID binds the
+// lost, under the group's status mutation lock. The machine keeps its key and
+// returns under a new epoch once it proves it; RevokeHost withdraws the key. A non-Nil hostID binds the
 // request to that host, so a replay never fences a later host enrolled under
 // the same resource ID. It is the operator's record that the machine stopped
 // holding work; it does not stop the machine.
@@ -293,6 +294,61 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 		return HostStatus{}, err
 	}
 	return status, nil
+}
+
+// RevokeHost revokes a host's machine key so the machine can neither return
+// nor authenticate, marking a live host lost first. Its custody stays until
+// its allocations are reconciled, for example by declaring it permanently
+// lost; coming back takes a new enrollment with a new key.
+func RevokeHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, operator Operator, groupID, hostID uuid.UUID) (HostStatus, error) {
+	if operator.safety {
+		return HostStatus{}, errSafetyOperation
+	}
+	var status HostStatus
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		actor, owner, err := operator.admit(ctx, tx, groupID)
+		if err != nil {
+			return err
+		}
+		if err := q.LockWorkerGroupMutation(ctx, statusMutationLockKey(groupID)); err != nil {
+			return fmt.Errorf("lock worker group lifecycle: %w", err)
+		}
+		var resourceID, state string
+		var claimVersion int64
+		err = tx.QueryRow(ctx, `SELECT resource_id,status,claim_version FROM worker_hosts WHERE id=$1 AND worker_group_id=$2 FOR UPDATE`, hostID, groupID).Scan(&resourceID, &state, &claimVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrHostNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock worker host: %w", err)
+		}
+		if state == db.WorkerHostStatusRegistering || state == db.WorkerHostStatusActive || state == db.WorkerHostStatusDraining {
+			if _, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
+				WorkerGroupID: pgvalue.UUID(groupID), ResourceID: resourceID, ExpectedClaimVersion: claimVersion, WorkerHostID: pgvalue.UUID(hostID),
+			}); err != nil {
+				return fmt.Errorf("mark worker host lost: %w", err)
+			}
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+				return err
+			}
+		}
+		revoked, err := q.RevokeWorkerHostKeys(ctx, pgvalue.UUID(hostID))
+		if err != nil {
+			return fmt.Errorf("revoke worker host key: %w", err)
+		}
+		if revoked > 0 {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: "worker_host.key_revoked", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+				return err
+			}
+		}
+		status = HostStatus{ID: hostID.String(), ResourceID: resourceID, WorkerGroupID: groupID.String(), TransitionApplied: revoked > 0}
+		if err := tx.QueryRow(ctx, `SELECT status,claim_version,current_epoch FROM worker_hosts WHERE id=$1`, hostID).Scan(&status.Status, &status.ClaimVersion, &status.CurrentEpoch); err != nil {
+			return fmt.Errorf("read worker host lifecycle: %w", err)
+		}
+		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
+	})
+	return status, err
 }
 
 func hostResourceID(resourceID string) (string, error) {

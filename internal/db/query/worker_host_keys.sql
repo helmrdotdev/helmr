@@ -307,3 +307,72 @@ SELECT id, public_key
   FROM worker_host_keys
  WHERE worker_host_id = sqlc.arg(worker_host_id)
    AND revoked_at IS NULL;
+
+-- name: ReturnLostWorkerHost :one
+-- A lost host whose machine proved its unrevoked key returns as registering.
+-- A service identity no worker holds makes the following credential exchange
+-- start a new epoch even for a worker process that was only asleep. Locks
+-- follow the credential exchange: group, then pool, then host, then key.
+WITH locked_group AS MATERIALIZED (
+    SELECT worker_groups.id, worker_groups.owner_org_id
+      FROM worker_host_keys
+      JOIN worker_hosts ON worker_hosts.id = worker_host_keys.worker_host_id
+                           AND worker_hosts.worker_group_id = worker_host_keys.worker_group_id
+      JOIN worker_groups ON worker_groups.id = worker_host_keys.worker_group_id
+     WHERE worker_host_keys.id = sqlc.arg(host_key_id)
+       AND worker_host_keys.worker_host_id = sqlc.arg(worker_host_id)
+       AND worker_host_keys.revoked_at IS NULL
+       AND worker_hosts.status = 'lost'
+       AND worker_groups.status IN ('active','paused','draining')
+     FOR UPDATE OF worker_groups
+), locked_pool AS MATERIALIZED (
+    SELECT worker_pools.id
+      FROM worker_pools
+      JOIN locked_group ON locked_group.id = worker_pools.worker_group_id
+      JOIN worker_hosts ON worker_hosts.worker_pool_id = worker_pools.id
+     WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+       AND worker_pools.status IN ('pending','active','draining')
+     FOR UPDATE OF worker_pools
+), returned AS (
+    UPDATE worker_hosts
+       SET status = 'registering',
+           claim_version = worker_hosts.claim_version + 1,
+           current_service_id = sqlc.arg(retired_service_id),
+           lost_at = NULL,
+           updated_at = now()
+      FROM locked_pool
+     WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+       AND worker_hosts.worker_pool_id = locked_pool.id
+       AND worker_hosts.status = 'lost'
+       -- A host that was draining, or that its capacity owner is retiring,
+       -- stays retired: returning would reopen admission its drain closed.
+       AND worker_hosts.draining_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM worker_scale_in_operations
+            WHERE worker_scale_in_operations.worker_host_id = worker_hosts.id
+              AND worker_scale_in_operations.completed_at IS NULL)
+       AND NOT EXISTS (
+           SELECT 1 FROM worker_hosts AS current_worker
+            WHERE current_worker.worker_group_id = worker_hosts.worker_group_id
+              AND current_worker.resource_id = worker_hosts.resource_id
+              AND current_worker.status IN ('registering', 'active', 'draining'))
+    RETURNING worker_hosts.id, worker_hosts.claim_version
+), rekeyed AS (
+    UPDATE worker_host_keys
+       SET claim_version = returned.claim_version
+      FROM returned
+     WHERE worker_host_keys.id = sqlc.arg(host_key_id)
+       AND worker_host_keys.revoked_at IS NULL
+    RETURNING worker_host_keys.id
+)
+SELECT returned.id, locked_group.id AS worker_group_id, locked_group.owner_org_id
+  FROM returned JOIN rekeyed ON true JOIN locked_group ON true;
+
+-- name: RevokeWorkerHostKeys :execrows
+-- Revokes the host's machine key, so the machine can neither return nor
+-- authenticate. The caller holds the group's status mutation lock and has
+-- marked a live host lost.
+UPDATE worker_host_keys
+   SET revoked_at = now()
+ WHERE worker_host_id = sqlc.arg(worker_host_id)
+   AND revoked_at IS NULL;

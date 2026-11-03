@@ -51,19 +51,13 @@ WITH target AS (
                     - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
        )
     RETURNING workers.*
-), revoked_host_secrets AS (
-    UPDATE worker_host_keys AS host_secrets
-       SET revoked_at = COALESCE(host_secrets.revoked_at, now())
-      FROM target
-     WHERE host_secrets.worker_host_id = target.id
-       AND host_secrets.revoked_at IS NULL
-    RETURNING host_secrets.id
 )
--- Host loss revokes credentials without confirming physical absence.
--- Allocation owners reconcile logical state; only confirmed stop releases custody.
+-- Host loss fences the host's claims without confirming physical absence. The
+-- machine keeps its key: proving it later returns the host under a new epoch,
+-- whose startup recovery confirms the stop. Allocation owners reconcile
+-- logical state; only confirmed stop releases custody.
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
-  FROM target
- WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0;
+  FROM target;
 
 -- Worker Host fence for dispatch and Computer preparation. The caller
 -- (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share

@@ -77,7 +77,7 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 
 func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 {
-		return errors.New("worker-host command is required: status or lose")
+		return errors.New("worker-host command is required: status, lose or revoke")
 	}
 	command := args[0]
 	flags := flag.NewFlagSet("worker-host "+command, flag.ContinueOnError)
@@ -96,7 +96,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 	if flags.NArg() != 0 {
 		return errors.New("worker-host command has unexpected positional arguments")
 	}
-	if command != "status" && command != "lose" {
+	if command != "status" && command != "lose" && command != "revoke" {
 		return fmt.Errorf("unknown worker-host command %q", command)
 	}
 	parsedGroupID, err := ids.Parse(groupID)
@@ -117,7 +117,15 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 		case "status":
 			result, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
 		case "lose":
+			// Loss fences the host's epoch; its machine returns when it proves
+			// its key again. Revoke withdraws the key.
 			result, err = workergroup.MarkHostLost(ctx, pool, policy, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlaneCLI)), parsedGroupID, resourceID, uuid.Nil(), expectedClaimVersion)
+		case "revoke":
+			var current workergroup.HostStatus
+			current, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
+			if err == nil {
+				result, err = workergroup.RevokeHost(ctx, pool, policy, workergroup.DeploymentOperator(audit.Internal(audit.ControlPlaneCLI)), parsedGroupID, uuid.MustParse(current.ID))
+			}
 		}
 		if err != nil {
 			return err

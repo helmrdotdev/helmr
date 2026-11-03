@@ -12,6 +12,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
@@ -154,6 +156,13 @@ type HostCredential struct {
 	Value     string
 	ExpiresIn time.Duration
 	Epoch     int64
+	// returned is set when the exchange brought a lost host back, recording
+	// the group's owner for the audit record.
+	returned *returnedHost
+}
+
+type returnedHost struct {
+	hostID, ownerOrgID uuid.UUID
 }
 
 // IssueHostCredential verifies a worker host's signed challenge against its
@@ -163,13 +172,18 @@ type HostCredential struct {
 // are locked by the single authenticating statement. The host credential is
 // issued at now() read after that statement returns, so waiting for its locks
 // does not shorten the lifetime the host credential advertises.
-func IssueHostCredential(ctx context.Context, txb db.TxBeginner, cfg HostAuthConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
+func IssueHostCredential(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, cfg HostAuthConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
 	var result HostCredential
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		var err error
 		result, err = issueHostCredential(ctx, db.New(tx), cfg, exchange, now)
 		if err != nil {
 			return err
+		}
+		if returned := result.returned; returned != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), OrgID: returned.ownerOrgID, Action: "worker_host.returned", TargetKind: "worker_host", TargetID: returned.hostID}); err != nil {
+				return err
+			}
 		}
 		return dbnotify.Notify(ctx, tx, "dispatch", "capacity")
 	})
@@ -204,16 +218,45 @@ func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, 
 	if !ed25519.Verify(ed25519.PublicKey(key.PublicKey), auth.HostChallengeMessage(exchange.Challenge), exchange.Signature) || missing {
 		return HostCredential{}, ErrUnauthenticated
 	}
-	hostKey, err := q.AuthenticateWorkerHostKey(ctx, db.AuthenticateWorkerHostKeyParams{
-		WorkerHostID: pgvalue.UUID(hostID),
-		HostKeyID:    key.ID,
-		ServiceID:    pgvalue.UUID(serviceID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return HostCredential{}, ErrUnauthenticated
-	}
-	if err != nil {
-		return HostCredential{}, fmt.Errorf("authenticate worker host %s key: %w", hostID, err)
+	// A lost host that proves its key returns before the exchange starts its
+	// new epoch. The new epoch's startup recovery reports and stops what the
+	// machine still runs, which settles the earlier epochs' custody. A host
+	// fenced between the two statements is returned on the second attempt,
+	// so a verified key is not refused over that race.
+	var returned *returnedHost
+	var hostKey db.AuthenticateWorkerHostKeyRow
+	for attempt := 0; ; attempt++ {
+		back, err := q.ReturnLostWorkerHost(ctx, db.ReturnLostWorkerHostParams{
+			HostKeyID: key.ID, WorkerHostID: pgvalue.UUID(hostID), RetiredServiceID: pgvalue.UUID(uuid.NewV7()),
+		})
+		switch {
+		case err == nil:
+			returned = &returnedHost{hostID: hostID}
+			if back.OwnerOrgID.Valid {
+				returned.ownerOrgID = uuid.UUID(back.OwnerOrgID.Bytes)
+			}
+		case db.IsUniqueViolation(err):
+			// A replacement enrolled under the same resource while this
+			// return waited for the group: the lost host stays lost.
+			return HostCredential{}, ErrUnauthenticated
+		case !errors.Is(err, pgx.ErrNoRows):
+			return HostCredential{}, fmt.Errorf("return worker host %s: %w", hostID, err)
+		}
+		hostKey, err = q.AuthenticateWorkerHostKey(ctx, db.AuthenticateWorkerHostKeyParams{
+			WorkerHostID: pgvalue.UUID(hostID),
+			HostKeyID:    key.ID,
+			ServiceID:    pgvalue.UUID(serviceID),
+		})
+		if errors.Is(err, pgx.ErrNoRows) && returned == nil && attempt == 0 {
+			continue
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return HostCredential{}, ErrUnauthenticated
+		}
+		if err != nil {
+			return HostCredential{}, fmt.Errorf("authenticate worker host %s key: %w", hostID, err)
+		}
+		break
 	}
 	hostKeyID, err := pgvalue.UUIDValue(hostKey.ID)
 	if err != nil {
@@ -240,7 +283,7 @@ func issueHostCredential(ctx context.Context, q db.Querier, cfg HostAuthConfig, 
 	if err != nil {
 		return HostCredential{}, fmt.Errorf("sign worker host %s credential: %w", hostID, err)
 	}
-	return HostCredential{Value: signed, ExpiresIn: cfg.ttl, Epoch: hostKey.CurrentEpoch.Int64}, nil
+	return HostCredential{Value: signed, ExpiresIn: cfg.ttl, Epoch: hostKey.CurrentEpoch.Int64, returned: returned}, nil
 }
 
 type exchangeInput struct {

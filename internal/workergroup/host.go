@@ -140,6 +140,12 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		if err != nil {
 			return err
 		}
+		// A replacement retires the keys of the resource's lost incarnations,
+		// so one machine resource never holds two returnable identities.
+		if _, err := tx.Exec(ctx, `UPDATE worker_host_keys k SET revoked_at=now() FROM worker_hosts h
+ WHERE k.worker_host_id=h.id AND k.revoked_at IS NULL AND h.worker_group_id=$1 AND h.resource_id=$2 AND h.status='lost'`, group, enrollment.ResourceID); err != nil {
+			return fmt.Errorf("retire lost incarnation keys: %w", err)
+		}
 		if enrollment.Token.SingleUse {
 			// Expiry is rechecked at consumption: the lookup's predicate is not
 			// re-evaluated after a lock wait.

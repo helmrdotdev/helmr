@@ -11,12 +11,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // The organization worker group API calls the same workergroup operations as
@@ -39,6 +43,8 @@ func (s *Server) mountWorkerGroupRoutes(r chi.Router) {
 	r.With(manage).Post("/worker-groups/{groupID}/host-credentials/revoke", s.revokeWorkerGroupHostCredentials)
 	r.With(read).Get("/worker-groups/{groupID}/hosts", s.listWorkerGroupHosts)
 	r.With(manage).Post("/worker-groups/{groupID}/hosts/{hostID}/fence", s.fenceWorkerHost)
+	r.With(manage).Post("/worker-groups/{groupID}/hosts/{hostID}/revoke", s.revokeWorkerHost)
+	r.With(manage).Post("/worker-groups/{groupID}/hosts/{hostID}/permanently-lost", s.declareWorkerHostPermanentlyLost)
 	r.With(s.sessionPermission(auth.PermissionPlacementsRead)).Get("/projects/{project}/environments/{environment}/placements", s.listPlacements)
 	r.With(s.sessionPermission(auth.PermissionPlacementsUpdate)).Put("/projects/{project}/environments/{environment}/placements/{placement}", s.setPlacement)
 	r.With(s.sessionPermission(auth.PermissionPlacementsUpdate)).Delete("/projects/{project}/environments/{environment}/placements/{placement}", s.removePlacement)
@@ -216,7 +222,8 @@ func (s *Server) listWorkerGroupHosts(w http.ResponseWriter, r *http.Request) {
 }
 
 // fenceWorkerHost records that the host no longer holds the group's work and
-// fences its credentials. It does not stop the machine itself.
+// fences its current epoch. It does not stop the machine itself, and the
+// machine returns under a new epoch when it proves its key again.
 func (s *Server) fenceWorkerHost(w http.ResponseWriter, r *http.Request) {
 	groupID, ok := adminGroupID(w, r)
 	if !ok {
@@ -246,6 +253,67 @@ func (s *Server) fenceWorkerHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
+}
+
+// revokeWorkerHost withdraws the host's machine key: the machine can neither
+// return nor authenticate, and comes back only by enrolling again.
+func (s *Server) revokeWorkerHost(w http.ResponseWriter, r *http.Request) {
+	groupID, hostID, ok := workerHostIDs(w, r)
+	if !ok {
+		return
+	}
+	status, err := workergroup.RevokeHost(r.Context(), s.tx, s.auditPolicy, s.workerGroupOperator(r, auth.PermissionWorkerGroupsManage), groupID, hostID)
+	if err != nil {
+		s.writeOrganizationWorkerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+// declareWorkerHostPermanentlyLost records the member's attestation that the
+// machine is gone for good. It revokes the machine key and releases the
+// host's custody, so its Computers can resume elsewhere in the group.
+func (s *Server) declareWorkerHostPermanentlyLost(w http.ResponseWriter, r *http.Request) {
+	groupID, hostID, ok := workerHostIDs(w, r)
+	if !ok {
+		return
+	}
+	operator := s.workerGroupOperator(r, auth.PermissionWorkerGroupsManage)
+	var host workergroup.WorkerHost
+	err := db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
+		absence, err := workergroup.DeclareHostPermanentlyLost(r.Context(), tx, s.auditPolicy, operator, groupID, hostID)
+		if err != nil {
+			return err
+		}
+		if err := dispatch.ObserveProviderAbsentHost(r.Context(), s.auditPolicy, absence); err != nil {
+			return err
+		}
+		host, err = workergroup.GetOrganizationHost(r.Context(), db.New(tx), principalFromContext(r.Context()).OrgID, hostID)
+		return err
+	})
+	if err != nil {
+		var lock *pgconn.PgError
+		if errors.Is(err, dispatch.ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady) || (errors.As(err, &lock) && lock.Code == "55P03") {
+			s.writeAgentComputerError(w, r, session.ErrNotReady)
+			return
+		}
+		s.writeOrganizationWorkerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, host)
+}
+
+func workerHostIDs(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
+	groupID, ok := adminGroupID(w, r)
+	if !ok {
+		return uuid.Nil(), uuid.Nil(), false
+	}
+	hostID, err := ids.Parse(chi.URLParam(r, "hostID"))
+	if err != nil {
+		writeError(w, badRequest(errors.New("worker host ID must be a canonical UUIDv7")))
+		return uuid.Nil(), uuid.Nil(), false
+	}
+	return groupID, hostID, true
 }
 
 func (s *Server) listPlacements(w http.ResponseWriter, r *http.Request) {

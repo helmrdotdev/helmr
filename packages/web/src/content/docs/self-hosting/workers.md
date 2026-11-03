@@ -157,11 +157,12 @@ At enrollment the worker generates an Ed25519 machine key and sends only its
 public half. The private key stays in `worker-identity.json`, a root-only file
 in the worker's state directory. To get a 15-minute host credential, the worker
 signs a short-lived challenge from the Control Plane with that key; no bearer
-secret ever crosses the network. The key stays valid until its host is fenced,
-for example after it stops sending heartbeats, or until the group's host
-credentials are revoked. A key is registered once: a revoked key can neither
-authenticate nor enroll again, so a machine comes back only by enrolling with a
-new key and a valid enrollment token.
+secret ever crosses the network. The key stays valid until it is revoked. A key
+is registered once: a revoked key can neither authenticate nor enroll again, so
+a machine comes back only by enrolling with a new key and a valid enrollment
+token. A worker whose key is rejected stops with exit status 78 and does not
+enroll itself again; service units should list 78 in `RestartPreventExitStatus`
+so the machine stays stopped until it is enrolled again.
 
 A group has a reusable enrollment token, for fleets that keep it in their own
 secret store. An organization can also issue a single-use enrollment token for
@@ -183,14 +184,44 @@ Two Admin API operations change worker group credentials, with different effects
   authorized before the revocation may still complete. Storage requests the
   Control Plane signed for those hosts before the revocation stay usable until
   they expire, at most 5 minutes later. Their allocations are reconciled as host
-  loss. The response lists the fenced host IDs. The enrollment
-  token is unchanged, so a machine that still holds it can enroll again. Each fenced host is audited as `worker_host.marked_lost`.
+  loss. The response lists the fenced host IDs. The enrollment token is
+  unchanged, so a machine that still holds it can enroll again with a new key;
+  rotate the token as well to cut off a fleet. Each fenced host is audited as
+  `worker_host.marked_lost`.
 
 When an enrollment token or a host may be compromised, rotate the token first,
 then revoke the group's host credentials, and replace the hosts with ones
 provisioned with the new token. Revocation does not stop processes or erase data
 already on a host, including keys and Secret values it received; confirm
 physical cleanup before releasing custody.
+
+## Lost hosts, return and permanent loss
+
+A host that stops sending heartbeats past its freshness, or that its operator
+fences, is marked lost: its current epoch is fenced and its credentials stop
+working, but it keeps its key. When the machine comes back, for example from
+sleep or after its own scaling stopped it, it proves its key again and returns
+under a new epoch with no operator step. Its startup recovery reports the VMs it
+still runs and stops them, which releases what earlier epochs held. A lost host
+does not return over a replacement enrolled under the same resource ID, and a
+host that was draining, or being scaled in, stays retired: release its custody
+by confirming the provider's absence or, for an organization's machine, by
+declaring it permanently lost.
+
+An organization manages its own hosts through the Organization API:
+
+- **Fence** (`POST /api/worker-groups/{id}/hosts/{host}/fence`) marks the host
+  lost. The machine may return.
+- **Revoke** (`POST /api/worker-groups/{id}/hosts/{host}/revoke`) marks the host
+  lost and revokes its key, so the machine cannot return. Its VMs' custody stays
+  with it until the host is declared permanently lost.
+- **Declare permanently lost** (`POST /api/worker-groups/{id}/hosts/{host}/permanently-lost`)
+  records the member's attestation that the machine is gone for good. The host
+  must already be lost, by fencing, revocation or silence. It revokes
+  the key and releases the host's custody, so its Computers can resume elsewhere
+  in the group. Nothing confirms the machine stopped; declare it only once the
+  machine is destroyed or wiped. Each declaration is audited as
+  `worker_host.declared_permanently_lost`.
 
 ## Drain and replace
 

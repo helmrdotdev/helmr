@@ -103,7 +103,7 @@ func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	credential, err := workergroup.IssueHostCredential(r.Context(), s.tx, s.hostAuth, workergroup.HostCredentialRequest{
+	credential, err := workergroup.IssueHostCredential(r.Context(), s.tx, s.auditPolicy, s.hostAuth, workergroup.HostCredentialRequest{
 		HostID: request.WorkerHostID, ServiceID: request.ServiceID, Challenge: request.Challenge, Signature: request.Signature,
 	}, time.Now)
 	if err != nil {

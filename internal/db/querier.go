@@ -168,13 +168,17 @@ type Querier interface {
 	LockWorkerHostForActivation(ctx context.Context, arg LockWorkerHostForActivationParams) (WorkerHost, error)
 	LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) (WorkerPool, error)
 	LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerPoolActiveHostsParams) ([]pgtype.UUID, error)
+	// Marking a host lost fences its claims and keeps its key, so the machine can
+	// return under a new epoch; revoking the key is a separate operation.
 	MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error)
 	PruneExpiredCommandResults(ctx context.Context, rowLimit int32) (int64, error)
 	PruneExpiredIdempotencyReceipts(ctx context.Context, rowLimit int32) (int64, error)
 	// One snapshot covers the full inventory. Limit overflow is unavailable evidence.
 	ReadCapacitySupplyIdentity(ctx context.Context, id pgtype.UUID) (ReadCapacitySupplyIdentityRow, error)
-	// Host loss revokes credentials without confirming physical absence.
-	// Allocation owners reconcile logical state; only confirmed stop releases custody.
+	// Host loss fences the host's claims without confirming physical absence. The
+	// machine keeps its key: proving it later returns the host under a new epoch,
+	// whose startup recovery confirms the stop. Allocation owners reconcile
+	// logical state; only confirmed stop releases custody.
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)
 	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error)
@@ -185,6 +189,11 @@ type Querier interface {
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasBlob(ctx context.Context, arg RetireAbandonedCasBlobParams) (int64, error)
+	// A lost host whose machine proved its unrevoked key returns as registering.
+	// A service identity no worker holds makes the following credential exchange
+	// start a new epoch even for a worker process that was only asleep. Locks
+	// follow the credential exchange: group, then pool, then host, then key.
+	ReturnLostWorkerHost(ctx context.Context, arg ReturnLostWorkerHostParams) (ReturnLostWorkerHostRow, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
@@ -192,6 +201,10 @@ type Querier interface {
 	// Fences every live host of the group as lost and revokes every unrevoked host
 	// secret. The caller holds the group's status mutation lock and row lock.
 	RevokeWorkerGroupHostCredentials(ctx context.Context, workerGroupID pgtype.UUID) ([]pgtype.UUID, error)
+	// Revokes the host's machine key, so the machine can neither return nor
+	// authenticate. The caller holds the group's status mutation lock and has
+	// marked a live host lost.
+	RevokeWorkerHostKeys(ctx context.Context, workerHostID pgtype.UUID) (int64, error)
 	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)

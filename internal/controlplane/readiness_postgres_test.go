@@ -158,12 +158,13 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 					assertServingHostPreserved(t, fixture, true)
 				} else {
 					cycle(false, 1)
-					var lost, revoked bool
-					if err := fixture.Pool.QueryRow(t.Context(), `SELECT status='lost', NOT EXISTS(SELECT 1 FROM worker_host_keys WHERE worker_host_id=$1 AND revoked_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&lost, &revoked); err != nil {
+					// The machine keeps its key to return, but its claims are fenced.
+					var lost, fenced bool
+					if err := fixture.Pool.QueryRow(t.Context(), `SELECT h.status='lost', NOT EXISTS(SELECT 1 FROM worker_host_keys k WHERE k.worker_host_id=h.id AND k.revoked_at IS NULL AND k.claim_version=h.claim_version) FROM worker_hosts h WHERE h.id=$1`, fixture.Worker).Scan(&lost, &fenced); err != nil {
 						t.Fatal(err)
 					}
-					if !lost || !revoked {
-						t.Fatalf("dead host not fenced after recovery: lost=%v revoked=%v", lost, revoked)
+					if !lost || !fenced {
+						t.Fatalf("dead host not fenced after recovery: lost=%v fenced=%v", lost, fenced)
 					}
 					// A missed heartbeat does not prove the VM stopped; retain physical charges.
 					var retainedLeases int
