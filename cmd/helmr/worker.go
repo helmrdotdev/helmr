@@ -198,6 +198,9 @@ func workerRemoveCommand() *cobra.Command {
 			if wait <= 0 {
 				return errors.New("--wait-timeout must be positive: remove waits for the drain to finish")
 			}
+			if workerEnvFile != workerEnvPath {
+				return fmt.Errorf("remove uninstalls only a worker that helmr worker up installed, with %s", workerEnvPath)
+			}
 			out := cmd.OutOrStdout()
 			identity, identityErr := workerhost.ReadIdentity(hostPath(workerIdentityPath))
 			drained := false

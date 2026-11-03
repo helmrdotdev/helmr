@@ -99,16 +99,24 @@ func enrollMachine(cmd *cobra.Command, opts workerUpOptions) (map[string]string,
 		if opts.controlPlaneURL == "" {
 			opts.controlPlaneURL = cp.BaseURL()
 		}
+		// The kept token is bound to the group and Control Plane it was
+		// minted for; a retry for another target must not reuse it.
+		target := opts.groupID + "\n" + opts.controlPlaneURL + "\n"
 		if _, err := os.Stat(minted); errors.Is(err, os.ErrNotExist) {
 			issued, err := cp.IssueWorkerEnrollmentToken(cmd.Context(), opts.groupID)
 			if err != nil {
 				return nil, workerhost.Identity{}, fmt.Errorf("issue an enrollment token: %w", err)
+			}
+			if err := writePrivate(hostPath(mintedTargetPath), []byte(target), 0o600); err != nil {
+				return nil, workerhost.Identity{}, err
 			}
 			if err := writePrivate(minted, []byte(issued.EnrollmentToken), 0o400); err != nil {
 				return nil, workerhost.Identity{}, err
 			}
 		} else if err != nil {
 			return nil, workerhost.Identity{}, err
+		} else if kept, err := os.ReadFile(hostPath(mintedTargetPath)); err != nil || string(kept) != target {
+			return nil, workerhost.Identity{}, fmt.Errorf("%s was minted for another group or Control Plane; delete it and %s to enroll with these settings", mintedTokenPath, mintedTargetPath)
 		}
 	}
 	if opts.controlPlaneURL == "" {
@@ -141,8 +149,10 @@ func enrollMachine(cmd *cobra.Command, opts workerUpOptions) (map[string]string,
 		}
 		return nil, workerhost.Identity{}, err
 	}
-	if err := os.Remove(minted); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, workerhost.Identity{}, err
+	for _, path := range []string{minted, hostPath(mintedTargetPath)} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, workerhost.Identity{}, err
+		}
 	}
 	return env, identity, nil
 }
@@ -174,8 +184,10 @@ func installRelease(cmd *cobra.Command, env map[string]string, identity workerho
 	}
 	// A unit left by an interrupted install may be restarting a missing
 	// worker; the installer replaces files only while it is stopped.
-	if _, err := workerHost.Run("systemctl", "stop", hostinstall.ServiceName); err != nil {
-		return "", err
+	if _, err := os.Stat(hostPath("/etc/systemd/system/" + hostinstall.ServiceName)); err == nil {
+		if _, err := workerHost.Run("systemctl", "stop", hostinstall.ServiceName); err != nil {
+			return "", err
+		}
 	}
 	if err := installBundles(hostinstall.FromRelease(fetched.Index, fetched.Dir), download); err != nil {
 		return "", err
@@ -183,8 +195,12 @@ func installRelease(cmd *cobra.Command, env map[string]string, identity workerho
 	return fetched.Index.Version, nil
 }
 
-// mintedTokenPath keeps a token minted by up until enrollment is stored.
-const mintedTokenPath = "/var/lib/helmr/worker-enrollment-token"
+// mintedTokenPath keeps a token minted by up until enrollment is stored, and
+// mintedTargetPath the group and Control Plane it was minted for.
+const (
+	mintedTokenPath  = "/var/lib/helmr/worker-enrollment-token"
+	mintedTargetPath = "/var/lib/helmr/worker-enrollment-target"
+)
 
 // managedEnv are the settings up derives itself; their flags or the fixed
 // install layout set them, never --env-file.

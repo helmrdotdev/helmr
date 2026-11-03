@@ -198,3 +198,10 @@ func TestWorkerReadsQuotedEnvironmentFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerRemoveOnlyUninstallsTheUpLayout(t *testing.T) {
+	fakeWorkerHost(t)
+	if _, err := runWorkerCLI(t, "remove", "--env", "/etc/other.env"); err == nil || !strings.Contains(err.Error(), "only a worker that helmr worker up installed") {
+		t.Fatalf("remove with another layout = %v", err)
+	}
+}
