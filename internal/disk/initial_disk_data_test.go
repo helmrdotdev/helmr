@@ -94,3 +94,58 @@ func TestInitialDiskDataFailure(t *testing.T) {
 		t.Fatal("invalid source accepted as empty disk")
 	}
 }
+
+func TestInitialVersionBatchesNearbyExtents(t *testing.T) {
+	const batchBytes = blockformat.MaxChangedBlocks * blockformat.BlockSize
+	want := make([]byte, 5*batchBytes)
+	disk, err := os.CreateTemp(t.TempDir(), "sparse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer disk.Close()
+	if err := disk.Truncate(int64(len(want))); err != nil {
+		t.Fatal(err)
+	}
+	// Small extents leave a partial batch.
+	for offset := 0; offset < batchBytes; offset += batchBytes / 32 {
+		want[offset] = byte(offset/blockformat.BlockSize%251 + 1)
+		if _, err := disk.WriteAt(want[offset:offset+1], int64(offset)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Full-sized reads with mostly allocated zeros must also share a batch.
+	for offset := batchBytes; offset < len(want)-batchBytes; offset += batchBytes {
+		want[offset] = byte(offset / batchBytes)
+	}
+	// This last extent fills the pending batch partway through a read.
+	for offset := len(want)-batchBytes; offset < len(want); offset += blockformat.BlockSize {
+		block := offset / blockformat.BlockSize
+		if block%128 != 0 {
+			want[offset] = byte(block%251 + 1)
+		}
+	}
+	if _, err := disk.WriteAt(want[batchBytes:], batchBytes); err != nil {
+		t.Fatal(err)
+	}
+	// The staging budget admits batched writes but not a private root for
+	// every small extent. Read back the whole disk, including the holes.
+	version, err := CaptureInitialVersion(t.Context(), VersionCapture{
+		Disk: disk, Capacity: int64(len(want)), StagingParent: t.TempDir(),
+		Scope: "scope", KeyID: "key", Key: bytes.Repeat([]byte{3}, 32),
+		Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 8 << 20, MaxObjects: 16,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer version.Close()
+	tree, err := blockformat.OpenTree(t.Context(), version.store, "scope", map[string][]byte{"key": version.key}, version.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for offset := 0; offset < len(want); offset += batchBytes {
+		got, err := tree.ReadRange(t.Context(), int64(offset), batchBytes)
+		if err != nil || !bytes.Equal(got, want[offset:offset+batchBytes]) {
+			t.Fatalf("sparse readback at %d differs: %v", offset, err)
+		}
+	}
+}
