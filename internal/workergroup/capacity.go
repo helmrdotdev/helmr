@@ -268,7 +268,7 @@ func DeclareHostPermanentlyLost(ctx context.Context, tx pgx.Tx, policy auditpoli
 	return confirmHostAbsent(ctx, tx, policy, actor, owner, hostID, "worker_host.declared_permanently_lost", true)
 }
 
-func confirmHostAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, owner, hostID uuid.UUID, action string, recordAlways bool) (ConfirmedProviderAbsence, error) {
+func confirmHostAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, owner, hostID uuid.UUID, action string, attestation bool) (ConfirmedProviderAbsence, error) {
 	var group uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT h.worker_group_id FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id AND g.owner_org_id IS NOT DISTINCT FROM $2 WHERE h.id=$1`, hostID, optionalOwner(owner)).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -290,7 +290,7 @@ func confirmHostAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy
 	}
 	// An attestation, unlike a provider's confirmation, proves nothing about a
 	// host still reporting, which may still run its VMs.
-	if recordAlways && !lost {
+	if attestation && !lost {
 		return ConfirmedProviderAbsence{}, conflict("only a lost worker host can be declared permanently lost; fence or revoke it first")
 	}
 	_, err := db.New(tx).ConfirmWorkerHostProviderAbsent(ctx, pgvalue.UUID(hostID))
@@ -314,7 +314,7 @@ func confirmHostAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy
 			return ConfirmedProviderAbsence{}, err
 		}
 	}
-	if changed || recordAlways {
+	if changed || attestation {
 		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: owner, Action: action, TargetKind: "worker_host", TargetID: hostID}); err != nil {
 			return ConfirmedProviderAbsence{}, err
 		}
