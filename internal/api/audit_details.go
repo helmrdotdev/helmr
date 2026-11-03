@@ -238,3 +238,30 @@ type AuditSSOBindingDetails struct {
 }
 
 func (AuditSSOBindingDetails) auditDetails() {}
+
+// AuditSSOConnectionDetails names a connection's protocol.
+type AuditSSOConnectionDetails struct {
+	Protocol string `json:"protocol"`
+}
+
+func (AuditSSOConnectionDetails) auditDetails() {}
+
+// AuditSSOPolicyDetails records an SSO policy change and what requiring SSO
+// revoked.
+type AuditSSOPolicyDetails struct {
+	RequiredBefore       bool   `json:"required_before"`
+	RequiredAfter        bool   `json:"required_after"`
+	SessionSecondsBefore *int32 `json:"session_seconds_before,omitempty"`
+	SessionSecondsAfter  *int32 `json:"session_seconds_after,omitempty"`
+	RevokedCLISessions   int    `json:"revoked_cli_sessions"`
+	RevokedSlackLinks    int    `json:"revoked_slack_links"`
+}
+
+func (AuditSSOPolicyDetails) auditDetails() {}
+
+// AuditSSORecoveryDetails records how many recovery codes remain.
+type AuditSSORecoveryDetails struct {
+	Remaining int `json:"remaining"`
+}
+
+func (AuditSSORecoveryDetails) auditDetails() {}
