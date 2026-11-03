@@ -58,7 +58,7 @@ func (b *ssoBrowser) do(t *testing.T, method, path, body string, origin string, 
 func (b *ssoBrowser) samlSignIn(t *testing.T, idp ssotest.IdP, connection uuid.UUID, subject string, start string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	console := b.f.origin
-	started := b.do(t, http.MethodPost, start, `{"organization":"acme"}`, console, nil)
+	started := b.do(t, http.MethodPost, start, `{"organization_slug":"acme"}`, console, nil)
 	if started.Code != http.StatusOK {
 		t.Fatalf("start = %d %s", started.Code, started.Body)
 	}
@@ -101,7 +101,7 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	}
 	idp := ssotest.NewIdP(t)
 	connection := uuid.NewV7()
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
  VALUES($1,$2,'saml','active',$3,'https://idp.example.test/sso',$4,$5,clock_timestamp())`, connection, orgID, idp.EntityID, []string{idp.CertPEM}, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -115,37 +115,37 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	// First association: the IdP vouches for a subject Helmr has not seen.
 	first := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
 	acs, form := first.samlSignIn(t, idp, connection, "alice", "/api/auth/sso/start")
-	if acs.Code != http.StatusSeeOther || acs.Header().Get("Location") != "/sso/callback" {
+	if acs.Code != http.StatusSeeOther || acs.Header().Get("Location") != "/sso/saml/callback" {
 		t.Fatalf("ACS = %d %s", acs.Code, acs.Header().Get("Location"))
 	}
 	if finished := first.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", "https://idp.example.test", nil); finished.Code != http.StatusForbidden {
 		t.Fatalf("cross-site completion = %d %s", finished.Code, finished.Body)
 	}
 	finished := first.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil)
-	if finished.Code != http.StatusOK || !strings.Contains(finished.Body.String(), `"/sso/link"`) || first.cookies["__Host-helmr_sso_link"] == nil {
+	if finished.Code != http.StatusOK || !strings.Contains(finished.Body.String(), `"/sso/confirm"`) || first.cookies["__Host-helmr_sso_confirm"] == nil {
 		t.Fatalf("finish = %d %s", finished.Code, finished.Body)
 	}
 	if replay := first.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(replay.Header().Get("Location"), "sso_error=authentication_invalid") {
 		t.Fatalf("replayed response without a flow = %s", replay.Header().Get("Location"))
 	}
-	link := first.do(t, http.MethodGet, "/api/auth/sso/link", "", console, nil)
+	link := first.do(t, http.MethodGet, "/api/auth/sso/confirm", "", console, nil)
 	if link.Code != http.StatusOK || !strings.Contains(link.Body.String(), `"asserted_email":"alice@example.test"`) {
 		t.Fatalf("link = %d %s", link.Code, link.Body)
 	}
-	if refused := first.do(t, http.MethodPost, "/api/auth/sso/link/confirm", "", console, nil); refused.Code != http.StatusForbidden {
+	if refused := first.do(t, http.MethodPost, "/api/auth/sso/confirm", "", console, nil); refused.Code != http.StatusForbidden {
 		t.Fatalf("confirm without an ordinary sign-in = %d %s", refused.Code, refused.Body)
 	}
 	// The Console runs the email-code sign-in for the asserted address first.
 	ordinary := f.session(t, alice, uuid.Nil())
 	first.cookies["__Host-helmr_session"] = &http.Cookie{Name: "__Host-helmr_session", Value: ordinary}
-	confirmed := first.do(t, http.MethodPost, "/api/auth/sso/link/confirm", "", console, nil)
+	confirmed := first.do(t, http.MethodPost, "/api/auth/sso/confirm", "", console, nil)
 	if confirmed.Code != http.StatusOK || !strings.Contains(confirmed.Body.String(), orgID.String()) {
 		t.Fatalf("confirm = %d %s", confirmed.Code, confirmed.Body)
 	}
 
 	// A returning identity signs a signed-out browser in without an email step.
 	returning := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
-	if acs, _ := returning.samlSignIn(t, idp, connection, "alice", "/api/auth/sso/start"); acs.Header().Get("Location") != "/sso/callback" {
+	if acs, _ := returning.samlSignIn(t, idp, connection, "alice", "/api/auth/sso/start"); acs.Header().Get("Location") != "/sso/saml/callback" {
 		t.Fatalf("ACS = %s", acs.Header().Get("Location"))
 	}
 	finished = returning.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil)
@@ -162,16 +162,16 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	if got := returning.do(t, http.MethodGet, "/api/account/credentials", "", console, nil); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "ordinary_sign_in_required") {
 		t.Fatalf("account settings from an SSO-only session = %d %s", got.Code, got.Body)
 	}
-	bindings := first.do(t, http.MethodGet, "/api/account/sso/bindings", "", console, nil)
-	if bindings.Code != http.StatusOK || !strings.Contains(bindings.Body.String(), `"subject":"alice"`) {
-		t.Fatalf("bindings = %d %s", bindings.Code, bindings.Body)
+	links := first.do(t, http.MethodGet, "/api/account/sso/links", "", console, nil)
+	if links.Code != http.StatusOK || !strings.Contains(links.Body.String(), `"subject":"alice"`) {
+		t.Fatalf("links = %d %s", links.Code, links.Body)
 	}
 
 	stray := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
 	if got := stray.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(got.Header().Get("Location"), "sso_error=authentication_invalid") {
 		t.Fatalf("unsolicited response = %s", got.Header().Get("Location"))
 	}
-	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"unknown"}`, console, nil); got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "sso_not_available") {
+	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization_slug":"unknown"}`, console, nil); got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "sso_not_available") {
 		t.Fatalf("unknown organization = %d %s", got.Code, got.Body)
 	}
 }
@@ -256,9 +256,9 @@ func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
 	if finished.Code != http.StatusOK || !strings.Contains(finished.Body.String(), "/settings/security") {
 		t.Fatalf("finish = %d %s", finished.Code, finished.Body)
 	}
-	bindings := browser.do(t, http.MethodGet, "/api/account/sso/bindings", "", console, nil)
-	if !strings.Contains(bindings.Body.String(), `"subject":"alice-oidc"`) || !strings.Contains(bindings.Body.String(), `"protocol":"oidc"`) {
-		t.Fatalf("bindings = %d %s", bindings.Code, bindings.Body)
+	links := browser.do(t, http.MethodGet, "/api/account/sso/links", "", console, nil)
+	if !strings.Contains(links.Body.String(), `"subject":"alice-oidc"`) || !strings.Contains(links.Body.String(), `"protocol":"oidc"`) {
+		t.Fatalf("links = %d %s", links.Code, links.Body)
 	}
 }
 
@@ -289,17 +289,17 @@ func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
 	f, issuer, orgID := newOIDCFixture(t)
 	alice := f.user(t, "Alice")
 	member := f.member(t, orgID, alice, "member")
-	identity, binding := uuid.NewV7(), uuid.NewV7()
+	identity, link := uuid.NewV7(), uuid.NewV7()
 	var connection uuid.UUID
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sso_connections WHERE org_id=$1`, orgID).Scan(&connection); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,'alice',$4)`, identity, orgID, connection, alice)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, binding, orgID, identity, member, alice)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sso_member_links(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, link, orgID, identity, member, alice)
 	console := f.origin
 	browser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
 
-	started := browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"acme"}`, console, nil)
+	started := browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization_slug":"acme"}`, console, nil)
 	query := oidcAnswer(t, issuer, started.Body.Bytes(), "alice", time.Now().Add(-48*time.Hour))
 	if query.Get("max_age") != "86400" || query.Get("prompt") != "" {
 		t.Fatalf("authorization query = %v", query)
@@ -308,7 +308,7 @@ func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
 	if stale.Code != http.StatusForbidden || !strings.Contains(stale.Body.String(), "sso_reauthentication_required") {
 		t.Fatalf("stale authentication = %d %s", stale.Code, stale.Body)
 	}
-	started = browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization":"acme","reauthenticate":true}`, console, nil)
+	started = browser.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization_slug":"acme","reauthenticate":true}`, console, nil)
 	query = oidcAnswer(t, issuer, started.Body.Bytes(), "alice", time.Now())
 	if query.Get("prompt") != "login" || query.Get("max_age") != "0" {
 		t.Fatalf("forced authorization query = %v", query)

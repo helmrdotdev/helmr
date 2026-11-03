@@ -31,7 +31,7 @@ type SSOAssertion struct {
 }
 
 // SSOSignIn is the outcome of an SSO sign-in. Unbound means the identity has no
-// live binding and the browser continues with first association.
+// live link and the browser continues with first association.
 type SSOSignIn struct {
 	OrgID   uuid.UUID
 	Session string
@@ -54,19 +54,19 @@ func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAss
 		if err := freshSSOTime(ctx, tx, orgID, a.AuthenticatedAt); err != nil {
 			return err
 		}
-		b, err := sso.LiveBinding(ctx, tx, a.ConnectionID, a.Subject)
-		if errors.Is(err, sso.ErrNotBound) {
+		b, err := sso.LiveLink(ctx, tx, a.ConnectionID, a.Subject)
+		if errors.Is(err, sso.ErrNotLinked) {
 			result.Unbound = true
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		// The member, then the binding: the order member retirement takes.
+		// The member, then the link: the order member retirement takes.
 		if err := admitSSOProof(ctx, tx, b, a.AuthenticatedAt); err != nil {
 			return err
 		}
-		if err := sso.HoldBinding(ctx, tx, b); errors.Is(err, sso.ErrNotBound) {
+		if err := sso.HoldLink(ctx, tx, b); errors.Is(err, sso.ErrNotLinked) {
 			result.Unbound = true
 			return nil
 		} else if err != nil {
@@ -117,9 +117,9 @@ func LinkSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Pri
 	})
 }
 
-// SSOLink is a validated identity without a binding, carried to first
+// SSOAssociation is a validated identity without a link, carried to first
 // association in the browser's signed flow state.
-type SSOLink struct {
+type SSOAssociation struct {
 	ConnectionID        uuid.UUID
 	Protocol            string
 	Subject             string
@@ -132,7 +132,7 @@ type SSOLink struct {
 // ordinary proof for the account whose login email is the asserted email; the
 // membership comes from the invitation the flow started with or from the
 // account's existing live membership.
-func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, link SSOLink) (uuid.UUID, error) {
+func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, link SSOAssociation) (uuid.UUID, error) {
 	var orgID uuid.UUID
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var err error
@@ -207,8 +207,8 @@ func bindSSO(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, orgID
 	}
 	if created {
 		evidence := audit.FromPrincipal(p)
-		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: evidence, OrgID: orgID, Action: "sso.binding_created", TargetKind: "member", TargetID: member,
-			Details: audit.SSOBindingDetails{ConnectionID: a.ConnectionID, IdentityID: b.IdentityID, Subject: a.Subject}}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: evidence, OrgID: orgID, Action: "sso.member_linked", TargetKind: "member", TargetID: member,
+			Details: audit.SSOLinkDetails{ConnectionID: a.ConnectionID, IdentityID: b.IdentityID, Subject: a.Subject}}); err != nil {
 			return err
 		}
 	}
@@ -218,7 +218,7 @@ func bindSSO(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, orgID
 // admitSSOProof refuses an IdP authentication that would not admit the member:
 // one already past the organization's proof lifetime, or one not after the
 // member's sign-in cutoff. Both need a fresh IdP sign-in.
-func admitSSOProof(ctx context.Context, tx pgx.Tx, b sso.Binding, at time.Time) error {
+func admitSSOProof(ctx context.Context, tx pgx.Tx, b sso.MemberLink, at time.Time) error {
 	var cutoff pgtype.Timestamptz
 	err := tx.QueryRow(ctx, `SELECT reauthenticate_after FROM org_members WHERE id=$1 AND org_id=$2 AND user_id=$3 AND removed_at IS NULL AND suspended_at IS NULL FOR SHARE`, b.MemberID, b.OrgID, b.UserID).Scan(&cutoff)
 	if isNoRows(err) {
@@ -246,7 +246,7 @@ func freshSSOTime(ctx context.Context, tx pgx.Tx, org uuid.UUID, at time.Time) e
 	return nil
 }
 
-func addSSOProof(ctx context.Context, tx pgx.Tx, cfg Config, session uuid.UUID, b sso.Binding, a SSOAssertion) error {
+func addSSOProof(ctx context.Context, tx pgx.Tx, cfg Config, session uuid.UUID, b sso.MemberLink, a SSOAssertion) error {
 	if err := sso.AddProof(ctx, tx, session, b, a.AuthenticatedAt); err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func issueSSOSession(ctx context.Context, tx pgx.Tx, cfg Config, user uuid.UUID)
 	return raw, id, err
 }
 
-// AccountSSOBindings lists the account's live company SSO links.
-func AccountSSOBindings(ctx context.Context, q db.DBTX, p auth.Principal) ([]sso.AccountBinding, error) {
-	return sso.AccountBindings(ctx, q, p.UserID)
+// AccountSSOLinks lists the account's live company SSO links.
+func AccountSSOLinks(ctx context.Context, q db.DBTX, p auth.Principal) ([]sso.AccountLink, error) {
+	return sso.AccountLinks(ctx, q, p.UserID)
 }

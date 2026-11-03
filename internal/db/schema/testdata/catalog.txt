@@ -1069,14 +1069,14 @@ column sso_connections.created_at timestamp with time zone not null default cloc
 column sso_connections.created_by_member_id uuid not null
 column sso_connections.id uuid not null
 column sso_connections.oidc_client_id text
+column sso_connections.oidc_client_secret_ciphertext bytea
+column sso_connections.oidc_client_secret_nonce bytea
 column sso_connections.oidc_issuer text
-column sso_connections.oidc_secret_ciphertext bytea
-column sso_connections.oidc_secret_nonce bytea
 column sso_connections.org_id uuid not null
 column sso_connections.protocol text not null
 column sso_connections.retired_at timestamp with time zone
 column sso_connections.saml_certificates text[]
-column sso_connections.saml_idp_entity_id text
+column sso_connections.saml_entity_id text
 column sso_connections.saml_sso_url text
 column sso_connections.state text not null
 column sso_connections.tested_at timestamp with time zone
@@ -1089,17 +1089,17 @@ column sso_identities.id uuid not null
 column sso_identities.org_id uuid not null
 column sso_identities.subject text not null
 column sso_identities.user_id uuid not null
-column sso_member_bindings.created_at timestamp with time zone not null default clock_timestamp()
-column sso_member_bindings.id uuid not null
-column sso_member_bindings.identity_id uuid not null
-column sso_member_bindings.member_id uuid not null
-column sso_member_bindings.org_id uuid not null
-column sso_member_bindings.retired_at timestamp with time zone
-column sso_member_bindings.user_id uuid not null
+column sso_member_links.created_at timestamp with time zone not null default clock_timestamp()
+column sso_member_links.id uuid not null
+column sso_member_links.identity_id uuid not null
+column sso_member_links.member_id uuid not null
+column sso_member_links.org_id uuid not null
+column sso_member_links.retired_at timestamp with time zone
+column sso_member_links.user_id uuid not null
 column sso_proofs.authenticated_at timestamp with time zone not null
-column sso_proofs.binding_id uuid not null
 column sso_proofs.created_at timestamp with time zone not null default clock_timestamp()
 column sso_proofs.id uuid not null
+column sso_proofs.link_id uuid not null
 column sso_proofs.member_id uuid not null
 column sso_proofs.org_id uuid not null
 column sso_proofs.revoked_at timestamp with time zone
@@ -2263,15 +2263,15 @@ constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) 
 constraint slack_work_items f FOREIGN KEY (post_id, thread_id, environment_id) REFERENCES slack_posts(id, thread_id, environment_id)
 constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
 constraint sso_connections c CHECK (cardinality(saml_certificates) >= 1)
-constraint sso_connections c CHECK (octet_length(oidc_secret_ciphertext) >= 16)
-constraint sso_connections c CHECK (octet_length(oidc_secret_nonce) = 12)
+constraint sso_connections c CHECK (octet_length(oidc_client_secret_ciphertext) >= 16)
+constraint sso_connections c CHECK (octet_length(oidc_client_secret_nonce) = 12)
 constraint sso_connections c CHECK (oidc_client_id <> ''::text)
 constraint sso_connections c CHECK (oidc_issuer ~~ 'https://%'::text)
 constraint sso_connections c CHECK (protocol = ANY (ARRAY['oidc'::text, 'saml'::text]))
-constraint sso_connections c CHECK (saml_idp_entity_id <> ''::text)
+constraint sso_connections c CHECK (saml_entity_id <> ''::text)
 constraint sso_connections c CHECK (saml_sso_url ~~ 'https://%'::text)
 constraint sso_connections c CHECK (state = ANY (ARRAY['candidate'::text, 'active'::text, 'retired'::text]))
-constraint sso_connections c sso_connections_protocol_shape CHECK (protocol = 'oidc'::text AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 4 AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 0 OR protocol = 'saml'::text AND num_nonnulls(saml_idp_entity_id, saml_sso_url, saml_certificates) = 3 AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_secret_ciphertext, oidc_secret_nonce) = 0)
+constraint sso_connections c sso_connections_protocol_shape CHECK (protocol = 'oidc'::text AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_client_secret_ciphertext, oidc_client_secret_nonce) = 4 AND num_nonnulls(saml_entity_id, saml_sso_url, saml_certificates) = 0 OR protocol = 'saml'::text AND num_nonnulls(saml_entity_id, saml_sso_url, saml_certificates) = 3 AND num_nonnulls(oidc_issuer, oidc_client_id, oidc_client_secret_ciphertext, oidc_client_secret_nonce) = 0)
 constraint sso_connections c sso_connections_state_shape CHECK (state = 'candidate'::text AND activated_at IS NULL AND retired_at IS NULL OR state = 'active'::text AND activated_at IS NOT NULL AND retired_at IS NULL OR state = 'retired'::text AND retired_at IS NOT NULL)
 constraint sso_connections f FOREIGN KEY (org_id) REFERENCES organizations(id)
 constraint sso_connections f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id)
@@ -2286,11 +2286,11 @@ constraint sso_identities f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint sso_identities p PRIMARY KEY (id)
 constraint sso_identities u UNIQUE (connection_id, subject)
 constraint sso_identities u UNIQUE (id, org_id, user_id)
-constraint sso_member_bindings f FOREIGN KEY (identity_id, org_id, user_id) REFERENCES sso_identities(id, org_id, user_id)
-constraint sso_member_bindings f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint sso_member_bindings p PRIMARY KEY (id)
-constraint sso_member_bindings u UNIQUE (id, org_id, member_id, user_id)
-constraint sso_proofs f FOREIGN KEY (binding_id, org_id, member_id, user_id) REFERENCES sso_member_bindings(id, org_id, member_id, user_id)
+constraint sso_member_links f FOREIGN KEY (identity_id, org_id, user_id) REFERENCES sso_identities(id, org_id, user_id)
+constraint sso_member_links f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
+constraint sso_member_links p PRIMARY KEY (id)
+constraint sso_member_links u UNIQUE (id, org_id, member_id, user_id)
+constraint sso_proofs f FOREIGN KEY (link_id, org_id, member_id, user_id) REFERENCES sso_member_links(id, org_id, member_id, user_id)
 constraint sso_proofs f FOREIGN KEY (session_id, user_id) REFERENCES login_sessions(id, user_id)
 constraint sso_proofs p PRIMARY KEY (id)
 constraint template_definitions c CHECK (((network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(network_policy) = 'object'::text AND (network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(network_policy -> 'domains'::text) = 'array'::text AND (network_policy -> 'domains'::text) <> '[]'::jsonb AND (network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
@@ -2642,8 +2642,8 @@ index CREATE UNIQUE INDEX slack_user_links_live ON public.slack_user_links USING
 index CREATE UNIQUE INDEX slack_user_links_live_account ON public.slack_user_links USING btree (installation_id, user_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX sso_connections_active ON public.sso_connections USING btree (org_id) WHERE (state = 'active'::text)
 index CREATE UNIQUE INDEX sso_connections_candidate ON public.sso_connections USING btree (org_id) WHERE (state = 'candidate'::text)
-index CREATE UNIQUE INDEX sso_member_bindings_live_identity ON public.sso_member_bindings USING btree (identity_id) WHERE (retired_at IS NULL)
-index CREATE UNIQUE INDEX sso_member_bindings_live_member ON public.sso_member_bindings USING btree (member_id) WHERE (retired_at IS NULL)
+index CREATE UNIQUE INDEX sso_member_links_live_identity ON public.sso_member_links USING btree (identity_id) WHERE (retired_at IS NULL)
+index CREATE UNIQUE INDEX sso_member_links_live_member ON public.sso_member_links USING btree (member_id) WHERE (retired_at IS NULL)
 index CREATE UNIQUE INDEX sso_proofs_live_session ON public.sso_proofs USING btree (session_id, org_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX trigger_activations_current ON public.trigger_activations USING btree (environment_id, agent_id, trigger_key) WHERE (active_until IS NULL)
 index CREATE UNIQUE INDEX turn_messages_one_started ON public.turn_messages USING btree (environment_id, turn_id) WHERE (status = 'started'::text)

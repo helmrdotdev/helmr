@@ -34,7 +34,7 @@ func newSSOFixture(t *testing.T) ssoFixture {
 func (f ssoFixture) activeConnection(t *testing.T, orgID, creator uuid.UUID) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	f.exec(t, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_idp_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
+	f.exec(t, `INSERT INTO sso_connections(id,org_id,protocol,state,saml_entity_id,saml_sso_url,saml_certificates,created_by_member_id,activated_at)
  VALUES($1,$2,'saml','active',$4,'https://idp.example.test/sso',ARRAY['cert'],$3,clock_timestamp())`, id, orgID, creator, "https://idp.example.test/"+id.String())
 	return id
 }
@@ -47,7 +47,7 @@ func (f ssoFixture) bind(t *testing.T, subject string, member, user uuid.UUID) {
 	t.Helper()
 	identity := uuid.NewV7()
 	f.exec(t, `INSERT INTO sso_identities(id,org_id,connection_id,subject,user_id) VALUES($1,$2,$3,$4,$5)`, identity, f.org, f.connection, subject, user)
-	f.exec(t, `INSERT INTO sso_member_bindings(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, uuid.NewV7(), f.org, identity, member, user)
+	f.exec(t, `INSERT INTO sso_member_links(id,org_id,identity_id,member_id,user_id) VALUES($1,$2,$3,$4,$5)`, uuid.NewV7(), f.org, identity, member, user)
 }
 
 func (f ssoFixture) admits(t *testing.T, raw string, target uuid.UUID) (auth.Principal, error) {
@@ -136,7 +136,7 @@ func TestSSOSignInRefusesStaleAuthentication(t *testing.T) {
 	}
 }
 
-func TestSSOSignInWithoutBindingContinuesToAssociation(t *testing.T) {
+func TestSSOSignInWithoutLinkContinuesToAssociation(t *testing.T) {
 	f := newSSOFixture(t)
 	if _, err := SignInSSO(t.Context(), f.pool, f.cfg, f.assertion("new-subject", "new@example.test", time.Now().Add(-25*time.Hour)), "", uuid.Nil()); !errors.Is(err, ErrSSOReauthenticationRequired) {
 		t.Fatalf("a stale authentication reached association: %v", err)
@@ -190,8 +190,8 @@ func TestSSOSelfLinkBindsTheMemberAndRefusesConflicts(t *testing.T) {
 		t.Fatalf("self-link without recent proof: %v", err)
 	}
 	var created int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='sso.binding_created' AND org_id=$1`, f.org).Scan(&created); err != nil || created != 1 {
-		t.Fatalf("binding audit events = %d, %v", created, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='sso.member_linked' AND org_id=$1`, f.org).Scan(&created); err != nil || created != 1 {
+		t.Fatalf("link audit events = %d, %v", created, err)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestSSOFirstAssociationByMembershipAndInvitation(t *testing.T) {
 	f.member(t, f.org, user, "member")
 	raw := f.session(t, user, uuid.Nil())
 	p, _ := f.admits(t, raw, uuid.Nil())
-	link := SSOLink{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "alice-subject", Email: "Alice@Example.test", AuthenticatedAt: time.Now()}
+	link := SSOAssociation{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "alice-subject", Email: "Alice@Example.test", AuthenticatedAt: time.Now()}
 
 	mismatch := link
 	mismatch.Email = "someone@example.test"
@@ -222,7 +222,7 @@ func TestSSOFirstAssociationByMembershipAndInvitation(t *testing.T) {
 	carol := f.user(t, "Carol", "carol@example.test")
 	carolRaw := f.session(t, carol, uuid.Nil())
 	carolP, _ := f.admits(t, carolRaw, uuid.Nil())
-	carolLink := SSOLink{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "carol-subject", Email: "carol@example.test", AuthenticatedAt: time.Now()}
+	carolLink := SSOAssociation{ConnectionID: f.connection, Protocol: sso.ProtocolSAML, Subject: "carol-subject", Email: "carol@example.test", AuthenticatedAt: time.Now()}
 	if _, err := ConfirmSSOAssociation(t.Context(), f.pool, f.cfg, carolP, carolLink); !errors.Is(err, ErrSSONotEligible) {
 		t.Fatalf("association without membership or invitation: %v", err)
 	}
@@ -279,8 +279,8 @@ func TestSSOProofEndsWithMembershipAndConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	var live int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sso_member_bindings WHERE member_id=$1 AND retired_at IS NULL`, removed).Scan(&live); err != nil || live != 0 {
-		t.Fatalf("live bindings after removal = %d, %v", live, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sso_member_links WHERE member_id=$1 AND retired_at IS NULL`, removed).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("live links after removal = %d, %v", live, err)
 	}
 	if _, err := f.admits(t, removedRaw, f.org); !errors.Is(err, ErrOrganizationAccessDenied) {
 		t.Fatalf("a proof survived removal: %v", err)
@@ -321,7 +321,7 @@ func TestOrdinarySignInKeepsSSOProofsOfTheSession(t *testing.T) {
 	}
 }
 
-// Member removal locks the member and then retires its binding. A concurrent
+// Member removal locks the member and then retires its link. A concurrent
 // sign-in takes the same order, so it waits for the removal and is refused
 // instead of deadlocking with it.
 func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
@@ -343,7 +343,7 @@ func TestSSOSignInWaitsForConcurrentMemberRemoval(t *testing.T) {
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond)
-	if _, err := removal.Exec(t.Context(), `UPDATE sso_member_bindings SET retired_at=clock_timestamp() WHERE member_id=$1`, member); err != nil {
+	if _, err := removal.Exec(t.Context(), `UPDATE sso_member_links SET retired_at=clock_timestamp() WHERE member_id=$1`, member); err != nil {
 		t.Fatalf("removal blocked behind the sign-in: %v", err)
 	}
 	if _, err := removal.Exec(t.Context(), `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member); err != nil {

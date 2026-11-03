@@ -25,7 +25,7 @@ import (
 const (
 	browserAuthSSOSignIn   browserAuthKind = "sso_sign_in"
 	browserAuthSSOSelfLink browserAuthKind = "sso_self_link"
-	browserAuthSSOLink     browserAuthKind = "sso_link"
+	browserAuthSSOConfirm  browserAuthKind = "sso_confirm"
 )
 
 // SSO flows use the ordinary Lax auth-flow cookie, except two:
@@ -51,15 +51,15 @@ func samlFlowCookie(r *http.Request, value string, maxAge int) *http.Cookie {
 	return c
 }
 
-func ssoLinkCookieName(r *http.Request) string {
+func ssoConfirmCookieName(r *http.Request) string {
 	if isSecureRequest(r) {
-		return "__Host-helmr_sso_link"
+		return "__Host-helmr_sso_confirm"
 	}
-	return "helmr_sso_link_dev"
+	return "helmr_sso_confirm_dev"
 }
 
-func ssoLinkCookie(r *http.Request, value string, maxAge int) *http.Cookie {
-	return &http.Cookie{Name: ssoLinkCookieName(r), Value: value, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: maxAge, Secure: isSecureRequest(r)}
+func ssoConfirmCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: ssoConfirmCookieName(r), Value: value, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: maxAge, Secure: isSecureRequest(r)}
 }
 
 func (s *Server) ssoStart(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +87,7 @@ func (s *Server) ssoStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		flow.TokenHash = base64.RawURLEncoding.EncodeToString(tokenHash)
-	} else if connection, err = s.startConnection(r.Context(), request.Organization); err != nil {
+	} else if connection, err = s.startConnection(r.Context(), request.OrganizationSlug); err != nil {
 		writeError(w, identityError(err))
 		return
 	}
@@ -312,7 +312,7 @@ func (s *Server) ssoSAMLACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, authFlowCookie(r, encoded, int(authFlowTTL.Seconds())))
-	http.Redirect(w, r, "/sso/callback", http.StatusSeeOther)
+	http.Redirect(w, r, "/sso/saml/callback", http.StatusSeeOther)
 }
 
 // ssoSAMLFinish completes a SAML sign-in that the ACS validated.
@@ -358,7 +358,7 @@ func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browse
 		return
 	}
 	if result.Unbound {
-		link := browserAuthFlow{Kind: browserAuthSSOLink, StartedAt: time.Now(), ConnectionID: flow.ConnectionID, OrganizationID: flow.OrganizationID,
+		link := browserAuthFlow{Kind: browserAuthSSOConfirm, StartedAt: time.Now(), ConnectionID: flow.ConnectionID, OrganizationID: flow.OrganizationID,
 			SSOProtocol: connection.Protocol, SSOSubject: validated.Subject, SSOEmail: validated.Email, SSOAuthenticatedAt: validated.AuthenticatedAt,
 			TokenHash: flow.TokenHash, RedirectAfter: flow.RedirectAfter}
 		encoded, err := s.encodeAuthFlow(link)
@@ -366,8 +366,8 @@ func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browse
 			writeError(w, errors.New("encode SSO link"))
 			return
 		}
-		http.SetCookie(w, ssoLinkCookie(r, encoded, int(authFlowTTL.Seconds())))
-		writeJSON(w, http.StatusOK, api.SSOFinishResponse{RedirectAfter: "/sso/link"})
+		http.SetCookie(w, ssoConfirmCookie(r, encoded, int(authFlowTTL.Seconds())))
+		writeJSON(w, http.StatusOK, api.SSOFinishResponse{RedirectAfter: "/sso/confirm"})
 		return
 	}
 	if result.Session != "" {
@@ -376,25 +376,25 @@ func (s *Server) completeSSO(w http.ResponseWriter, r *http.Request, flow browse
 	writeJSON(w, http.StatusOK, api.SSOFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 
-func (s *Server) decodeSSOLink(r *http.Request) (browserAuthFlow, error) {
-	cookie, err := r.Cookie(ssoLinkCookieName(r))
+func (s *Server) decodeSSOConfirmation(r *http.Request) (browserAuthFlow, error) {
+	cookie, err := r.Cookie(ssoConfirmCookieName(r))
 	if err != nil {
 		return browserAuthFlow{}, identity.ErrInvalidToken
 	}
 	flow, err := s.decodeAuthFlowValue(cookie.Value)
-	if err != nil || flow.Kind != browserAuthSSOLink || flow.SSOSubject == "" {
+	if err != nil || flow.Kind != browserAuthSSOConfirm || flow.SSOSubject == "" {
 		return browserAuthFlow{}, identity.ErrInvalidToken
 	}
 	return flow, nil
 }
 
-func (s *Server) ssoLink(w http.ResponseWriter, r *http.Request) {
-	flow, err := s.decodeSSOLink(r)
+func (s *Server) ssoConfirmation(w http.ResponseWriter, r *http.Request) {
+	flow, err := s.decodeSSOConfirmation(r)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	response := api.SSOLinkResponse{OrganizationID: flow.OrganizationID, AssertedEmail: flow.SSOEmail,
+	response := api.SSOConfirmationResponse{OrganizationID: flow.OrganizationID, AssertedEmail: flow.SSOEmail,
 		ExpiresAt: flow.StartedAt.Add(authFlowTTL).UTC().Format(time.RFC3339)}
 	if err := s.tx.QueryRow(r.Context(), `SELECT name FROM organizations WHERE id=$1`, flow.OrganizationID).Scan(&response.OrganizationName); err != nil {
 		writeError(w, err)
@@ -409,8 +409,8 @@ func (s *Server) ssoLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) ssoLinkConfirm(w http.ResponseWriter, r *http.Request) {
-	flow, err := s.decodeSSOLink(r)
+func (s *Server) ssoConfirm(w http.ResponseWriter, r *http.Request) {
+	flow, err := s.decodeSSOConfirmation(r)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
@@ -420,7 +420,7 @@ func (s *Server) ssoLinkConfirm(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, identity.ErrInvalidToken)
 		return
 	}
-	link := identity.SSOLink{ConnectionID: connection, Protocol: flow.SSOProtocol, Subject: flow.SSOSubject, Email: flow.SSOEmail, AuthenticatedAt: flow.SSOAuthenticatedAt}
+	link := identity.SSOAssociation{ConnectionID: connection, Protocol: flow.SSOProtocol, Subject: flow.SSOSubject, Email: flow.SSOEmail, AuthenticatedAt: flow.SSOAuthenticatedAt}
 	if flow.TokenHash != "" {
 		if link.InvitationTokenHash, err = decodeFlowTokenHash(flow); err != nil {
 			s.writeIdentityError(w, r, identity.ErrInvalidToken)
@@ -432,8 +432,8 @@ func (s *Server) ssoLinkConfirm(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	http.SetCookie(w, ssoLinkCookie(r, "", -1))
-	writeJSON(w, http.StatusOK, api.SSOLinkConfirmResponse{OrganizationID: orgID.String(), RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
+	http.SetCookie(w, ssoConfirmCookie(r, "", -1))
+	writeJSON(w, http.StatusOK, api.SSOConfirmResponse{OrganizationID: orgID.String(), RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 
 // accountSSOLinkStart starts linking the member's own membership to company
@@ -475,15 +475,15 @@ func (s *Server) accountSSOLinkStart(w http.ResponseWriter, r *http.Request) {
 	s.writeSSOStart(w, r, connection, browserAuthFlow{Kind: browserAuthSSOSelfLink, MemberID: member.MemberID.String(), UserID: p.UserID.String()}, request.Reauthenticate)
 }
 
-func (s *Server) accountSSOBindings(w http.ResponseWriter, r *http.Request) {
-	bindings, err := identity.AccountSSOBindings(r.Context(), s.tx, principalFromContext(r.Context()))
+func (s *Server) accountSSOLinks(w http.ResponseWriter, r *http.Request) {
+	links, err := identity.AccountSSOLinks(r.Context(), s.tx, principalFromContext(r.Context()))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	response := api.AccountSSOBindingsResponse{Bindings: []api.AccountSSOBinding{}}
-	for _, b := range bindings {
-		response.Bindings = append(response.Bindings, api.AccountSSOBinding{OrganizationID: b.OrgID.String(), OrganizationName: b.OrgName,
+	response := api.AccountSSOLinksResponse{Links: []api.AccountSSOLink{}}
+	for _, b := range links {
+		response.Links = append(response.Links, api.AccountSSOLink{OrganizationID: b.OrgID.String(), OrganizationName: b.OrgName,
 			Protocol: b.Protocol, Subject: b.Subject, LinkedAt: b.LinkedAt.UTC().Format(time.RFC3339)})
 	}
 	writeJSON(w, http.StatusOK, response)

@@ -120,7 +120,7 @@ var definitions = []Definition{
 	{"operator.credential_added", "operator", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"operator.credential_removed", "operator", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"operator.repaired", "operator", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
-	{"sso.binding_created", "member", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
+	{"sso.member_linked", "member", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"identity.sign_in", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.session_revoked", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.device_started", "device_code", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},

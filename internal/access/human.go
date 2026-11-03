@@ -41,7 +41,7 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 
 // loadSSOProof reads a browser session's live SSO proof for its organization:
 // unrevoked, unexpired under the organization's lifetime, and derived from a
-// live binding through an active connection.
+// live link through an active connection.
 func loadSSOProof(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, uuid.UUID, error) {
 	p.SSOProofID, p.SSOAuthenticatedAt = uuid.Nil(), time.Time{}
 	if p.Channel != "browser" || p.SlackLinkID != uuid.Nil() {
@@ -49,7 +49,7 @@ func loadSSOProof(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Princi
 	}
 	var member uuid.UUID
 	err := q.QueryRow(ctx, `SELECT p.id,p.authenticated_at,p.member_id FROM sso_proofs p
- JOIN sso_member_bindings b ON b.id=p.binding_id AND b.retired_at IS NULL
+ JOIN sso_member_links b ON b.id=p.link_id AND b.retired_at IS NULL
  JOIN sso_identities i ON i.id=b.identity_id
  JOIN sso_connections c ON c.id=i.connection_id AND c.state='active'
  JOIN organizations o ON o.id=p.org_id

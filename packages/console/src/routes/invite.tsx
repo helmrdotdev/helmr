@@ -88,7 +88,7 @@ export function Invite() {
                     <button type="button" class={cx(ui.secondaryButton, "w-full")} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await refresh(); })}>Sign in with a passkey</button>
                   </Show>
                   <Show when={config()?.methods.includes("sso")}>
-                    <button type="button" class={cx(ui.secondaryButton, "w-full")} disabled={busy()} onClick={() => void run(async () => { window.location.assign((await startSSO({ invitation_token: token() })).redirect_url); })}>Continue with company SSO</button>
+                    <button type="button" class={cx(ui.secondaryButton, "w-full")} disabled={busy()} onClick={() => void run(async () => { window.location.assign((await startSSO({ invitation_token: token() })).redirect_url); })}>Continue with single sign-on</button>
                   </Show>
                   <AuthCopy><A href="/login">Other sign-in methods</A>: sign in, then reopen your invitation link to accept.</AuthCopy>
                 </div>

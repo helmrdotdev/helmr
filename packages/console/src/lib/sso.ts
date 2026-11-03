@@ -1,12 +1,12 @@
 import { postJson, request } from "./api";
 
-// Company SSO: sign-in, first association and the account's own links.
-export type SSOLink = { organization_id: string; organization_name: string; asserted_email: string; expires_at: string; signed_in_email?: string };
-export type SSOBinding = { organization_id: string; organization_name: string; protocol: string; subject: string; linked_at: string };
+// Single sign-on: sign-in, first association and the account's own links.
+export type SSOConfirmation = { organization_id: string; organization_name: string; asserted_email: string; expires_at: string; signed_in_email?: string };
+export type SSOAccountLink = { organization_id: string; organization_name: string; protocol: string; subject: string; linked_at: string };
 
 const unauthenticated = { redirectOnUnauthorized: false } as const;
 
-type Start = { organization?: string; next?: string; invitation_token?: string; reauthenticate?: boolean };
+type Start = { organization_slug?: string; next?: string; invitation_token?: string; reauthenticate?: boolean };
 type Saved = { kind: "sign_in"; start: Start } | { kind: "link"; organization_id: string };
 const START_KEY = "helmr.sso-start";
 
@@ -41,6 +41,6 @@ export async function restartSSO(): Promise<boolean> {
 export const finishOIDC = (input: { code: string; state: string; error?: string; error_description?: string }) =>
   postJson<typeof input, { redirect_after: string }>("/api/auth/sso/oidc/finish", input, unauthenticated);
 export const finishSAML = () => postJson<Record<string, never>, { redirect_after: string }>("/api/auth/sso/saml/finish", {}, unauthenticated);
-export const getSSOLink = () => request<SSOLink>("/api/auth/sso/link", unauthenticated);
-export const confirmSSOLink = () => postJson<Record<string, never>, { organization_id: string; redirect_after: string }>("/api/auth/sso/link/confirm", {}, unauthenticated);
-export const listSSOBindings = () => request<{ bindings: SSOBinding[] }>("/api/account/sso/bindings");
+export const getSSOConfirmation = () => request<SSOConfirmation>("/api/auth/sso/confirm", unauthenticated);
+export const confirmSSOAssociation = () => postJson<Record<string, never>, { organization_id: string; redirect_after: string }>("/api/auth/sso/confirm", {}, unauthenticated);
+export const listSSOLinks = () => request<{ links: SSOAccountLink[] }>("/api/account/sso/links");
