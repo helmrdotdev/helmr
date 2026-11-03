@@ -167,12 +167,10 @@
   },
   {
     "id": "AWS-0104",
-    "status": "affected",
-    "basis": "product",
-    "key": "002986a8b3142b6e628e645c0dcc8d36681df813f449ca8fdc361a29c41a86b4",
-    "source": "433cccb665d640ee515744564dee81fc34e9bd9cc2de3bf4cc5a5cffeb4446df",
-    "reason": "The proxy task can open TCP 443 connections to arbitrary IPv4 destinations. The pinned Squid configuration restricts client CONNECT requests, but the task security group grants a process on the proxy direct internet egress.",
-    "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/private/proxy.tf#L24-L30 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/private/README.md#L53-L76"
+    "status": "accepted_default",
+    "reason": "Private trusts its dedicated CONNECT proxy to enforce the configured external destinations for Control Plane and Dispatcher clients. Only the proxy group grants public IPv4 TCP 443 for these integrations. A process controlling the proxy can use that grant directly; deployments requiring containment of the proxy itself need upstream egress enforcement.",
+    "evidence": "https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/private/proxy.tf#L10-L30 | https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/private/README.md#paths-and-controls | https://github.com/helmrdotdev/helmr/blob/30b81671cd208f13bfafd6e92f4c4f5c48d12d80/infra/aws/tests/check_root_composition.py",
+    "template_key": "0a2d5ae1a22abb4e25bb5e9d90915e6ca1e56589131d0fb6be695218a16fc567"
   },
   {
     "id": "AWS-0104",
