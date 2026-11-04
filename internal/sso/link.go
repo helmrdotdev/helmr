@@ -11,10 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// DefaultProofLifetime is how long a browser SSO proof admits its organization
-// when the organization sets no lifetime.
-const DefaultProofLifetime = 24 * time.Hour
-
 var (
 	ErrNotLinked        = errors.New("this company identity is not linked to a member")
 	ErrIdentityConflict = errors.New("this company identity or membership is already linked to another")
@@ -34,6 +30,17 @@ type MemberLink struct {
 func LockActive(ctx context.Context, tx pgx.Tx, connection uuid.UUID) (uuid.UUID, error) {
 	var org uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT org_id FROM sso_connections WHERE id=$1 AND state='active' FOR SHARE`, connection).Scan(&org)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil(), ErrConnectionNotFound
+	}
+	return org, err
+}
+
+// ConnectionOrg reads a connection's organization without locking it, so a
+// caller can take the organization lock before the connection's.
+func ConnectionOrg(ctx context.Context, q db.DBTX, connection uuid.UUID) (uuid.UUID, error) {
+	var org uuid.UUID
+	err := q.QueryRow(ctx, `SELECT org_id FROM sso_connections WHERE id=$1`, connection).Scan(&org)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil(), ErrConnectionNotFound
 	}
@@ -118,7 +125,7 @@ func Link(ctx context.Context, tx pgx.Tx, org, connection uuid.UUID, subject str
 // ProofLifetime is how long a browser SSO proof admits org.
 func ProofLifetime(ctx context.Context, q db.DBTX, org uuid.UUID) (time.Duration, error) {
 	var seconds int64
-	err := q.QueryRow(ctx, `SELECT COALESCE(sso_session_seconds,86400) FROM organizations WHERE id=$1`, org).Scan(&seconds)
+	err := q.QueryRow(ctx, `SELECT sso_session_seconds FROM organizations WHERE id=$1`, org).Scan(&seconds)
 	return time.Duration(seconds) * time.Second, err
 }
 

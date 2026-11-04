@@ -33,7 +33,7 @@ func (s *Server) organizationContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization."}))
 		return
 	}
-	response := api.OrganizationContextResponse{ID: p.OrgID.String(), CurrentMember: api.CurrentMember{ID: p.MemberID.String(), UserID: p.UserID.String(), IsOwner: p.IsOwner, Permissions: sessionPermissions(p), PermissionScopes: []api.PermissionScope{}}, Authentication: api.AuthenticationContext{AuthenticatedAt: p.AuthenticatedAt.UTC().Format(time.RFC3339Nano)}}
+	response := api.OrganizationContextResponse{ID: p.OrgID.String(), CurrentMember: api.CurrentMember{ID: p.MemberID.String(), UserID: p.UserID.String(), IsOwner: p.IsOwner, Permissions: sessionPermissions(p), PermissionScopes: []api.PermissionScope{}}, Authentication: api.AuthenticationContext{AuthenticatedAt: admittedAt(p).UTC().Format(time.RFC3339Nano)}}
 	var projects bool
 	if err := s.tx.QueryRow(r.Context(), `SELECT o.name,o.slug,COALESCE(m.display_name,u.display_name),EXISTS(SELECT 1 FROM projects WHERE org_id=o.id) FROM organizations o JOIN org_members m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=$1 AND m.id=$2`, p.OrgID, p.MemberID).Scan(&response.Name, &response.Slug, &response.CurrentMember.DisplayName, &projects); err != nil {
 		writeError(w, err)
@@ -180,4 +180,14 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	clearSessionCookie(w, r)
 	clearBinding(w, r)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// admittedAt is the proof time that admitted the principal to its
+// organization: its ordinary sign-in, or its SSO proof when it has no ordinary
+// one or the SSO proof is later.
+func admittedAt(p auth.Principal) time.Time {
+	if p.SSOAuthenticatedAt.After(p.AuthenticatedAt) {
+		return p.SSOAuthenticatedAt
+	}
+	return p.AuthenticatedAt
 }

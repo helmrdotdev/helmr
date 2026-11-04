@@ -57,8 +57,15 @@ func (b *ssoBrowser) do(t *testing.T, method, path, body string, origin string, 
 // cross-site to the ACS, returning the ACS response.
 func (b *ssoBrowser) samlSignIn(t *testing.T, idp ssotest.IdP, connection uuid.UUID, subject string, start string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
+	return b.samlAnswer(t, idp, connection, subject, start, `{"organization_slug":"acme"}`, nil)
+}
+
+// samlAnswer posts start with body, has the IdP answer the SAML request and
+// posts the answer cross-site to the ACS.
+func (b *ssoBrowser) samlAnswer(t *testing.T, idp ssotest.IdP, connection uuid.UUID, subject, start, body string, headers map[string]string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
 	console := b.f.origin
-	started := b.do(t, http.MethodPost, start, `{"organization_slug":"acme"}`, console, nil)
+	started := b.do(t, http.MethodPost, start, body, console, headers)
 	if started.Code != http.StatusOK {
 		t.Fatalf("start = %d %s", started.Code, started.Body)
 	}
@@ -168,8 +175,24 @@ func TestSAMLSignInThroughTheConsole(t *testing.T) {
 	}
 
 	stray := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{}}
+	var refusedBefore int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND outcome='denied'`).Scan(&refusedBefore); err != nil {
+		t.Fatal(err)
+	}
 	if got := stray.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(got.Header().Get("Location"), "sso_error=authentication_invalid") {
 		t.Fatalf("unsolicited response = %s", got.Header().Get("Location"))
+	}
+	// A response that does not validate against this browser's own flow is a
+	// refused sign-in; an unsolicited post above is not recorded.
+	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization_slug":"acme"}`, console, nil); got.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", got.Code, got.Body)
+	}
+	if got := stray.do(t, http.MethodPost, "/api/auth/sso/saml/"+connection.String()+"/acs", form, "https://idp.example.test", nil); !strings.Contains(got.Header().Get("Location"), "sso_error=authentication_invalid") {
+		t.Fatalf("response to another request = %s", got.Header().Get("Location"))
+	}
+	var refusedAfter int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND outcome='denied'`).Scan(&refusedAfter); err != nil || refusedAfter != refusedBefore+1 {
+		t.Fatalf("refused SAML responses audited = %d, want %d (%v)", refusedAfter, refusedBefore+1, err)
 	}
 	if got := stray.do(t, http.MethodPost, "/api/auth/sso/start", `{"organization_slug":"unknown"}`, console, nil); got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "sso_not_available") {
 		t.Fatalf("unknown organization = %d %s", got.Code, got.Body)
@@ -205,6 +228,35 @@ func newOIDCFixture(t *testing.T) (httpPostgresFixture, *ssotest.OIDCIssuer, uui
 		t.Fatal(err)
 	}
 	return f, issuer, orgID
+}
+
+func TestOwnerCreatesAndRotatesOIDCConnection(t *testing.T) {
+	issuer := ssotest.NewOIDCIssuer(t)
+	f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store, err := sso.NewStore(make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.SSO = store
+		cfg.SSOHTTPClient = issuer.Server.Client()
+	})
+	orgID, ownerToken := f.organizationOwner(t, "acme")
+	selected := map[string]string{"X-Helmr-Organization": orgID.String()}
+	owner := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: ownerToken}}}
+
+	body, _ := json.Marshal(map[string]any{"protocol": "oidc", "oidc_issuer": issuer.Server.URL, "oidc_client_id": "helmr", "oidc_client_secret": "secret"})
+	created := owner.do(t, http.MethodPost, "/api/sso/connections", string(body), f.origin, selected)
+	var connection struct {
+		ID       string `json:"id"`
+		Issuer   string `json:"oidc_issuer"`
+		ClientID string `json:"oidc_client_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &connection); created.Code != http.StatusCreated || err != nil || connection.Issuer != issuer.Server.URL || connection.ClientID != "helmr" {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/sso/connections/"+connection.ID, `{"oidc_client_secret":"rotated"}`, f.origin, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("rotate secret = %d %s", got.Code, got.Body)
+	}
 }
 
 func TestOIDCSelfLinkThroughTheConsole(t *testing.T) {
@@ -327,4 +379,92 @@ func TestOIDCSignInRefusesStaleAuthenticationUntilForced(t *testing.T) {
 			t.Fatalf("%s from an SSO-only session = %d %s", path, got.Code, got.Body)
 		}
 	}
+}
+
+func TestOwnerConfiguresTestsAndRequiresSAML(t *testing.T) {
+	f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store, err := sso.NewStore(make([]byte, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.SSO = store
+	})
+	orgID, ownerToken := f.organizationOwner(t, "acme")
+	console := f.origin
+	selected := map[string]string{"X-Helmr-Organization": orgID.String()}
+	owner := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: ownerToken}}}
+	idp := ssotest.NewIdP(t)
+
+	body, _ := json.Marshal(map[string]any{"protocol": "saml", "saml_entity_id": idp.EntityID, "saml_sso_url": "https://idp.example.test/sso", "saml_certificates": []string{idp.CertPEM}})
+	created := owner.do(t, http.MethodPost, "/api/sso/connections", string(body), console, selected)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.Code, created.Body)
+	}
+	var connection struct {
+		ID    string `json:"id"`
+		ACS   string `json:"service_provider_acs_url"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &connection); err != nil || connection.State != "candidate" || !strings.HasSuffix(connection.ACS, "/acs") {
+		t.Fatalf("connection = %+v, %v", connection, err)
+	}
+	id := uuid.MustParse(connection.ID)
+	rotate, _ := json.Marshal(map[string]any{"saml_sso_url": "https://idp.example.test/sso/v2", "saml_certificates": []string{idp.CertPEM}})
+	if got := owner.do(t, http.MethodPatch, "/api/sso/connections/"+connection.ID, string(rotate), console, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("rotate = %d %s", got.Code, got.Body)
+	}
+	if got := owner.do(t, http.MethodGet, "/api/sso", "", console, selected); !strings.Contains(got.Body.String(), `"saml_sso_url":"https://idp.example.test/sso/v2"`) {
+		t.Fatalf("status after rotate = %d %s", got.Code, got.Body)
+	}
+	if got := owner.do(t, http.MethodPost, "/api/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusConflict {
+		t.Fatalf("activate untested = %d %s", got.Code, got.Body)
+	}
+	acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/sso/connections/"+connection.ID+"/test", "", selected)
+	if acs.Header().Get("Location") != "/sso/saml/callback" {
+		t.Fatalf("test ACS = %s", acs.Header().Get("Location"))
+	}
+	if tested := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); tested.Code != http.StatusOK || !strings.Contains(tested.Body.String(), "tested=") {
+		t.Fatalf("test finish = %d %s", tested.Code, tested.Body)
+	}
+	if got := owner.do(t, http.MethodPost, "/api/sso/connections/"+connection.ID+"/activate", "", console, selected); got.Code != http.StatusNoContent {
+		t.Fatalf("activate = %d %s", got.Code, got.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/sso", `{"required":true}`, console, selected); got.Code != http.StatusConflict {
+		t.Fatalf("require by an owner who has not signed in through the connection = %d %s", got.Code, got.Body)
+	}
+	// The owner links their own company account, then requires SSO.
+	if acs, _ := owner.samlAnswer(t, idp, id, "owner", "/api/account/sso/link", `{"organization_id":"`+orgID.String()+`"}`, nil); acs.Header().Get("Location") != "/sso/saml/callback" {
+		t.Fatalf("self-link ACS = %s", acs.Header().Get("Location"))
+	}
+	if linked := owner.do(t, http.MethodPost, "/api/auth/sso/saml/finish", "", console, nil); linked.Code != http.StatusOK {
+		t.Fatalf("self-link finish = %d %s", linked.Code, linked.Body)
+	}
+	if got := owner.do(t, http.MethodPatch, "/api/sso", `{"required":true,"session_seconds":172800}`, console, selected); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_seconds":172800`) {
+		t.Fatalf("require = %d %s", got.Code, got.Body)
+	}
+	// Another browser of the owner holds no SSO proof; owners keep their
+	// ordinary sign-in, so it still enters.
+	other := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, ownerUser(t, f, orgID), uuid.Nil())}}}
+	if got := other.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusOK {
+		t.Fatalf("owner's ordinary browser under required SSO = %d %s", got.Code, got.Body)
+	}
+	status := other.do(t, http.MethodGet, "/api/sso", "", console, selected)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"required":true`) {
+		t.Fatalf("status = %d %s", status.Code, status.Body)
+	}
+	member := f.user(t, "Member")
+	f.member(t, orgID, member, "member")
+	memberBrowser := &ssoBrowser{f: f, cookies: map[string]*http.Cookie{"__Host-helmr_session": {Name: "__Host-helmr_session", Value: f.session(t, member, uuid.Nil())}}}
+	if got := memberBrowser.do(t, http.MethodGet, "/api/organization", "", console, selected); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "sso_required") {
+		t.Fatalf("member's ordinary browser under required SSO = %d %s", got.Code, got.Body)
+	}
+}
+
+func ownerUser(t *testing.T, f httpPostgresFixture, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var user uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, orgID).Scan(&user); err != nil {
+		t.Fatal(err)
+	}
+	return user
 }

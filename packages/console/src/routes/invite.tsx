@@ -100,6 +100,9 @@ export function Invite() {
                   </>}>
                     <p class={cx(ui.muted, "m-0")}>Signed in as {current().primary_email}.</p>
                     <button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { const accepted = await postJson<{ token: string }, { organization_id: string }>("/api/auth/invitations/accept", { token: token() }, { redirectOnUnauthorized: false }); chooseOrganization(accepted.organization_id); })}>Accept invitation</button>
+                    <Show when={config()?.methods.includes("sso")}>
+                      <button type="button" class={cx(ui.secondaryButton, "w-full")} disabled={busy()} onClick={() => void run(async () => { window.location.assign((await startSSO({ invitation_token: token() })).redirect_url); })}>Accept with single sign-on</button>
+                    </Show>
                     <AuthLink disabled={busy()} onClick={() => void signOut()}>Use another account</AuthLink>
                   </Show>
                 )}

@@ -2,13 +2,14 @@ import { useQueryClient } from "@tanstack/solid-query";
 import { createResource, createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { getAccount, getAuthConfig, getMe, startGitHubLogin, type Me } from "../lib/auth";
 import { assertPasskey } from "../lib/passkey";
+import { startSSO } from "../lib/sso";
 import { AuthDivider } from "../ui/AuthWindow";
 import { Dialog } from "../ui/Dialog";
 import { Notice } from "../ui/Notice";
 import { cx, ui } from "../ui/styles";
 import { EmailSignIn } from "./EmailSignIn";
 
-type Request = { operator: boolean; reason?: string };
+type Request = { operator: boolean; reason?: string; code?: string };
 
 // Keep the original page and any form dialog mounted throughout authentication.
 // The interrupted action is never replayed: the person reviews and submits it again.
@@ -23,11 +24,13 @@ export function AuthenticationNotice() {
   return <Show when={request()} keyed>
     {value => value.operator
       ? <OperatorConfirmation reason={value.reason} onClose={close} />
-      : <AccountConfirmation reason={value.reason} onClose={close} />}
+      : <AccountConfirmation reason={value.reason} ordinary={value.code === "ordinary_sign_in_required"} onClose={close} />}
   </Show>;
 }
 
-function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined }) {
+// ordinary marks an account request that only an ordinary sign-in satisfies,
+// so single sign-on is not offered for it.
+function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined; ordinary?: boolean }) {
   const queries = useQueryClient();
   const knownAccount = queries.getQueryData<Me>(["me"]);
   const [config] = createResource(getAuthConfig);
@@ -75,8 +78,13 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
   onMount(() => window.addEventListener("message", returned));
   onCleanup(() => { active = false; window.removeEventListener("message", returned); popup?.close(); });
 
-  const methods = () => config()?.methods ?? [];
-  const hasButtons = () => methods().includes("passkey") || methods().includes("github");
+  // A fresh SSO sign-in to the organization also confirms; it leaves this page.
+  const organization = () => knownAccount?.org_sso && !props.ordinary ? knownAccount : undefined;
+  const methods = () => (config()?.methods ?? []).filter(method => method !== "sso");
+  const hasButtons = () => methods().includes("passkey") || methods().includes("github") || !!organization();
+  const sso = () => void run(async () => {
+    window.location.assign((await startSSO({ organization_slug: organization()!.org_slug!, next: window.location.pathname + window.location.search, reauthenticate: true })).redirect_url);
+  });
   return (
     <ConfirmationDialog
       intro="Confirm it’s you to continue. Your form stays open; nothing is submitted for you."
@@ -92,6 +100,7 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string | und
           <div class={ui.buttonGroup}>
             <Show when={methods().includes("passkey")}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await confirmed(); })}>Confirm with a passkey</button></Show>
             <Show when={methods().includes("github")}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={github}>Confirm with GitHub</button></Show>
+            <Show when={organization()}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={sso}>Confirm with single sign-on</button></Show>
           </div>
         </Show>
         <Show when={methods().includes("email")}>

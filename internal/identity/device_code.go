@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -211,6 +212,11 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		default:
 			return ErrInvalidDeviceCode
 		}
+		// Issuance holds the organization lock that SSO policy and connection
+		// changes take, so a CLI session cannot be issued past their revocation.
+		if _, err = tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR SHARE`, device.OrgID); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, device.UserID); err != nil {
 			return err
 		}
@@ -263,7 +269,8 @@ func nullableUUID(id pgtype.UUID) uuid.UUID {
 }
 
 // issueCLISession starts a CLI session that records the approving browser
-// session's sign-in method and time.
+// session's source and its time: its live SSO proof for the organization when
+// it holds one, otherwise its ordinary sign-in.
 func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, device uuid.UUID) (string, error) {
 	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
 	if err != nil {
@@ -274,8 +281,14 @@ func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principa
 		return "", err
 	}
 	id := uuid.NewV7()
-	tag, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,identity_id,passkey_id,authenticated_at,expires_at)
+	var tag pgconn.CommandTag
+	if p.SSOProofID != uuid.Nil() {
+		tag, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,sso_proof_id,authenticated_at,expires_at)
+ SELECT $1,user_id,'cli',$3,$4,$5,$6,$7,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash, p.SSOProofID, p.SSOAuthenticatedAt)
+	} else {
+		tag, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,identity_id,passkey_id,authenticated_at,expires_at)
  SELECT $1,user_id,'cli',$3,$4,$5,identity_id,passkey_id,authenticated_at,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash)
+	}
 	if err != nil {
 		return "", err
 	}

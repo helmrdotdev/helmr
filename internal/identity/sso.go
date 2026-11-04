@@ -6,9 +6,11 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sso"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +19,8 @@ import (
 
 var (
 	ErrSSONotEligible              = errors.New("this company identity has no membership in the organization yet")
-	ErrSSOReauthenticationRequired = errors.New("sign in again at your company identity provider")
+	ErrSSOReauthenticationRequired = access.ErrSSOReauthenticationRequired
+	ErrSSORequired                 = access.ErrSSORequired
 	ErrSSOIdentityConflict         = errors.New("this company identity or membership is already linked to another")
 	ErrOrdinarySignInRequired      = errors.New("sign in with your email, a passkey or GitHub to continue")
 )
@@ -41,8 +44,8 @@ type SSOSignIn struct {
 // SignInSSO adds the identity's SSO proof to the browser session that started
 // the flow, or signs in a browser that started it signed out with a session
 // that has no ordinary source. started is that session, or nil.
-func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAssertion, raw string, started uuid.UUID) (SSOSignIn, error) {
-	var result SSOSignIn
+func SignInSSO(ctx context.Context, database db.TxBeginner, cfg Config, a SSOAssertion, raw string, started uuid.UUID) (result SSOSignIn, resultErr error) {
+	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "sso_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		orgID, err := sso.LockActive(ctx, tx, a.ConnectionID)
 		if err != nil {
@@ -117,6 +120,18 @@ func LinkSSO(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Pri
 	})
 }
 
+// LiveMember finds the account's live membership of an organization without
+// admitting the browser to it: a member who must link SSO before entering a
+// required-SSO organization starts the link from their account.
+func LiveMember(ctx context.Context, q db.DBTX, p auth.Principal, orgID uuid.UUID) (uuid.UUID, error) {
+	var member uuid.UUID
+	err := q.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, orgID, p.UserID).Scan(&member)
+	if isNoRows(err) {
+		return uuid.Nil(), ErrSSONotEligible
+	}
+	return member, err
+}
+
 // SSOAssociation is a validated identity without a link, carried to first
 // association in the browser's signed flow state.
 type SSOAssociation struct {
@@ -135,12 +150,19 @@ type SSOAssociation struct {
 func ConfirmSSOAssociation(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, association SSOAssociation) (uuid.UUID, error) {
 	var orgID uuid.UUID
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		// The organization, then the connection: the order SSO administration
+		// takes.
 		var err error
-		if orgID, err = sso.LockActive(ctx, tx, association.ConnectionID); err != nil {
+		if orgID, err = sso.ConnectionOrg(ctx, tx, association.ConnectionID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, orgID); err != nil {
+		if _, err := org.LockSSOPolicy(ctx, tx, orgID); err != nil {
 			return err
+		}
+		if locked, err := sso.LockActive(ctx, tx, association.ConnectionID); err != nil {
+			return err
+		} else if locked != orgID {
+			return sso.ErrConnectionNotFound
 		}
 		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, p.UserID); err != nil {
 			return err

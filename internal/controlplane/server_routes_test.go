@@ -67,6 +67,8 @@ DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
+DELETE /api/sso/connections/{connectionID}
+DELETE /api/sso/members/{memberID}/link
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/account-repairs/{id}
 GET /admin/api/v1/audit-events
@@ -152,6 +154,8 @@ GET /api/slack/link-workspaces
 GET /api/slack/user-links
 GET /api/slack/user-links/callback
 GET /api/slack/user-links/first-use
+GET /api/sso
+GET /api/sso/members
 GET /capacity/v1/deployment
 GET /capacity/v1/updates
 GET /capacity/v1/worker-groups/resolve
@@ -204,6 +208,8 @@ PATCH /api/projects/{project}/environments/{environment}
 PATCH /api/projects/{project}/settings
 PATCH /api/role-grants/{id}
 PATCH /api/roles/{id}
+PATCH /api/sso
+PATCH /api/sso/connections/{connectionID}
 POST /admin/api/v1/account-repairs/redeem
 POST /admin/api/v1/account-repairs/{id}/complete
 POST /admin/api/v1/account-repairs/{id}/options
@@ -298,6 +304,9 @@ POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
 POST /api/slack/user-links/confirm
 POST /api/slack/user-links/verify
+POST /api/sso/connections
+POST /api/sso/connections/{connectionID}/activate
+POST /api/sso/connections/{connectionID}/test
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-groups/{workerGroupID}/pools
 POST /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/disable

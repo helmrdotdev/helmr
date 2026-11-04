@@ -28,9 +28,11 @@ type Principal struct {
 	PasskeyID         uuid.UUID
 	AuthenticatedAt   time.Time
 	// SSOProofID and SSOAuthenticatedAt are the browser session's live SSO
-	// proof for OrgID, when it holds one.
+	// proof for OrgID, or the proof a CLI session was approved with.
+	// SSORequired reports that OrgID admits only its SSO proof.
 	SSOProofID         uuid.UUID
 	SSOAuthenticatedAt time.Time
+	SSORequired        bool
 	Channel            string
 
 	OrgID         uuid.UUID

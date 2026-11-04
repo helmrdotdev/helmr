@@ -45,8 +45,11 @@ CREATE TABLE sso_consumed_assertions (
 );
 CREATE INDEX sso_consumed_assertions_expiry ON sso_consumed_assertions(expires_at);
 
--- How long a browser SSO proof admits its organization; NULL is 24 hours.
-ALTER TABLE organizations ADD COLUMN sso_session_seconds integer CHECK (sso_session_seconds BETWEEN 86400 AND 2592000);
+-- Required SSO admits only the organization's SSO proof, except that owners
+-- keep their ordinary sign-in. sso_session_seconds is how long a browser SSO
+-- proof admits the organization.
+ALTER TABLE organizations ADD COLUMN sso_required boolean NOT NULL DEFAULT false;
+ALTER TABLE organizations ADD COLUMN sso_session_seconds integer NOT NULL DEFAULT 86400 CHECK (sso_session_seconds BETWEEN 86400 AND 2592000);
 
 -- An IdP subject of one connection. It belongs to one user and is never
 -- reassigned.
@@ -93,10 +96,17 @@ CREATE TABLE sso_proofs (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  revoked_at timestamptz,
  FOREIGN KEY (session_id,user_id) REFERENCES login_sessions(id,user_id),
- FOREIGN KEY (link_id,org_id,member_id,user_id) REFERENCES sso_member_links(id,org_id,member_id,user_id)
+ FOREIGN KEY (link_id,org_id,member_id,user_id) REFERENCES sso_member_links(id,org_id,member_id,user_id),
+ UNIQUE (id,user_id)
 );
 CREATE UNIQUE INDEX sso_proofs_live_session ON sso_proofs(session_id,org_id) WHERE revoked_at IS NULL;
 CREATE INDEX sso_proofs_live_member ON sso_proofs(org_id,member_id) WHERE revoked_at IS NULL;
+CREATE INDEX sso_proofs_live_link ON sso_proofs(link_id) WHERE revoked_at IS NULL;
+
+-- A CLI session approved under SSO records the browser's proof as its source.
+ALTER TABLE login_sessions ADD COLUMN sso_proof_id uuid;
+ALTER TABLE login_sessions ADD FOREIGN KEY (sso_proof_id,user_id) REFERENCES sso_proofs(id,user_id);
+CREATE INDEX login_sessions_sso_proof ON login_sessions(sso_proof_id) WHERE sso_proof_id IS NOT NULL AND revoked_at IS NULL;
 
 -- A browser session signed in through SSO alone has no ordinary source and no
 -- ordinary proof time; its organization access comes from its SSO proofs.
@@ -104,14 +114,14 @@ ALTER TABLE login_sessions ALTER COLUMN authenticated_at DROP NOT NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape;
 ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
  (channel='browser' AND user_id IS NOT NULL
-  AND org_id IS NULL AND member_id IS NULL
+  AND org_id IS NULL AND member_id IS NULL AND sso_proof_id IS NULL
   AND num_nonnulls(identity_id,passkey_id)<=1
   AND (authenticated_at IS NULL)=(num_nonnulls(identity_id,passkey_id)=0))
  OR (channel='cli' AND user_id IS NOT NULL
   AND org_id IS NOT NULL AND member_id IS NOT NULL
-  AND num_nonnulls(identity_id,passkey_id)=1 AND authenticated_at IS NOT NULL)
+  AND num_nonnulls(identity_id,passkey_id,sso_proof_id)=1 AND authenticated_at IS NOT NULL)
  OR (channel='operator' AND operator_id IS NOT NULL AND passkey_id IS NOT NULL
-  AND num_nonnulls(org_id,member_id,identity_id)=0
+  AND num_nonnulls(org_id,member_id,identity_id,sso_proof_id)=0
   AND authenticated_at IS NOT NULL AND authenticated_at>=issued_at AND authenticated_at<=expires_at)
 );
 

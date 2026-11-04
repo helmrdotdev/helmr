@@ -56,8 +56,13 @@ func AcceptAccountInvitation(ctx context.Context, database db.TxBeginner, cfg Co
 			}
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, result.OrganizationID); err != nil {
+		// Under required SSO an invitation is accepted through SSO association.
+		var required bool
+		if err := tx.QueryRow(ctx, `SELECT sso_required FROM organizations WHERE id=$1 FOR UPDATE`, result.OrganizationID).Scan(&required); err != nil {
 			return err
+		}
+		if required {
+			return ErrSSORequired
 		}
 		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, p.UserID); err != nil {
 			return err

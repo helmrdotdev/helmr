@@ -369,9 +369,11 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 
 // UpdateMemberOwnership serializes owner changes on the organization row.
 // Ownership conveys recovery authority, not ordinary management permission.
-func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager ManagingMember, targetID uuid.UUID, value, expected bool) (UpdatedMember, error) {
+// It runs in the caller's transaction, which retires other channels of the
+// same change.
+func UpdateMemberOwnershipTx(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetID uuid.UUID, value, expected bool) (UpdatedMember, error) {
 	var result UpdatedMember
-	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+	err := func() error {
 		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, manager.OrgID); err != nil {
 			return err
 		}
@@ -433,7 +435,7 @@ func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager 
 			return nil
 		}
 		return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Evidence: manager.Actor, OrgID: manager.OrgID, Action: "member.ownership_changed", TargetKind: "member", TargetID: targetID, Details: audit.OwnershipChangedDetails{WasOwner: expected, IsOwner: value}})
-	})
+	}()
 	return result, err
 }
 

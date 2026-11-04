@@ -18,7 +18,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
   const location = useLocation();
   const me = useMe();
 
-  // Ownership is listed for owners only; it needs no role.
+  // Ownership and single sign-on are listed for owners only; they need no role.
   const groups = (): NavGroup[] => [
     {
       label: "Account",
@@ -39,7 +39,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
         { href: "/settings/members", label: "Members" },
         { href: "/settings/groups", label: "Groups" },
         { href: "/settings/roles", label: "Roles" },
-        ...(me.data?.is_owner ? [{ href: "/settings/ownership", label: "Ownership" }] : []),
+        ...(me.data?.is_owner ? [{ href: "/settings/ownership", label: "Ownership" }, { href: "/settings/sso", label: "Single sign-on" }] : []),
         { href: "/settings/audit-events", label: "Audit events" },
       ],
     },

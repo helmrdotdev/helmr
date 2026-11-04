@@ -33,10 +33,10 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 			t.Fatalf("list without grant: %v", err)
 		}
 	}
-	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false); !errors.Is(err, org.ErrOwnerRoleRequired) {
+	if _, err := updateOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false); !errors.Is(err, org.ErrOwnerRoleRequired) {
 		t.Fatalf("administrator appointed owner: %v", err)
 	}
-	_, denied := org.UpdateMemberOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false)
+	_, denied := updateOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false)
 	var ownerRefusal *audit.Refusal
 	if !errors.As(denied, &ownerRefusal) || ownerRefusal.Authorization.Decision != "denied" || len(ownerRefusal.Authorization.Checks) != 1 {
 		t.Fatal("owner denial lost actual check", denied)
@@ -48,14 +48,14 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 	if err := identity.RemoveMember(ctx, f.pool, f.admin, f.owner.MemberID); !errors.Is(err, org.ErrOwnerRoleRequired) {
 		t.Fatalf("administrator removed owner: %v", err)
 	}
-	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.owner.MemberID, false, true); !errors.Is(err, org.ErrLastActiveOwner) {
+	if _, err := updateOwnership(ctx, f.pool, f.owner, f.owner.MemberID, false, true); !errors.Is(err, org.ErrLastActiveOwner) {
 		t.Fatalf("last owner removed: %v", err)
 	}
-	changed, err := org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, false)
+	changed, err := updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, false)
 	if err != nil || !changed.Member.IsOwner {
 		t.Fatalf("appoint owner: %v %v", changed, err)
 	}
-	if _, err = org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, false); !errors.Is(err, org.ErrMemberRoleChanged) {
+	if _, err = updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, false); !errors.Is(err, org.ErrMemberRoleChanged) {
 		t.Fatalf("stale ownership: %v", err)
 	}
 	if _, err = org.ListMembers(ctx, f.pool, f.member); !errors.Is(err, org.ErrMemberManagementRequired) {
@@ -69,7 +69,7 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 	if err != nil || again.Created || again.ID != recovered.ID {
 		t.Fatalf("recovery retry: %v %v", again, err)
 	}
-	if _, err = org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, true); err != nil {
+	if _, err = updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = org.ListMembers(ctx, f.pool, f.member); err != nil {
@@ -344,10 +344,10 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 func TestOwnershipAuditNoOpAndRollback(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
-	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, false); err != nil {
+	if _, err := updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, true); err != nil {
+	if _, err := updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, true, true); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -355,7 +355,7 @@ func TestOwnershipAuditNoOpAndRollback(t *testing.T) {
 		t.Fatalf("audit count=%d %v", count, err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `CREATE FUNCTION fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit failure'; END $$; CREATE TRIGGER fail_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_audit()`)
-	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, true); err == nil {
+	if _, err := updateOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, true); err == nil {
 		t.Fatal("audit failure accepted ownership change")
 	}
 	var owner bool

@@ -71,8 +71,12 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[OwnershipChangedDetails], true
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		return decodeDetail[AccessChangeDetails], true
-	case "sso.member_linked":
+	case "sso.member_linked", "sso.member_unlinked":
 		return decodeDetail[SSOLinkDetails], true
+	case "sso.connection_created", "sso.connection_updated", "sso.connection_tested", "sso.connection_activated", "sso.connection_retired":
+		return decodeDetail[SSOConnectionDetails], true
+	case "sso.policy_updated":
+		return decodeDetail[SSOPolicyDetails], true
 	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		return decodeDetail[MembershipDetails], true
 	case "platform_admin.granted":

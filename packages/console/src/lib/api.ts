@@ -125,7 +125,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
     }
     // An SSO-only session confirms with an ordinary sign-in in place, like a stale one.
     if (error instanceof ApiError && (error.code === "recent_authentication_required" || error.code === "ordinary_sign_in_required")) {
-      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, reason: error.message } }));
+      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, reason: error.message, code: error.code } }));
     }
     const needsLogin = error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
     if (!needsLogin) throw error;

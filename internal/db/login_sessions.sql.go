@@ -12,7 +12,7 @@ import (
 )
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at, sso_proof_id FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error) {
@@ -33,12 +33,13 @@ func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSes
 		&i.IdentityID,
 		&i.PasskeyID,
 		&i.AuthenticatedAt,
+		&i.SsoProofID,
 	)
 	return i, err
 }
 
 const getLoginSessionByTokenHash = `-- name: GetLoginSessionByTokenHash :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at, sso_proof_id FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error) {
@@ -59,6 +60,7 @@ func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []by
 		&i.IdentityID,
 		&i.PasskeyID,
 		&i.AuthenticatedAt,
+		&i.SsoProofID,
 	)
 	return i, err
 }

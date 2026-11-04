@@ -37,6 +37,7 @@ import { AccountSecurity } from "./routes/account-security";
 import { Ownership } from "./routes/ownership";
 import { AuthGitHubCallback, AuthSSOOIDCCallback, AuthSSOSAMLCallback } from "./routes/auth-callback";
 import { SSOConfirmPage } from "./routes/sso-confirm";
+import { SSOSettings } from "./routes/sso-settings";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
@@ -273,6 +274,7 @@ export function App() {
       <Route path="/settings/account" component={wrapSettings(AccountSettings, "session")} />
       <Route path="/settings/security" component={wrapSettings(AccountSecurity, "session")} />
       <Route path="/settings/ownership" component={wrapSettings(Ownership, "organization")} />
+      <Route path="/settings/sso" component={wrapSettings(SSOSettings, "organization")} />
       <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />

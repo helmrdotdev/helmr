@@ -43,7 +43,7 @@ func TestMemberAccessLifecyclePreservesOtherOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(fresh, a, false)
-	if _, err := org.UpdateMemberOwnership(t.Context(), f.pool, manager, member, true, false); err == nil {
+	if _, err := UpdateMemberOwnership(t.Context(), f.pool, manager, member, true, false); err == nil {
 		t.Fatal("suspended member promoted")
 	}
 	candidates, err := org.OwnershipMembers(t.Context(), f.pool, manager)
@@ -81,7 +81,7 @@ func TestMemberAccessLifecyclePreservesOtherOrganization(t *testing.T) {
 	go func() { <-start; v := true; results <- ChangeMemberAccess(t.Context(), f.pool, manager, member, &v) }()
 	go func() {
 		<-start
-		_, err := org.UpdateMemberOwnership(t.Context(), f.pool, manager, member, true, false)
+		_, err := UpdateMemberOwnership(t.Context(), f.pool, manager, member, true, false)
 		results <- err
 	}()
 	close(start)

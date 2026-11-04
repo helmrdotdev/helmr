@@ -44,3 +44,32 @@ export const finishSAML = () => postJson<Record<string, never>, { redirect_after
 export const getSSOConfirmation = () => request<SSOConfirmation>("/api/auth/sso/confirm", unauthenticated);
 export const confirmSSOAssociation = () => postJson<Record<string, never>, { organization_id: string; redirect_after: string }>("/api/auth/sso/confirm", {}, unauthenticated);
 export const listSSOLinks = () => request<{ links: SSOAccountLink[] }>("/api/account/sso/links");
+
+// Owner administration of the organization's SSO.
+export type SSOConnection = {
+  id: string; protocol: "oidc" | "saml"; state: "candidate" | "active";
+  oidc_issuer?: string; oidc_client_id?: string; oidc_redirect_url?: string;
+  saml_entity_id?: string; saml_sso_url?: string; saml_certificates?: string[];
+  service_provider_entity_id?: string; service_provider_acs_url?: string;
+  tested_at: string | null; created_at: string; activated_at: string | null;
+};
+export type SSOStatus = {
+  required: boolean; session_seconds: number; active: SSOConnection | null; candidate: SSOConnection | null;
+  members_linked: number; members_total: number; oidc_redirect_url: string;
+};
+export type SSOMember = { member_id: string; display_name: string; email: string; subject?: string; linked_at: string | null };
+export type SSOConnectionInput =
+  | { protocol: "oidc"; oidc_issuer: string; oidc_client_id: string; oidc_client_secret: string }
+  | { protocol: "saml"; saml_metadata_xml?: string; saml_entity_id?: string; saml_sso_url?: string; saml_certificates?: string[] };
+
+export const getSSOStatus = () => request<SSOStatus>("/api/sso");
+export const createSSOConnection = (input: SSOConnectionInput) => postJson<SSOConnectionInput, SSOConnection>("/api/sso/connections", input);
+export const updateSSOConnection = (id: string, input: { oidc_client_secret?: string; saml_metadata_xml?: string; saml_sso_url?: string; saml_certificates?: string[] }) =>
+  request<void>(`/api/sso/connections/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
+export const testSSOConnection = (id: string) => postJson<Record<string, never>, { redirect_url: string }>(`/api/sso/connections/${encodeURIComponent(id)}/test`, {});
+export const activateSSOConnection = (id: string) => postJson<Record<string, never>, void>(`/api/sso/connections/${encodeURIComponent(id)}/activate`, {});
+export const deleteSSOConnection = (id: string) => request<void>(`/api/sso/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const updateSSOPolicy = (input: { required?: boolean; session_seconds?: number }) =>
+  request<{ required: boolean; session_seconds: number; revoked_cli_sessions: number; revoked_slack_links: number }>("/api/sso", { method: "PATCH", body: JSON.stringify(input) });
+export const listSSOMembers = () => request<{ members: SSOMember[] }>("/api/sso/members");
+export const unlinkSSOMember = (memberID: string) => request<void>(`/api/sso/members/${encodeURIComponent(memberID)}/link`, { method: "DELETE" });

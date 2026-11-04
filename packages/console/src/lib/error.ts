@@ -51,6 +51,7 @@ export const AUTH_MESSAGES: Readonly<Record<string, string>> = {
   sso_reauthentication_required: "Your company sign-in has expired. Sign in with single sign-on again.",
   sso_identity_conflict: "This company account is already linked to another membership. Ask an owner of the organization to unlink it.",
   ordinary_sign_in_required: "Sign in with your email, a passkey or GitHub to continue.",
+  sso_required: "This organization requires single sign-on. Sign in through your company identity provider.",
 };
 
 // The technical detail of a failed request, for support: the error code and the

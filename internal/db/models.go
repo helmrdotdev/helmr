@@ -195,6 +195,7 @@ type LoginSession struct {
 	IdentityID          pgtype.UUID        `json:"identity_id"`
 	PasskeyID           pgtype.UUID        `json:"passkey_id"`
 	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
+	SsoProofID          pgtype.UUID        `json:"sso_proof_id"`
 }
 
 type OrgMember struct {
@@ -216,7 +217,8 @@ type Organization struct {
 	Slug              string             `json:"slug"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	SsoSessionSeconds pgtype.Int4        `json:"sso_session_seconds"`
+	SsoRequired       bool               `json:"sso_required"`
+	SsoSessionSeconds int32              `json:"sso_session_seconds"`
 }
 
 type Project struct {

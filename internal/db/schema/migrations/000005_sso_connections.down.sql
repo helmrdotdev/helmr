@@ -1,5 +1,5 @@
 DO $$ BEGIN
- IF EXISTS(SELECT 1 FROM audit_events WHERE credential_kind='sso_assertion') OR EXISTS(SELECT 1 FROM login_sessions WHERE authenticated_at IS NULL) THEN
+ IF EXISTS(SELECT 1 FROM audit_events WHERE credential_kind='sso_assertion') OR EXISTS(SELECT 1 FROM login_sessions WHERE sso_proof_id IS NOT NULL) OR EXISTS(SELECT 1 FROM login_sessions WHERE authenticated_at IS NULL) THEN
  RAISE EXCEPTION 'SSO downgrade requires a pre-cutover backup'; END IF;
 END $$;
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
@@ -21,10 +21,11 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
 );
 ALTER TABLE login_sessions ALTER COLUMN authenticated_at SET NOT NULL;
 
+ALTER TABLE login_sessions DROP COLUMN sso_proof_id;
 DROP TABLE sso_proofs;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_id_user_id_key;
 DROP TABLE sso_member_links;
 DROP TABLE sso_identities;
-ALTER TABLE organizations DROP COLUMN sso_session_seconds;
+ALTER TABLE organizations DROP COLUMN sso_session_seconds, DROP COLUMN sso_required;
 DROP TABLE sso_consumed_assertions;
 DROP TABLE sso_connections;

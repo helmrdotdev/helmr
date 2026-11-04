@@ -220,6 +220,9 @@ func AuthenticateLoginSession(ctx context.Context, database db.DBTX, cfg Config,
 	if errors.Is(err, access.ErrDenied) {
 		if target != uuid.Nil() && row.Channel == "browser" {
 			account, accountErr := access.SessionPrincipal(ctx, database, pgvalue.MustUUIDValue(row.ID), uuid.Nil())
+			if accountErr == nil && (errors.Is(err, access.ErrSSORequired) || errors.Is(err, access.ErrSSOReauthenticationRequired)) {
+				return account, err
+			}
 			if accountErr == nil {
 				return account, ErrOrganizationAccessDenied
 			}
