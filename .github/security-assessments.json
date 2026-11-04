@@ -178,5 +178,33 @@
     "reason": "Quickstart intentionally allows public IPv4 egress from the control host for operating-system bootstrap, image pulls and enabled integrations. Operators can replace the host's egress block to match their deployment.",
     "evidence": "https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L23-L28 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/network.tf#L68-L74 | https://github.com/helmrdotdev/helmr/blob/e749b4d095517098c1f53668cefbef9e104b9044/infra/aws/quickstart/host.tf#L22-L28",
     "template_key": "3009323237d934b128d105f32517432827605f84b97356077ff4af73402f5d01"
+  },
+  {
+    "id": "CVE-2026-99083",
+    "status": "not_affected",
+    "debian_package_key": "18fb461a6385c5038126f9011763eb1c01eb9835c9abcbfcb4c155c90bc851a8",
+    "reason": "The Debian linux-libc-dev binary package contains userspace headers. The affected ksmbd implementation runs in a kernel.",
+    "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-99083"
+  },
+  {
+    "id": "CVE-2023-45853",
+    "status": "not_affected",
+    "debian_package_key": "ca537af7aaef901b75b2f60b48ee5d1ae07555a0737ca296a3b4c30ada16d4dc",
+    "reason": "Debian Bookworm does not build the affected MiniZip implementation in zlib1g 1:1.2.13.dfsg-1.",
+    "evidence": "https://security-tracker.debian.org/tracker/CVE-2023-45853"
+  },
+  {
+    "id": "CVE-2023-45853",
+    "status": "not_affected",
+    "debian_package_key": "9c0b2b8450293c1fb2d871eaaf5718ea4aed7f7d5e468134eaedcec151d18962",
+    "reason": "Debian Bookworm does not build the affected MiniZip implementation in zlib1g-dev 1:1.2.13.dfsg-1.",
+    "evidence": "https://security-tracker.debian.org/tracker/CVE-2023-45853"
+  },
+  {
+    "id": "CVE-2026-60002",
+    "status": "not_affected",
+    "debian_package_key": "ab627cd6d115d2382db38390666f3bcf5b67d137992c6a946ed9450d25854859",
+    "reason": "The Debian client contains the upstream host-key rekey lifetime fix. The assessment binds the advisory and Debian binary package to the tested /usr/bin/ssh SHA-256 9e1e3581eaedea9a26dd47f914f005d2a7e7bf208287d472b7b4638ff3ba67bc.",
+    "evidence": "https://github.com/openssh/openssh-portable/commit/e8bdfb151a356d0171fea4194dd205fbb252be23"
   }
 ]

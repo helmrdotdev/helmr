@@ -276,6 +276,14 @@ For evidence contained entirely in the scanned component, set `basis` to
 `basis: product` and copy the report's `source` fingerprint. A changed component
 or advisory reopens a finding. Product-scoped evidence also expires when the
 source changes.
+For a Debian binary package in the bundle builder, a reviewed
+`debian_package_key` binds the package URL (distribution, architecture and
+version), its image layer and advisory details. This permits reuse across
+unrelated builder changes. For the backported OpenSSH client rekey fix, the
+key instead binds the SHA-256 of the regular `/usr/bin/ssh` in the merged image.
+Check that digest against the client that passed the changed-host-key test
+before recording it. Other findings against the same package remain visible.
+
 A designated release reviewer may approve an intentional public-egress default in
 an AWS reference template as `accepted_default`. Keep the reason, evidence and
 the exact AWS-0104 observation's `template_key` in the attested policy. The key
