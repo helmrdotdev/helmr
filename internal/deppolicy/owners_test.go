@@ -30,6 +30,7 @@ var ownerImports = map[string][]string{
 	"identity":    {"org", "audit", "slack"},
 	"org":         {"audit"},
 	"secret":      {"audit"},
+	"sso":         {},
 	"workergroup": {"audit"},
 	"audit":       {},
 }
