@@ -29,7 +29,7 @@ VALUES (
     $2,
     $3
 )
-RETURNING id, name, slug, created_at, updated_at
+RETURNING id, name, slug, created_at, updated_at, sso_session_seconds
 `
 
 type CreateOrganizationParams struct {
@@ -47,6 +47,7 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 		&i.Slug,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SsoSessionSeconds,
 	)
 	return i, err
 }

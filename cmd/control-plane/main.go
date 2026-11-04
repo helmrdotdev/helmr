@@ -232,6 +232,13 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = controlplane.NewGitHubOAuthProvider(log, cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, appOrigin, external)
 	}
+	ssoStore, err := sso.NewStore(cfg.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("configure SSO: %w", err)
+	}
+	// Self-hosted identity providers are commonly on private networks; Managed
+	// Cloud reaches only public ones.
+	ssoHTTP := sso.NewHTTPClient(cfg.DeploymentMode == config.DeploymentModeSelfHosted)
 	computerKeys, err := configuredComputerKeys(ctx, cfg)
 	if err != nil {
 		return err
@@ -284,6 +291,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Mailer:                         mailer,
 		EmailCodeDelivery:              emailCodeDelivery,
 		AuthProvider:                   authProvider,
+		SSO:                            ssoStore,
+		SSOHTTPClient:                  ssoHTTP,
 		WorkerHostCredentialSigningKey: cfg.WorkerHostCredentialSigningKey,
 		CapacityToken:                  cfg.CapacityToken,
 		AuthKey:                        cfg.AuthKey,

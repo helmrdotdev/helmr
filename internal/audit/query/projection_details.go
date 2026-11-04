@@ -18,6 +18,8 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditOwnershipChangedDetails(d), nil
 	case audit.MembershipDetails:
 		return api.AuditMembershipDetails(d), nil
+	case audit.SSOLinkDetails:
+		return api.AuditSSOLinkDetails{ConnectionID: d.ConnectionID.String(), IdentityID: d.IdentityID.String(), Subject: d.Subject}, nil
 	case audit.InvitationCreatedDetails:
 		return api.AuditInvitationCreatedDetails(d), nil
 	case audit.InvitationStateDetails:

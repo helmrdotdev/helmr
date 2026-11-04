@@ -206,7 +206,13 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure deployment uploads: %w", err)
 	}
+	ssoStore, err := sso.NewStore(cfg.encryptionKey)
+	if err != nil {
+		return fmt.Errorf("configure SSO: %w", err)
+	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{AuditPolicy: cfg.auditPolicy,
+		SSO:                            ssoStore,
+		SSOHTTPClient:                  sso.NewHTTPClient(true),
 		Changes:                        changes,
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,

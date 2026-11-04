@@ -45,6 +45,12 @@ export const AUTH_MESSAGES: Readonly<Record<string, string>> = {
   bad_request: "The sign-in request expired or did not start in this browser. Start signing in again.",
   service_unavailable: "Sign-in is not available on this server right now. Try again later, or contact your administrator.",
   rate_limited: "Too many attempts. Wait a moment, then try again.",
+  authentication_invalid: "Single sign-on could not be completed. Start signing in again from this browser.",
+  sso_not_available: "Single sign-on is not set up for this organization. Check the organization name, or sign in another way.",
+  sso_not_eligible: "Your company account is not a member of this organization yet. Ask an owner to invite you.",
+  sso_reauthentication_required: "Your company sign-in has expired. Sign in with single sign-on again.",
+  sso_identity_conflict: "This company account is already linked to another membership. Ask an owner of the organization to unlink it.",
+  ordinary_sign_in_required: "Sign in with your email, a passkey or GitHub to continue.",
 };
 
 // The technical detail of a failed request, for support: the error code and the

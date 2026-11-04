@@ -37,6 +37,15 @@ type MembershipDetails struct {
 }
 type InvitationStateDetails struct{}
 
+// SSOLinkDetails names the single sign-on identity a membership was linked to.
+type SSOLinkDetails struct {
+	ConnectionID uuid.UUID `json:"connection_id"`
+	IdentityID   uuid.UUID `json:"identity_id"`
+	Subject      string    `json:"subject"`
+}
+
+func (SSOLinkDetails) auditDetails() {}
+
 func (MembershipDetails) auditDetails()      {}
 func (InvitationStateDetails) auditDetails() {}
 
@@ -208,6 +217,9 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		d, ok := details.(AccessChangeDetails)
 		valid = ok && (d.Before != nil || d.After != nil)
+	case "sso.member_linked":
+		d, ok := details.(SSOLinkDetails)
+		valid = ok && d.ConnectionID != uuid.Nil() && d.IdentityID != uuid.Nil() && d.Subject != "" && len(d.Subject) <= 512
 	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		d, ok := details.(MembershipDetails)
 		valid = ok && d.MembershipID != ""

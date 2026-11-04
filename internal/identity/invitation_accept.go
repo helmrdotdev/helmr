@@ -69,49 +69,56 @@ func AcceptAccountInvitation(ctx context.Context, database db.TxBeginner, cfg Co
 		if current.UserID != p.UserID {
 			return ErrInvalidToken
 		}
-		var email, name, canonical string
-		var member pgtype.UUID
-		var expiry time.Time
-		var revoked pgtype.Timestamptz
-		if err = tx.QueryRow(ctx, `SELECT invitee_email,accepted_by_member_id,expires_at,revoked_at FROM invitations WHERE id=$1 FOR UPDATE`, id).Scan(&email, &member, &expiry, &revoked); err != nil {
-			return err
-		}
-		if revoked.Valid {
-			return ErrInvalidToken
-		}
-		if err = tx.QueryRow(ctx, `SELECT primary_email,display_name FROM users WHERE id=$1`, p.UserID).Scan(&canonical, &name); err != nil {
-			return err
-		}
-		if member.Valid {
-			var owner uuid.UUID
-			if err = tx.QueryRow(ctx, `SELECT user_id FROM org_members WHERE id=$1 AND org_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, member, result.OrganizationID).Scan(&owner); err != nil {
-				return ErrInvalidToken
-			}
-			if owner != p.UserID {
-				return ErrWrongAccount
-			}
-			result.MembershipID = pgvalue.MustUUIDValue(member)
-			return nil
-		}
-		if normalizeEmail(canonical) != normalizeEmail(email) {
-			return ErrWrongAccount
-		}
-		if !time.Now().Before(expiry) {
-			return ErrInvalidToken
-		}
-		// Existing live members consume consent without creating a new lifetime or grants.
-		err = tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, result.OrganizationID, p.UserID).Scan(&result.MembershipID)
-		if err == nil {
-			return org.AcceptExistingMemberInvitation(ctx, tx, cfg.auditPolicy, audit.FromPrincipal(current), id, result.OrganizationID, result.MembershipID, p.UserID)
-		}
-		if !isNoRows(err) {
-			return err
-		}
-		err = org.AcceptInvitation(ctx, tx, cfg.auditPolicy, audit.FromPrincipal(current), org.PendingInvitation{ID: id, OrgID: result.OrganizationID, InviteeEmail: email}, p.UserID, name)
-		if err != nil {
-			return acceptanceError(err)
-		}
-		return tx.QueryRow(ctx, `SELECT accepted_by_member_id FROM invitations WHERE id=$1`, id).Scan(&result.MembershipID)
+		result.MembershipID, err = acceptInvitationLocked(ctx, tx, cfg, current, id, result.OrganizationID)
+		return err
 	})
 	return result, err
+}
+
+// acceptInvitationLocked accepts invitation id for the current browser account.
+// The caller holds the organization and account locks.
+func acceptInvitationLocked(ctx context.Context, tx pgx.Tx, cfg Config, current auth.Principal, id, orgID uuid.UUID) (uuid.UUID, error) {
+	var email, name, canonical string
+	var member pgtype.UUID
+	var expiry time.Time
+	var revoked pgtype.Timestamptz
+	if err := tx.QueryRow(ctx, `SELECT invitee_email,accepted_by_member_id,expires_at,revoked_at FROM invitations WHERE id=$1 FOR UPDATE`, id).Scan(&email, &member, &expiry, &revoked); err != nil {
+		return uuid.Nil(), err
+	}
+	if revoked.Valid {
+		return uuid.Nil(), ErrInvalidToken
+	}
+	if err := tx.QueryRow(ctx, `SELECT primary_email,display_name FROM users WHERE id=$1`, current.UserID).Scan(&canonical, &name); err != nil {
+		return uuid.Nil(), err
+	}
+	if member.Valid {
+		var owner uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT user_id FROM org_members WHERE id=$1 AND org_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, member, orgID).Scan(&owner); err != nil {
+			return uuid.Nil(), ErrInvalidToken
+		}
+		if owner != current.UserID {
+			return uuid.Nil(), ErrWrongAccount
+		}
+		return pgvalue.MustUUIDValue(member), nil
+	}
+	if normalizeEmail(canonical) != normalizeEmail(email) {
+		return uuid.Nil(), ErrWrongAccount
+	}
+	if !time.Now().Before(expiry) {
+		return uuid.Nil(), ErrInvalidToken
+	}
+	// Existing live members consume consent without creating a new lifetime or grants.
+	var membership uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL AND suspended_at IS NULL`, orgID, current.UserID).Scan(&membership)
+	if err == nil {
+		return membership, org.AcceptExistingMemberInvitation(ctx, tx, cfg.auditPolicy, audit.FromPrincipal(current), id, orgID, membership, current.UserID)
+	}
+	if !isNoRows(err) {
+		return uuid.Nil(), err
+	}
+	if err = org.AcceptInvitation(ctx, tx, cfg.auditPolicy, audit.FromPrincipal(current), org.PendingInvitation{ID: id, OrgID: orgID, InviteeEmail: email}, current.UserID, name); err != nil {
+		return uuid.Nil(), acceptanceError(err)
+	}
+	err = tx.QueryRow(ctx, `SELECT accepted_by_member_id FROM invitations WHERE id=$1`, id).Scan(&membership)
+	return membership, err
 }

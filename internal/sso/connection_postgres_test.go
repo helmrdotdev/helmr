@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/sso/ssotest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -59,7 +60,7 @@ func TestConnectionLifecycle(t *testing.T) {
 	}
 	// One candidate at a time.
 	err := f.tx(t, func(tx pgx.Tx) error {
-		_, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, newTestIdP(t).samlIdP())
+		_, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, samlIdP(ssotest.NewIdP(t)))
 		return err
 	})
 	if !errors.Is(err, ErrCandidateExists) {
@@ -96,22 +97,22 @@ func TestConnectionLifecycle(t *testing.T) {
 		t.Fatalf("cross-organization read err = %v", err)
 	}
 	// Discarding frees the candidate slot for a SAML connection.
-	idp := newTestIdP(t)
+	idp := ssotest.NewIdP(t)
 	if err := f.tx(t, func(tx pgx.Tx) error {
 		if err := f.store.DiscardCandidate(t.Context(), tx, f.org, oidcID); err != nil {
 			return err
 		}
-		c, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, idp.samlIdP())
+		c, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, samlIdP(idp))
 		if err != nil {
 			return err
 		}
-		changed := idp.samlIdP()
+		changed := samlIdP(idp)
 		changed.EntityID = "https://other-idp.example.test"
 		if err := f.store.UpdateSAMLMaterial(t.Context(), tx, f.org, c.ID, changed); err == nil {
 			t.Fatal("trust identity changed")
 		}
-		rotated := idp.samlIdP()
-		rotated.Certificates = append(rotated.Certificates, newTestIdP(t).certPEM)
+		rotated := samlIdP(idp)
+		rotated.Certificates = append(rotated.Certificates, ssotest.NewIdP(t).CertPEM)
 		return f.store.UpdateSAMLMaterial(t.Context(), tx, f.org, c.ID, rotated)
 	}); err != nil {
 		t.Fatal(err)
@@ -149,7 +150,7 @@ func TestConsumeAssertionRefusesReplay(t *testing.T) {
 	f := newConnectionFixture(t)
 	var connection uuid.UUID
 	if err := f.tx(t, func(tx pgx.Tx) error {
-		c, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, newTestIdP(t).samlIdP())
+		c, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, samlIdP(ssotest.NewIdP(t)))
 		connection = c.ID
 		return err
 	}); err != nil {
@@ -173,7 +174,7 @@ func TestConsumeAssertionRefusesReplay(t *testing.T) {
 		if err := f.store.DiscardCandidate(t.Context(), tx, f.org, connection); err != nil {
 			return err
 		}
-		_, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, newTestIdP(t).samlIdP())
+		_, err := f.store.CreateSAML(t.Context(), tx, f.org, f.member, samlIdP(ssotest.NewIdP(t)))
 		return err
 	}); err != nil {
 		t.Fatalf("discard after test sign-in: %v", err)

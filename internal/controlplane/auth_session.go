@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 	"time"
 	"uuid"
@@ -9,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/sso"
 )
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +40,13 @@ func (s *Server) organizationContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Onboarding.ProjectRequired = !projects && p.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: p.OrgID})
+	if s.ssoStore != nil {
+		var err error
+		if response.SSO, err = sso.HasActive(r.Context(), s.tx, p.OrgID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	grants, err := access.MemberGrants(r.Context(), s.tx, p.OrgID, p.MemberID)
 	if err != nil {
 		writeError(w, err)
@@ -119,6 +128,21 @@ func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			response.SingleOrganization = &o
+		}
+	}
+	// Single sign-on is offered beside the account methods: in Managed Cloud by
+	// organization slug, and in a self-hosted deployment once its organization
+	// has an active connection.
+	if s.ssoStore != nil {
+		if !s.selfHostedMode() {
+			response.Methods = append(response.Methods, "sso")
+		} else if response.SingleOrganization != nil {
+			if _, err := s.startConnection(r.Context(), ""); err == nil {
+				response.Methods = append(response.Methods, "sso")
+			} else if !errors.Is(err, sso.ErrConnectionNotFound) {
+				writeError(w, err)
+				return
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, response)

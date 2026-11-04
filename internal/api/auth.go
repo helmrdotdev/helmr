@@ -20,6 +20,8 @@ type OrganizationContextResponse struct {
 	CurrentMember  CurrentMember          `json:"current_member"`
 	Authentication AuthenticationContext  `json:"authentication"`
 	Onboarding     OrganizationOnboarding `json:"onboarding"`
+	// SSO reports whether the organization has an active single sign-on connection.
+	SSO bool `json:"sso"`
 }
 type CurrentMember struct {
 	ID               string            `json:"id"`

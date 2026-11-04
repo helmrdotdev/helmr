@@ -340,6 +340,13 @@ func (s *Server) browserMutationGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// The IdP posts SAML responses cross-site. The ACS only validates the
+		// response against the browser's own SAML flow and hands it to a
+		// same-site page; completion remains a guarded mutation.
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/auth/sso/saml/") && strings.HasSuffix(r.URL.Path, "/acs") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return

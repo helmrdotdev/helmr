@@ -609,7 +609,7 @@ column invitations.org_id uuid not null
 column invitations.revoked_at timestamp with time zone
 column invitations.revoked_by_member_id uuid
 column invitations.token_hash bytea not null
-column login_sessions.authenticated_at timestamp with time zone not null
+column login_sessions.authenticated_at timestamp with time zone
 column login_sessions.channel text not null
 column login_sessions.expires_at timestamp with time zone not null
 column login_sessions.id uuid not null
@@ -645,6 +645,7 @@ column organizations.created_at timestamp with time zone not null default now()
 column organizations.id uuid not null
 column organizations.name text not null
 column organizations.slug text not null
+column organizations.sso_session_seconds integer
 column organizations.updated_at timestamp with time zone not null default now()
 column passkey_credentials.created_at timestamp with time zone not null default clock_timestamp()
 column passkey_credentials.credential_data jsonb not null
@@ -1082,6 +1083,28 @@ column sso_connections.tested_at timestamp with time zone
 column sso_consumed_assertions.assertion_id text not null
 column sso_consumed_assertions.connection_id uuid not null
 column sso_consumed_assertions.expires_at timestamp with time zone not null
+column sso_identities.connection_id uuid not null
+column sso_identities.created_at timestamp with time zone not null default clock_timestamp()
+column sso_identities.id uuid not null
+column sso_identities.org_id uuid not null
+column sso_identities.subject text not null
+column sso_identities.user_id uuid not null
+column sso_member_links.created_at timestamp with time zone not null default clock_timestamp()
+column sso_member_links.id uuid not null
+column sso_member_links.identity_id uuid not null
+column sso_member_links.member_id uuid not null
+column sso_member_links.org_id uuid not null
+column sso_member_links.retired_at timestamp with time zone
+column sso_member_links.user_id uuid not null
+column sso_proofs.authenticated_at timestamp with time zone not null
+column sso_proofs.created_at timestamp with time zone not null default clock_timestamp()
+column sso_proofs.id uuid not null
+column sso_proofs.link_id uuid not null
+column sso_proofs.member_id uuid not null
+column sso_proofs.org_id uuid not null
+column sso_proofs.revoked_at timestamp with time zone
+column sso_proofs.session_id uuid not null
+column sso_proofs.user_id uuid not null
 column template_definitions.cpu_millis bigint not null
 column template_definitions.delete_after_unused_ms bigint
 column template_definitions.deployment_id uuid not null
@@ -1384,7 +1407,7 @@ constraint audit_events c CHECK (authentication_origin = ANY (ARRAY['request'::t
 constraint audit_events c CHECK (authentication_result <> 'verified'::text OR credential_kind IS NOT NULL)
 constraint audit_events c CHECK (authentication_result = 'verified'::text OR credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)
 constraint audit_events c CHECK (authentication_result = ANY (ARRAY['verified'::text, 'failed'::text, 'absent'::text, 'not_attempted'::text]))
-constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text]))
+constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text]))
 constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
 constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
@@ -1414,7 +1437,7 @@ constraint audit_events c audit_actor_count CHECK (num_nonnulls(actor_operator_i
 constraint audit_events c audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL OR actor_operator_id IS NOT NULL) = (actor_identity IS NOT NULL))
 constraint audit_events c audit_operator_identity CHECK (actor_operator_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'operator'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0 AND (credential_kind = ANY (ARRAY['login_session'::text, 'passkey'::text])) AND credential_id IS NOT NULL)
 constraint audit_events c audit_user_credential_id CHECK (actor_user_id IS NULL OR (credential_kind <> ALL (ARRAY['login_session'::text, 'device_code'::text])) OR credential_id IS NOT NULL)
-constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text])))
+constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text, 'sso_assertion'::text])))
 constraint audit_events c audit_user_identity_shape CHECK (actor_user_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
 constraint audit_events c audit_user_provider CHECK (actor_user_id IS NULL OR credential_kind <> 'provider_assertion'::text OR identity_provider IS NOT NULL)
 constraint audit_events p PRIMARY KEY (id)
@@ -1836,7 +1859,7 @@ constraint invitations p PRIMARY KEY (id)
 constraint invitations u UNIQUE (token_hash)
 constraint login_sessions c CHECK (channel = ANY (ARRAY['browser'::text, 'cli'::text, 'operator'::text]))
 constraint login_sessions c login_sessions_owner CHECK (num_nonnulls(user_id, operator_id) = 1)
-constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'cli'::text AND user_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
+constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND num_nonnulls(identity_id, passkey_id) <= 1 AND (authenticated_at IS NULL) = (num_nonnulls(identity_id, passkey_id) = 0) OR channel = 'cli'::text AND user_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 AND authenticated_at IS NOT NULL OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND authenticated_at IS NOT NULL AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
 constraint login_sessions f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint login_sessions f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint login_sessions f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
@@ -1844,6 +1867,7 @@ constraint login_sessions f FOREIGN KEY (passkey_id, operator_id) REFERENCES pas
 constraint login_sessions f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint login_sessions p PRIMARY KEY (id)
+constraint login_sessions u UNIQUE (id, user_id)
 constraint login_sessions u UNIQUE (token_hash)
 constraint operator_passkey_enrollments c CHECK (num_nonnulls(capability_hash, browser_hash) = 1)
 constraint operator_passkey_enrollments f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
@@ -1857,6 +1881,7 @@ constraint org_members u UNIQUE (org_id, id)
 constraint org_members u UNIQUE (org_id, id, user_id)
 constraint organizations c CHECK (btrim(name) <> ''::text)
 constraint organizations c CHECK (btrim(slug) <> ''::text)
+constraint organizations c CHECK (sso_session_seconds >= 86400 AND sso_session_seconds <= 2592000)
 constraint organizations p PRIMARY KEY (id)
 constraint organizations u UNIQUE (slug)
 constraint passkey_credentials c CHECK (btrim(label) <> ''::text)
@@ -2251,9 +2276,23 @@ constraint sso_connections c sso_connections_state_shape CHECK (state = 'candida
 constraint sso_connections f FOREIGN KEY (org_id) REFERENCES organizations(id)
 constraint sso_connections f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id)
 constraint sso_connections p PRIMARY KEY (id)
+constraint sso_connections u UNIQUE (id, org_id)
 constraint sso_consumed_assertions c CHECK (assertion_id <> ''::text)
 constraint sso_consumed_assertions f FOREIGN KEY (connection_id) REFERENCES sso_connections(id) ON DELETE CASCADE
 constraint sso_consumed_assertions p PRIMARY KEY (connection_id, assertion_id)
+constraint sso_identities c CHECK (subject <> ''::text)
+constraint sso_identities f FOREIGN KEY (connection_id, org_id) REFERENCES sso_connections(id, org_id)
+constraint sso_identities f FOREIGN KEY (user_id) REFERENCES users(id)
+constraint sso_identities p PRIMARY KEY (id)
+constraint sso_identities u UNIQUE (connection_id, subject)
+constraint sso_identities u UNIQUE (id, org_id, user_id)
+constraint sso_member_links f FOREIGN KEY (identity_id, org_id, user_id) REFERENCES sso_identities(id, org_id, user_id)
+constraint sso_member_links f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
+constraint sso_member_links p PRIMARY KEY (id)
+constraint sso_member_links u UNIQUE (id, org_id, member_id, user_id)
+constraint sso_proofs f FOREIGN KEY (link_id, org_id, member_id, user_id) REFERENCES sso_member_links(id, org_id, member_id, user_id)
+constraint sso_proofs f FOREIGN KEY (session_id, user_id) REFERENCES login_sessions(id, user_id)
+constraint sso_proofs p PRIMARY KEY (id)
 constraint template_definitions c CHECK (((network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(network_policy) = 'object'::text AND (network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(network_policy -> 'domains'::text) = 'array'::text AND (network_policy -> 'domains'::text) <> '[]'::jsonb AND (network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
 constraint template_definitions c CHECK (((prepare_network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(prepare_network_policy) = 'object'::text AND (prepare_network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(prepare_network_policy -> 'domains'::text) = 'array'::text AND (prepare_network_policy -> 'domains'::text) <> '[]'::jsonb AND (prepare_network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
 constraint template_definitions c CHECK (cpu_millis > 0)
@@ -2551,6 +2590,7 @@ index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree
 index CREATE INDEX slack_threads_status_due ON public.slack_threads USING btree (next_attempt_at, refresh_at, id)
 index CREATE INDEX slack_work_items_post ON public.slack_work_items USING btree (post_id)
 index CREATE INDEX sso_consumed_assertions_expiry ON public.sso_consumed_assertions USING btree (expires_at)
+index CREATE INDEX sso_proofs_live_member ON public.sso_proofs USING btree (org_id, member_id) WHERE (revoked_at IS NULL)
 index CREATE INDEX template_definitions_deployment ON public.template_definitions USING btree (environment_id, deployment_id, template_id)
 index CREATE INDEX template_definitions_image_spec ON public.template_definitions USING btree (environment_id, image_spec_id)
 index CREATE INDEX trigger_activations_due ON public.trigger_activations USING btree (next_fire_at, environment_id, id) WHERE ((active_until IS NULL) OR (next_fire_at < active_until))
@@ -2602,6 +2642,9 @@ index CREATE UNIQUE INDEX slack_user_links_live ON public.slack_user_links USING
 index CREATE UNIQUE INDEX slack_user_links_live_account ON public.slack_user_links USING btree (installation_id, user_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX sso_connections_active ON public.sso_connections USING btree (org_id) WHERE (state = 'active'::text)
 index CREATE UNIQUE INDEX sso_connections_candidate ON public.sso_connections USING btree (org_id) WHERE (state = 'candidate'::text)
+index CREATE UNIQUE INDEX sso_member_links_live_identity ON public.sso_member_links USING btree (identity_id) WHERE (retired_at IS NULL)
+index CREATE UNIQUE INDEX sso_member_links_live_member ON public.sso_member_links USING btree (member_id) WHERE (retired_at IS NULL)
+index CREATE UNIQUE INDEX sso_proofs_live_session ON public.sso_proofs USING btree (session_id, org_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX trigger_activations_current ON public.trigger_activations USING btree (environment_id, agent_id, trigger_key) WHERE (active_until IS NULL)
 index CREATE UNIQUE INDEX turn_messages_one_started ON public.turn_messages USING btree (environment_id, turn_id) WHERE (status = 'started'::text)
 index CREATE UNIQUE INDEX turns_one_active ON public.turns USING btree (environment_id, session_id) WHERE (status = 'running'::text)

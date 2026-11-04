@@ -9,90 +9,26 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
+	"github.com/helmrdotdev/helmr/internal/sso/ssotest"
 )
 
-// testOIDCIdP is a local issuer that signs ID tokens with chosen claims, so
-// vendor claim shapes can be exercised without a vendor account.
-type testOIDCIdP struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	// signer overrides how the token endpoint signs ID tokens.
-	signer func(t *testing.T, claims map[string]any) string
-	claims func(nonce string) map[string]any
-	nonce  string
-}
-
-func newTestOIDCIdP(t *testing.T) *testOIDCIdP {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	idp := &testOIDCIdP{key: key}
-	mux := http.NewServeMux()
-	idp.server = httptest.NewTLSServer(mux)
-	t.Cleanup(idp.server.Close)
-	issuer := idp.server.URL
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token",
-			"jwks_uri": issuer + "/keys", "id_token_signing_alg_values_supported": []string{"RS256"},
-		})
-	})
-	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
-	})
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		if r.FormValue("code") != "good-code" || r.FormValue("code_verifier") == "" {
-			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		sign := idp.sign
-		if idp.signer != nil {
-			sign = idp.signer
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at", "token_type": "Bearer", "id_token": sign(t, idp.claims(idp.nonce))})
-	})
-	return idp
-}
-
-func (i *testOIDCIdP) sign(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: i.key}, (&jose.SignerOptions{}).WithHeader("kid", "k1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(claims)
-	obj, err := signer.Sign(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := obj.CompactSerialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
-}
-
-func (i *testOIDCIdP) client() *http.Client {
+func issuerClient(i *ssotest.OIDCIssuer) *http.Client {
 	pool := x509.NewCertPool()
-	pool.AddCert(i.server.Certificate())
+	pool.AddCert(i.Server.Certificate())
 	return newHTTPClient(true, pool)
 }
 
 func TestOIDCVendorClaimShapes(t *testing.T) {
-	idp := newTestOIDCIdP(t)
+	idp := ssotest.NewOIDCIssuer(t)
 	now := time.Now().Truncate(time.Second)
 	base := func(nonce string) map[string]any {
-		return map[string]any{"iss": idp.server.URL, "aud": "helmr", "sub": "user-1", "nonce": nonce,
+		return map[string]any{"iss": idp.Server.URL, "aud": "helmr", "sub": "user-1", "nonce": nonce,
 			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "email": "alice@example.test"}
 	}
 	for _, tc := range []struct {
@@ -118,13 +54,13 @@ func TestOIDCVendorClaimShapes(t *testing.T) {
 		{"null auth_time", func(c map[string]any) { c["auth_time"] = nil }, time.Time{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			idp.nonce = "n-" + tc.name
-			idp.claims = func(nonce string) map[string]any { c := base(nonce); tc.edit(c); return c }
-			o, err := NewOIDC(context.Background(), idp.client(), idp.server.URL, "helmr", "secret", "https://helmr.example.test/sso/oidc/callback")
+			idp.Nonce = "n-" + tc.name
+			idp.Claims = func(nonce string) map[string]any { c := base(nonce); tc.edit(c); return c }
+			o, err := NewOIDC(context.Background(), issuerClient(idp), idp.Server.URL, "helmr", "secret", "https://helmr.example.test/sso/oidc/callback")
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := o.Exchange(context.Background(), "good-code", "verifier-verifier-verifier-verifier-verifier", idp.nonce)
+			got, err := o.Exchange(context.Background(), "good-code", "verifier-verifier-verifier-verifier-verifier", idp.Nonce)
 			if tc.wantErr {
 				if !errors.Is(err, ErrOIDCToken) {
 					t.Fatalf("err = %v, want refusal (identity %+v)", err, got)
@@ -142,8 +78,8 @@ func TestOIDCVendorClaimShapes(t *testing.T) {
 }
 
 func TestOIDCAuthURLAndDiscovery(t *testing.T) {
-	idp := newTestOIDCIdP(t)
-	o, err := NewOIDC(context.Background(), idp.client(), idp.server.URL, "helmr", "secret", "https://helmr.example.test/cb")
+	idp := ssotest.NewOIDCIssuer(t)
+	o, err := NewOIDC(context.Background(), issuerClient(idp), idp.Server.URL, "helmr", "secret", "https://helmr.example.test/cb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,8 +87,8 @@ func TestOIDCAuthURLAndDiscovery(t *testing.T) {
 		reauth bool
 		prompt string
 		maxAge string
-	}{{false, "", "2592000"}, {true, "login", "0"}} {
-		u, _ := url.Parse(o.AuthURL("state", "nonce", "verifier-verifier-verifier-verifier-verifier", tc.reauth))
+	}{{false, "", "86400"}, {true, "login", "0"}} {
+		u, _ := url.Parse(o.AuthURL("state", "nonce", "verifier-verifier-verifier-verifier-verifier", DefaultProofLifetime, tc.reauth))
 		q := u.Query()
 		if q.Get("prompt") != tc.prompt || q.Get("max_age") != tc.maxAge || q.Get("nonce") != "nonce" || q.Get("code_challenge_method") != "S256" || !strings.Contains(q.Get("scope"), "openid") {
 			t.Fatalf("reauth=%v query %v", tc.reauth, q)
@@ -160,37 +96,37 @@ func TestOIDCAuthURLAndDiscovery(t *testing.T) {
 	}
 	// The issuer must equal the discovery document exactly (Entra's /common
 	// issuer cannot pass; organizations use their tenant issuer).
-	if _, err := NewOIDC(context.Background(), idp.client(), idp.server.URL+"/", "helmr", "secret", "https://x/cb"); err == nil {
+	if _, err := NewOIDC(context.Background(), issuerClient(idp), idp.Server.URL+"/", "helmr", "secret", "https://x/cb"); err == nil {
 		t.Fatal("trailing-slash issuer accepted")
 	}
-	if _, err := NewOIDC(context.Background(), idp.client(), strings.Replace(idp.server.URL, "https", "http", 1), "helmr", "secret", "https://x/cb"); err == nil {
+	if _, err := NewOIDC(context.Background(), issuerClient(idp), strings.Replace(idp.Server.URL, "https", "http", 1), "helmr", "secret", "https://x/cb"); err == nil {
 		t.Fatal("http issuer accepted")
 	}
 }
 
 func TestOutboundClientRefusesPrivateDestinationsOnCloud(t *testing.T) {
-	idp := newTestOIDCIdP(t)
+	idp := ssotest.NewOIDCIssuer(t)
 	pool := x509.NewCertPool()
-	pool.AddCert(idp.server.Certificate())
-	if _, err := newHTTPClient(false, pool).Get(idp.server.URL + "/keys"); !errors.Is(err, errPrivateDestination) {
+	pool.AddCert(idp.Server.Certificate())
+	if _, err := newHTTPClient(false, pool).Get(idp.Server.URL + "/keys"); !errors.Is(err, errPrivateDestination) {
 		t.Fatalf("loopback destination err = %v", err)
 	}
-	if resp, err := newHTTPClient(true, pool).Get(idp.server.URL + "/keys"); err != nil {
+	if resp, err := newHTTPClient(true, pool).Get(idp.Server.URL + "/keys"); err != nil {
 		t.Fatalf("self-host loopback err = %v", err)
 	} else {
 		resp.Body.Close()
 	}
-	if _, err := newHTTPClient(true, pool).Get(strings.Replace(idp.server.URL, "https", "http", 1)); err == nil {
+	if _, err := newHTTPClient(true, pool).Get(strings.Replace(idp.Server.URL, "https", "http", 1)); err == nil {
 		t.Fatal("http request allowed")
 	}
 }
 
 func TestOIDCRefusesForeignSignatures(t *testing.T) {
-	idp := newTestOIDCIdP(t)
+	idp := ssotest.NewOIDCIssuer(t)
 	now := time.Now()
-	idp.nonce = "n"
-	idp.claims = func(nonce string) map[string]any {
-		return map[string]any{"iss": idp.server.URL, "aud": "helmr", "sub": "user-1", "nonce": nonce, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
+	idp.Nonce = "n"
+	idp.Claims = func(nonce string) map[string]any {
+		return map[string]any{"iss": idp.Server.URL, "aud": "helmr", "sub": "user-1", "nonce": nonce, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
 	}
 	other, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -205,8 +141,8 @@ func TestOIDCRefusesForeignSignatures(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			idp.signer = signer
-			o, err := NewOIDC(context.Background(), idp.client(), idp.server.URL, "helmr", "secret-secret-secret-secret-secret", "https://x/cb")
+			idp.Signer = signer
+			o, err := NewOIDC(context.Background(), issuerClient(idp), idp.Server.URL, "helmr", "secret-secret-secret-secret-secret", "https://x/cb")
 			if err != nil {
 				t.Fatal(err)
 			}

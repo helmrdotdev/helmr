@@ -19,7 +19,7 @@ export function expectedActorHeaders(operator = false): Record<string, string> {
 }
 
 function establishesAuthentication(path: string): boolean {
-  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify)))$/.test(path)
+  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify))|sso\/(start|oidc\/finish|saml\/finish))$/.test(path)
     || /^\/admin\/api\/v1\/auth\/(options|verify)$/.test(path);
 }
 
@@ -123,7 +123,8 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       window.location.reload();
       throw error;
     }
-    if (error instanceof ApiError && error.code === "recent_authentication_required") {
+    // An SSO-only session confirms with an ordinary sign-in in place, like a stale one.
+    if (error instanceof ApiError && (error.code === "recent_authentication_required" || error.code === "ordinary_sign_in_required")) {
       window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, reason: error.message } }));
     }
     const needsLogin = error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
@@ -169,7 +170,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       sessionStorage.setItem(identityKey, user);
     }
   }
-  if(response.ok&&fetchInit.method==="POST"&&(/^\/api\/auth\/(github\/finish|passkey\/verify|email\/[^/]+\/verify|logout)$/.test(path)||path==="/api/account/access/revoke-all"))localStorage.setItem("helmr.account-change",crypto.randomUUID());
+  if(response.ok&&fetchInit.method==="POST"&&(/^\/api\/auth\/(github\/finish|passkey\/verify|email\/[^/]+\/verify|sso\/(oidc|saml)\/finish|logout)$/.test(path)||path==="/api/account/access/revoke-all"))localStorage.setItem("helmr.account-change",crypto.randomUUID());
   return result;
 }
 

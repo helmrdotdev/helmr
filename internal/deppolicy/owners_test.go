@@ -18,6 +18,8 @@ import (
 // Session failure transitions atomically when an execution admission expires.
 // Identity composes account and membership revocation with Slack-owned access
 // retirement in the same transaction; Slack remains the writer of its link tables.
+// Identity likewise composes SSO sign-in, binding and proof retirement with
+// session issuance and membership changes; SSO writes its own tables.
 var ownerImports = map[string][]string{
 	"agent":       {"audit", "session", "slack", "slackroute", "computer", "org", "workergroup"},
 	"computer":    {"audit", "secret", "workergroup"},
@@ -27,7 +29,7 @@ var ownerImports = map[string][]string{
 	"slackroute":  {},
 	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit"},
 	"command":     {"audit", "computer", "secret", "workergroup", "org"},
-	"identity":    {"org", "audit", "slack"},
+	"identity":    {"org", "audit", "slack", "sso"},
 	"org":         {"audit"},
 	"secret":      {"audit"},
 	"sso":         {},

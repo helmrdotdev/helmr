@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
+	"github.com/helmrdotdev/helmr/internal/sso"
 )
 
 const authFlowTTL = 10 * time.Minute
@@ -54,6 +55,17 @@ type browserAuthFlow struct {
 	Verifier              string                 `json:"verifier"`
 	TokenHash             string                 `json:"token_hash,omitempty"`
 	RedirectAfter         string                 `json:"redirect_after,omitempty"`
+
+	// SSO flows name their protocol and, for SAML, the request the response
+	// must answer. A self-link names the member it links. A validated identity
+	// travels from the SAML ACS to its same-site completion, and into first
+	// association.
+	SSOProtocol        string    `json:"sso_protocol,omitempty"`
+	SSORequestID       string    `json:"sso_request_id,omitempty"`
+	MemberID           string    `json:"member_id,omitempty"`
+	SSOSubject         string    `json:"sso_subject,omitempty"`
+	SSOEmail           string    `json:"sso_email,omitempty"`
+	SSOAuthenticatedAt time.Time `json:"sso_authenticated_at,omitzero"`
 }
 
 type browserAuthEnvelope struct {
@@ -280,7 +292,11 @@ func (s *Server) decodeAuthFlow(r *http.Request) (browserAuthFlow, error) {
 	if err != nil {
 		return browserAuthFlow{}, errors.New("auth flow has expired")
 	}
-	payload, signature, ok := strings.Cut(cookie.Value, ".")
+	return s.decodeAuthFlowValue(cookie.Value)
+}
+
+func (s *Server) decodeAuthFlowValue(value string) (browserAuthFlow, error) {
+	payload, signature, ok := strings.Cut(value, ".")
 	if !ok {
 		return browserAuthFlow{}, errors.New("auth flow is invalid")
 	}
@@ -367,6 +383,16 @@ func identityError(err error) error {
 		return badRequest(codedError{code: "wrong_account", message: err.Error()})
 	case errors.Is(err, identity.ErrAlreadyMember):
 		return conflict(codedError{code: "already_member", message: err.Error()})
+	case errors.Is(err, sso.ErrConnectionNotFound):
+		return notFound(codedError{code: "sso_not_available", message: "Single sign-on is not available for this organization."})
+	case errors.Is(err, identity.ErrSSONotEligible):
+		return forbidden(codedError{code: "sso_not_eligible", message: "Ask an owner of this organization to invite you, then sign in with single sign-on again."})
+	case errors.Is(err, identity.ErrSSOReauthenticationRequired):
+		return forbidden(codedError{code: "sso_reauthentication_required", message: "Sign in again at your company identity provider."})
+	case errors.Is(err, identity.ErrSSOIdentityConflict):
+		return conflict(codedError{code: "sso_identity_conflict", message: "This company identity or membership is already linked to another. Ask an owner to unlink it."})
+	case errors.Is(err, identity.ErrOrdinarySignInRequired):
+		return forbidden(codedError{code: "ordinary_sign_in_required", message: "Sign in with your email, a passkey or GitHub to continue."})
 	case errors.Is(err, identity.ErrUserNotFound):
 		return forbidden(codedError{code: "authentication_required", message: "Sign in to continue."})
 	case errors.Is(err, identity.ErrOrganizationRequired),
