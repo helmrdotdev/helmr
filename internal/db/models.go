@@ -145,6 +145,17 @@ type Environment struct {
 	AdmissionRefilledAt pgtype.Timestamptz `json:"admission_refilled_at"`
 }
 
+type EnvironmentPlacement struct {
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	RegionID      string             `json:"region_id"`
+	Name          string             `json:"name"`
+	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IdempotencyReceipt struct {
 	ID                 pgtype.UUID        `json:"id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
@@ -294,6 +305,7 @@ type WorkerGroup struct {
 	PrimaryPoolID             pgtype.UUID        `json:"primary_pool_id"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	OwnerOrgID                pgtype.UUID        `json:"owner_org_id"`
 }
 
 type WorkerGroupToken struct {

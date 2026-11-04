@@ -151,7 +151,7 @@ const usableBootSeedImageSQL = `EXISTS(SELECT 1 FROM images i
  WHERE i.environment_id=b.environment_id AND i.id=b.image_id AND i.root_id IS NOT NULL AND p.status='succeeded' AND ` + usableImageSecretsSQL + `)`
 
 func AssignBootSeedBuild(ctx context.Context, tx pgx.Tx, a Allocation, policyRevision int64) (bool, error) {
-	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
+	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_group_id=(SELECT worker_group_id FROM worker_hosts WHERE id=$3),worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
  reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11,
  deadline_at=clock_timestamp()+$14::bigint*interval '1 millisecond'
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND executor_epoch=$12::bigint-1
@@ -331,7 +331,7 @@ func RecordBootSeedStopped(ctx context.Context, tx pgx.Tx, a Allocation, evidenc
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='queued',error_code=NULL,
- worker_host_id=NULL,worker_epoch=NULL,allocation_id=NULL,channel_credential_digest=NULL,
+ worker_group_id=NULL,worker_host_id=NULL,worker_epoch=NULL,allocation_id=NULL,channel_credential_digest=NULL,
  delivered_at=NULL,started_at=NULL,executor_expires_at=NULL,deadline_at=NULL,
  reserved_memory_bytes=NULL,reserved_scratch_bytes=NULL,
  vm_platform_id=NULL,vm_vcpu_count=NULL,cpu_config_digest=NULL,resource_policy_revision=NULL,

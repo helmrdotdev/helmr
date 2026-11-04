@@ -27,10 +27,13 @@ var ErrStaleClaims = errors.New("worker authentication claims are stale")
 
 // HostPrincipal is a worker host authenticated by its epoch credential: the
 // host and group it belongs to, the epoch the credential was minted for, and
-// the host and group claim versions it carried.
+// the host and group claim versions it carried. OwnerOrgID is the owning
+// organization of an organization group, read from the group row at
+// authentication; it is nil for deployment capacity.
 type HostPrincipal struct {
 	HostID            uuid.UUID
 	GroupID           uuid.UUID
+	OwnerOrgID        *uuid.UUID
 	Epoch             int64
 	HostClaimVersion  int64
 	GroupClaimVersion int64

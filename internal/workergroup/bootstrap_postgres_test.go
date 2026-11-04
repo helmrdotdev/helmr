@@ -34,7 +34,7 @@ func TestBootstrapCreatesOneRegionGroupAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := q.GetWorkerGroupByRegionName(ctx, db.GetWorkerGroupByRegionNameParams{RegionID: "local", Name: "default"})
+	group, err := q.GetDeploymentWorkerGroupByRegionName(ctx, db.GetDeploymentWorkerGroupByRegionNameParams{RegionID: "local", Name: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}

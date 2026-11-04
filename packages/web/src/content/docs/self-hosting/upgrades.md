@@ -65,6 +65,25 @@ discards definition policies and MCP scopes; an older release cannot enforce tho
 restrictions. Qualify the intended rollback and replacement Deployments before
 resuming work.
 
+## Worker group ownership migration
+
+Migration `000005_worker_group_ownership` adds worker group ownership,
+environment placements, the organization group a Computer runs on and the worker
+group recorded on image builds and boot seeds. Existing groups become deployment groups, and builds that already
+ran on a host record that host's group.
+
+Releases before this migration assign builds to hosts without recording a group,
+which the migrated schema rejects. In the AWS Standard reference, set
+`dispatcher_desired_count = 0` before running the migration and restore it only
+after every Control Plane and dispatcher task runs the new release. Apply
+`enable_deployment_rollback=false` for this release, because the previous
+release cannot prepare Computers against the migrated database.
+
+The down migration refuses to run while any organization worker group exists.
+After a refusal the schema stays at version 5 while the migration table records
+the previous version as dirty; force the recorded version back to 5 before
+retrying.
+
 ## Prepare artifacts, recovery and authentication
 
 Record the exact source and target `helmr_version`, digest-pinned

@@ -50,7 +50,7 @@ func Bootstrap(ctx context.Context, txb db.TxBeginner, cfg BootstrapConfig) erro
 		}); err != nil {
 			return fmt.Errorf("ensure bootstrap region: %w", err)
 		}
-		_, err := q.GetWorkerGroupByRegionName(ctx, db.GetWorkerGroupByRegionNameParams{
+		_, err := q.GetDeploymentWorkerGroupByRegionName(ctx, db.GetDeploymentWorkerGroupByRegionNameParams{
 			RegionID: cfg.RegionID, Name: cfg.GroupName,
 		})
 		if err == nil {

@@ -117,6 +117,10 @@ func authenticateHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, raw
 		Status:            row.WorkerStatus,
 		EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 	}
+	if row.WorkerGroupOwnerOrgID.Valid {
+		owner := pgvalue.MustUUIDValue(row.WorkerGroupOwnerOrgID)
+		principal.OwnerOrgID = &owner
+	}
 	if pgvalue.MustUUIDValue(row.WorkerHostID) != hostID || principal.GroupID != groupID || payload.ClaimVersion != principal.HostClaimVersion {
 		return HostPrincipal{}, ErrUnauthenticated
 	}
